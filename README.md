@@ -5,6 +5,7 @@ The key to the Lotusia ecosystem - A feature-rich P2P wallet with service discov
 ## Features
 
 - **Wallet Management**: Send and receive Lotus (XPI) with a modern, intuitive interface
+- **Contacts**: Full contact management with search, tags, import/export, and P2P integration
 - **P2P Discovery**: Discover and connect with other wallets and services on the network
 - **Service Advertisements**: Advertise your services (wallet, signer, relay, exchange) to the P2P network
 - **MuSig2 Support**: Multi-signature transaction support via the lotus-sdk
@@ -59,25 +60,73 @@ npm run preview
 
 ```
 lotus-web-wallet/
-├── app.vue              # Main app component
+├── app.vue              # Main app component (initializes wallet store)
 ├── nuxt.config.ts       # Nuxt configuration with Node.js polyfills
 ├── assets/
 │   └── css/main.css     # Tailwind CSS and Nuxt UI Pro imports
 ├── layouts/
-│   └── default.vue      # Main dashboard layout
+│   └── default.vue      # Main dashboard layout (shows loading state)
 ├── pages/
 │   ├── index.vue        # Wallet home/dashboard
-│   ├── send.vue         # Send Lotus page
-│   ├── receive.vue      # Receive Lotus page
+│   ├── send.vue         # Send Lotus page (with contact search)
+│   ├── receive.vue      # Receive Lotus page (QR code)
+│   ├── history.vue      # Transaction history
+│   ├── contacts.vue     # Contact management
 │   ├── discover.vue     # P2P service discovery
 │   └── settings/        # Settings pages
+│       ├── index.vue    # Settings overview
+│       ├── backup.vue   # Seed phrase backup
+│       ├── restore.vue  # Wallet restore
+│       ├── network.vue  # Network settings
+│       └── advertise.vue # Service advertisement
 ├── stores/
 │   ├── wallet.ts        # Wallet state management (dynamic lotus-sdk imports)
+│   ├── contacts.ts      # Contact management with search and P2P integration
 │   └── p2p.ts           # P2P network state
+├── components/
+│   └── contacts/        # Contact-related components
+│       ├── ContactCard.vue   # Contact display card
+│       ├── ContactForm.vue   # Add/edit contact form
+│       └── ContactSearch.vue # Searchable contact input
 ├── stubs/
 │   └── dotenv.js        # Browser stub for dotenv module
-└── components/          # Reusable components
+└── composables/         # Vue composables
 ```
+
+## Architecture
+
+### Initialization Flow
+
+The wallet uses **dynamic imports** for browser compatibility. The initialization flow is:
+
+1. `app.vue` mounts and calls `walletStore.initialize()`
+2. `initialize()` dynamically imports `lotus-sdk` and `chronik-client`
+3. Wallet is created/restored from localStorage
+4. Chronik WebSocket connection is established
+5. `walletStore.initialized` is set to `true`
+
+**Important**: Pages must check `walletStore.initialized` before calling store methods that depend on the SDK. The layout shows a loading spinner while `walletStore.loading` is true.
+
+### State Management
+
+- **Wallet Store** (`stores/wallet.ts`): Manages seed phrase, addresses, UTXOs, balance, and transaction history. Uses `markRaw()` for non-reactive runtime objects (Chronik client, private keys).
+- **Contacts Store** (`stores/contacts.ts`): Manages contact list with CRUD operations, search, tags, and P2P integration. Persisted to localStorage.
+- **P2P Store** (`stores/p2p.ts`): Manages P2P network state, peer discovery, and service advertisements. Initialized on-demand when visiting P2P-related pages.
+
+### Contacts System
+
+The contacts system provides phone-like contact management:
+
+- **Add/Edit/Delete**: Full CRUD operations for contacts
+- **Search**: Real-time search by name, address, or tags
+- **Tags**: Categorize contacts with custom tags
+- **Import/Export**: JSON-based backup and restore
+- **P2P Integration**: Save discovered services as contacts with peer ID tracking
+- **Send Integration**: Search contacts directly from the Send page
+
+### Validation Methods
+
+The `isValidAddress()` and `isValidSeedPhrase()` methods return `false` if the SDK is not yet loaded. Pages should handle this gracefully (e.g., show "Validating..." state).
 
 ## Configuration
 

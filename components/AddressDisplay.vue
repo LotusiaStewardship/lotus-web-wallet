@@ -1,0 +1,91 @@
+<script setup lang="ts">
+import { useAddressFormat } from '~/composables/useUtils'
+
+interface AddressDisplayProps {
+  address: string
+  label?: string
+  showCopy?: boolean
+  showQr?: boolean
+  qrLink?: string
+  /** Always show full address (no truncation) */
+  showFull?: boolean
+}
+
+const props = withDefaults(defineProps<AddressDisplayProps>(), {
+  showCopy: true,
+  showQr: false,
+  showFull: false,
+})
+
+const toast = useToast()
+const { truncateAddress, formatFingerprint } = useAddressFormat()
+
+// Toggle between truncated and full display
+const showFullAddress = ref(props.showFull)
+
+// Computed display value
+const displayAddress = computed(() => {
+  if (showFullAddress.value) return props.address
+  return truncateAddress(props.address)
+})
+
+// Fingerprint for quick identification badge
+const fingerprint = computed(() => formatFingerprint(props.address))
+
+// Copy address to clipboard (always copies full address)
+const copyAddress = async () => {
+  try {
+    await navigator.clipboard.writeText(props.address)
+    toast.add({
+      title: 'Address Copied',
+      description: 'Full address has been copied to clipboard',
+      color: 'success',
+      icon: 'i-lucide-check',
+    })
+  } catch (err) {
+    toast.add({
+      title: 'Copy Failed',
+      description: 'Failed to copy address to clipboard',
+      color: 'error',
+      icon: 'i-lucide-x',
+    })
+  }
+}
+
+// Toggle full address display
+const toggleFullAddress = () => {
+  showFullAddress.value = !showFullAddress.value
+}
+</script>
+
+<template>
+  <div>
+    <p v-if="label" class="text-sm text-muted mb-2">{{ label }}</p>
+    <div class="flex items-center gap-2">
+      <div class="flex-1 relative">
+        <UInput :model-value="displayAddress" readonly class="font-mono text-sm pr-10"
+          :class="{ 'cursor-pointer': !showFull }" @click="!showFull && toggleFullAddress()" />
+        <!-- Expand/collapse button inside input -->
+        <button v-if="!showFull" type="button"
+          class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-muted/50 transition-colors"
+          :title="showFullAddress ? 'Show truncated' : 'Show full address'" @click.stop="toggleFullAddress">
+          <UIcon :name="showFullAddress ? 'i-lucide-minimize-2' : 'i-lucide-maximize-2'"
+            class="w-4 h-4 text-muted hover:text-default" />
+        </button>
+      </div>
+      <UTooltip v-if="showCopy" text="Copy Full Address">
+        <UButton color="neutral" variant="outline" icon="i-lucide-copy" @click="copyAddress" />
+      </UTooltip>
+      <UTooltip v-if="showQr" text="Show QR Code">
+        <UButton color="neutral" variant="outline" icon="i-lucide-qr-code" :to="qrLink" />
+      </UTooltip>
+    </div>
+    <!-- Fingerprint badge for quick identification -->
+    <div v-if="fingerprint && !showFullAddress" class="mt-1.5 flex items-center gap-1.5">
+      <span class="text-xs text-muted">ID:</span>
+      <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
+        {{ fingerprint }}
+      </UBadge>
+    </div>
+  </div>
+</template>

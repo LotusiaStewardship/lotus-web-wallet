@@ -1,0 +1,10 @@
+@import 'tailwindcss';
+@import '@nuxt/ui-pro';
+
+/* Global button cursor fix */
+button,
+[role='button'],
+a[href],
+.cursor-pointer {
+  cursor: pointer;
+}
