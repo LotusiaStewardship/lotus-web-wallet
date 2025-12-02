@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useP2PStore } from '~/stores/p2p'
 import { useWalletStore } from '~/stores/wallet'
+import { useNetworkStore, NETWORK_CONFIGS, type NetworkType } from '~/stores/network'
 
 definePageMeta({
   title: 'Network Settings',
@@ -8,7 +9,60 @@ definePageMeta({
 
 const p2pStore = useP2PStore()
 const walletStore = useWalletStore()
+const networkStore = useNetworkStore()
 const toast = useToast()
+
+// Initialize network store
+onMounted(() => {
+  networkStore.initialize()
+})
+
+// Network switching
+const switchingNetwork = ref(false)
+const showNetworkConfirmModal = ref(false)
+const pendingNetwork = ref<NetworkType | null>(null)
+
+const networkOptions = computed(() => {
+  return Object.values(NETWORK_CONFIGS).map(config => ({
+    label: config.displayName,
+    value: config.name,
+    description: config.isProduction ? 'Production network' : 'Test network',
+    color: config.color,
+  }))
+})
+
+const openNetworkSwitchConfirm = (network: NetworkType) => {
+  if (network === networkStore.currentNetwork) return
+  pendingNetwork.value = network
+  showNetworkConfirmModal.value = true
+}
+
+const confirmNetworkSwitch = async () => {
+  if (!pendingNetwork.value) return
+
+  switchingNetwork.value = true
+  showNetworkConfirmModal.value = false
+
+  try {
+    await walletStore.switchNetwork(pendingNetwork.value)
+    toast.add({
+      title: 'Network Changed',
+      description: `Switched to ${networkStore.displayName}`,
+      color: 'success',
+      icon: 'i-lucide-check',
+    })
+  } catch (err) {
+    toast.add({
+      title: 'Network Switch Failed',
+      description: err instanceof Error ? err.message : 'Failed to switch network',
+      color: 'error',
+      icon: 'i-lucide-x',
+    })
+  } finally {
+    switchingNetwork.value = false
+    pendingNetwork.value = null
+  }
+}
 
 // P2P connection state
 const connecting = ref(false)
@@ -101,15 +155,63 @@ const copyPeerId = async () => {
         Back to Settings
       </NuxtLink>
       <h1 class="text-2xl font-bold">Network Settings</h1>
-      <p class="text-muted">Configure P2P network and blockchain connections</p>
+      <p class="text-muted">Configure blockchain network and P2P connections</p>
     </div>
+
+    <!-- Testnet/Regtest Warning Banner -->
+    <UAlert v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle"
+      icon="i-lucide-alert-triangle">
+      <template #title>{{ networkStore.displayName }} Mode</template>
+      <template #description>
+        You are connected to {{ networkStore.displayName }}. Coins on this network have no real value.
+      </template>
+    </UAlert>
+
+    <!-- Network Selection -->
+    <UCard>
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-globe" class="w-5 h-5" />
+          <span class="font-semibold">Blockchain Network</span>
+        </div>
+      </template>
+
+      <div class="space-y-4">
+        <p class="text-sm text-muted">
+          Select which Lotus network to connect to. Your seed phrase works on all networks.
+        </p>
+
+        <!-- Network Options -->
+        <div class="grid gap-3">
+          <button v-for="option in networkOptions" :key="option.value" :class="[
+            'flex items-center justify-between p-4 rounded-lg border transition-all text-left',
+            networkStore.currentNetwork === option.value
+              ? `border-${option.color}-500 bg-${option.color}-50 dark:bg-${option.color}-900/20`
+              : 'border-default hover:border-primary/50'
+          ]" :disabled="switchingNetwork" @click="openNetworkSwitchConfirm(option.value)">
+            <div class="flex items-center gap-3">
+              <div :class="[
+                'w-3 h-3 rounded-full',
+                networkStore.currentNetwork === option.value ? `bg-${option.color}-500` : 'bg-gray-300 dark:bg-gray-600'
+              ]" />
+              <div>
+                <p class="font-medium">{{ option.label }}</p>
+                <p class="text-sm text-muted">{{ option.description }}</p>
+              </div>
+            </div>
+            <UIcon v-if="networkStore.currentNetwork === option.value" name="i-lucide-check"
+              :class="`w-5 h-5 text-${option.color}-500`" />
+          </button>
+        </div>
+      </div>
+    </UCard>
 
     <!-- Blockchain Connection -->
     <UCard>
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-link" class="w-5 h-5" />
-          <span class="font-semibold">Blockchain Connection</span>
+          <span class="font-semibold">Connection Status</span>
         </div>
       </template>
 
@@ -117,7 +219,7 @@ const copyPeerId = async () => {
         <div class="flex items-center justify-between">
           <div>
             <p class="font-medium">Chronik Server</p>
-            <p class="text-sm text-muted">https://chronik.lotusia.org</p>
+            <p class="text-sm text-muted font-mono">{{ networkStore.chronikUrl }}</p>
           </div>
           <UBadge :color="walletStore.connected ? 'success' : 'error'" variant="subtle">
             {{ walletStore.connected ? 'Connected' : 'Disconnected' }}
@@ -133,6 +235,15 @@ const copyPeerId = async () => {
             <p class="text-sm text-muted">Block Hash</p>
             <p class="font-mono text-xs truncate">{{ walletStore.tipHash || 'N/A' }}</p>
           </div>
+        </div>
+
+        <div v-if="networkStore.explorerUrl" class="pt-2 border-t border-default">
+          <p class="text-sm text-muted mb-1">Block Explorer</p>
+          <a :href="networkStore.explorerUrl" target="_blank"
+            class="text-sm text-primary hover:underline flex items-center gap-1">
+            {{ networkStore.explorerUrl }}
+            <UIcon name="i-lucide-external-link" class="w-3 h-3" />
+          </a>
         </div>
       </div>
     </UCard>
@@ -261,5 +372,46 @@ const copyPeerId = async () => {
         </div>
       </div>
     </UCard>
+
+    <!-- Network Switch Confirmation Modal -->
+    <UModal v-model:open="showNetworkConfirmModal">
+      <template #content>
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-globe" class="w-5 h-5" />
+              <span class="font-semibold">Switch Network</span>
+            </div>
+          </template>
+          <div class="space-y-4">
+            <p>
+              Are you sure you want to switch to
+              <strong>{{ pendingNetwork ? NETWORK_CONFIGS[pendingNetwork].displayName : '' }}</strong>?
+            </p>
+            <UAlert v-if="pendingNetwork && !NETWORK_CONFIGS[pendingNetwork].isProduction" color="warning"
+              variant="subtle" icon="i-lucide-alert-triangle">
+              <template #description>
+                {{ NETWORK_CONFIGS[pendingNetwork].displayName }} coins have no real value.
+                This is for testing purposes only.
+              </template>
+            </UAlert>
+            <p class="text-sm text-muted">
+              Your wallet will reconnect to the new network. Your seed phrase remains the same,
+              but your address will change to match the network format.
+            </p>
+            <div class="flex gap-2">
+              <UButton block :color="pendingNetwork ? NETWORK_CONFIGS[pendingNetwork].color : 'primary'"
+                icon="i-lucide-globe" :loading="switchingNetwork" @click="confirmNetworkSwitch">
+                Switch to {{ pendingNetwork ? NETWORK_CONFIGS[pendingNetwork].displayName : '' }}
+              </UButton>
+              <UButton color="neutral" variant="outline"
+                @click="showNetworkConfirmModal = false; pendingNetwork = null">
+                Cancel
+              </UButton>
+            </div>
+          </div>
+        </UCard>
+      </template>
+    </UModal>
   </div>
 </template>

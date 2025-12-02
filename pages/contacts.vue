@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useContactsStore, type Contact } from '~/stores/contacts'
 import { useWalletStore } from '~/stores/wallet'
+import { useNetworkStore } from '~/stores/network'
 import { useAddressFormat } from '~/composables/useUtils'
 
 definePageMeta({
@@ -9,8 +10,9 @@ definePageMeta({
 
 const contactsStore = useContactsStore()
 const walletStore = useWalletStore()
+const networkStore = useNetworkStore()
 const toast = useToast()
-const { getAddressFingerprint } = useAddressFormat()
+const { getAddressFingerprint, truncateAddress } = useAddressFormat()
 
 // Initialize contacts store
 onMounted(() => {
@@ -283,64 +285,9 @@ const sendToContact = (contact: Contact) => {
 
     <!-- Contact List -->
     <div v-else class="grid gap-3">
-      <div v-for="contact in filteredContacts" :key="contact.id" class="group">
-        <UCard class="hover:ring-2 hover:ring-primary/50 transition-all">
-          <div class="flex items-center gap-4">
-            <!-- Avatar -->
-            <ContactAvatar :name="contact.name" size="lg" />
-
-            <!-- Info -->
-            <div class="flex-1 min-w-0 overflow-hidden">
-              <div class="flex items-center gap-2 mb-1 flex-wrap">
-                <UIcon v-if="contact.isFavorite" name="i-lucide-star" class="w-4 h-4 text-warning-500 shrink-0" />
-                <h3 class="font-semibold truncate max-w-full">{{ contact.name }}</h3>
-                <UBadge v-if="contact.serviceType" color="info" variant="subtle" size="xs">
-                  {{ contact.serviceType }}
-                </UBadge>
-                <UBadge v-if="contact.peerId" color="success" variant="subtle" size="xs">
-                  P2P
-                </UBadge>
-              </div>
-              <p class="text-sm text-muted font-mono truncate max-w-full">
-                <span class="hidden sm:inline">{{ getAddressFingerprint(contact.address) }}</span>
-              </p>
-              <div v-if="contact.tags?.length" class="flex flex-wrap gap-1 mt-1">
-                <UBadge v-for="tag in contact.tags.slice(0, 4)" :key="tag" color="neutral" variant="subtle" size="xs">
-                  {{ tag }}
-                </UBadge>
-              </div>
-            </div>
-
-            <!-- Actions -->
-            <div class="flex items-center gap-1 shrink-0">
-              <UTooltip :text="contact.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'">
-                <UButton :color="contact.isFavorite ? 'warning' : 'neutral'" variant="ghost" size="sm"
-                  :icon="contact.isFavorite ? 'i-lucide-star' : 'i-lucide-star-off'" @click="toggleFavorite(contact)" />
-              </UTooltip>
-              <UTooltip text="Send Lotus">
-                <UButton color="primary" variant="ghost" size="sm" icon="i-lucide-send"
-                  @click="sendToContact(contact)" />
-              </UTooltip>
-              <UTooltip text="Copy Address">
-                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-copy" @click="copyAddress(contact)" />
-              </UTooltip>
-              <UTooltip text="Edit">
-                <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-pencil"
-                  @click="openEditModal(contact)" />
-              </UTooltip>
-              <UTooltip text="Delete">
-                <UButton color="error" variant="ghost" size="sm" icon="i-lucide-trash-2"
-                  @click="openDeleteModal(contact)" />
-              </UTooltip>
-            </div>
-          </div>
-
-          <!-- Notes -->
-          <p v-if="contact.notes" class="text-sm text-muted mt-3 pt-3 border-t border-default">
-            {{ contact.notes }}
-          </p>
-        </UCard>
-      </div>
+      <ContactsContactCard v-for="contact in filteredContacts" :key="contact.id" :contact="contact"
+        @edit="openEditModal" @delete="openDeleteModal" @send="sendToContact" @copy="copyAddress"
+        @toggle-favorite="toggleFavorite" />
     </div>
 
     <!-- Add Contact Modal -->

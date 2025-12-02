@@ -4,11 +4,26 @@
  */
 import { defineStore } from 'pinia'
 
+import type { NetworkType } from './network'
+import { useNetworkStore } from './network'
+
 // Types
+export interface ContactAddresses {
+  /** Mainnet address */
+  livenet?: string
+  /** Testnet address */
+  testnet?: string
+  /** Regtest address */
+  regtest?: string
+}
+
 export interface Contact {
   id: string
   name: string
+  /** @deprecated Use addresses object instead. Kept for backward compatibility. */
   address: string
+  /** Network-specific addresses */
+  addresses?: ContactAddresses
   notes?: string
   avatar?: string // Optional avatar URL or base64
   tags?: string[] // Optional tags for categorization
@@ -30,6 +45,57 @@ const STORAGE_KEY = 'lotus-wallet-contacts'
 // Generate unique ID
 const generateId = () =>
   `contact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+
+/**
+ * Get the address for a contact on the specified network
+ * Falls back to the legacy address field if no network-specific address exists
+ */
+export const getContactAddress = (
+  contact: Contact,
+  network: NetworkType,
+): string | undefined => {
+  // First check network-specific addresses
+  if (contact.addresses?.[network]) {
+    return contact.addresses[network]
+  }
+  // Fall back to legacy address field if it matches the requested network
+  // (determined by the address prefix)
+  if (contact.address) {
+    const addressNetwork = getNetworkFromAddress(contact.address)
+    if (addressNetwork === network) {
+      return contact.address
+    }
+  }
+  return undefined
+}
+
+/**
+ * Determine network from address string
+ */
+const getNetworkFromAddress = (address: string): NetworkType | null => {
+  if (!address || !address.startsWith('lotus')) return null
+  const networkChar = address.charAt(5)
+  switch (networkChar) {
+    case '_':
+      return 'livenet'
+    case 'T':
+      return 'testnet'
+    case 'R':
+      return 'regtest'
+    default:
+      return null
+  }
+}
+
+/**
+ * Check if contact has an address for the specified network
+ */
+export const hasAddressForNetwork = (
+  contact: Contact,
+  network: NetworkType,
+): boolean => {
+  return !!getContactAddress(contact, network)
+}
 
 export const useContactsStore = defineStore('contacts', {
   state: (): ContactsState => ({

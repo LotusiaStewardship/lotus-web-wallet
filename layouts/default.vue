@@ -2,11 +2,18 @@
 import type { NavigationMenuItem } from '@nuxt/ui'
 import { useWalletStore } from '~/stores/wallet'
 import { useP2PStore } from '~/stores/p2p'
+import { useNetworkStore } from '~/stores/network'
 
 const walletStore = useWalletStore()
 const p2pStore = useP2PStore()
+const networkStore = useNetworkStore()
 const route = useRoute()
 const colorMode = useColorMode()
+
+// Initialize network store on mount
+onMounted(() => {
+  networkStore.initialize()
+})
 
 // Navigation items for sidebar
 const navigationItems = computed<NavigationMenuItem[][]>(() => [
@@ -147,10 +154,16 @@ const statusColor = computed(() => {
 
         <template #trailing>
           <div class="flex items-center gap-2">
-            <!-- Network indicator -->
-            <UTooltip text="Network Status">
-              <UButton color="neutral" variant="ghost" size="sm"
-                :icon="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" />
+            <!-- Network indicator - clickable button to network settings -->
+            <UTooltip :text="`${networkStore.displayName} - Click to change network`">
+              <UButton :color="networkStore.isProduction ? 'neutral' : networkStore.color"
+                :variant="networkStore.isProduction ? 'ghost' : 'soft'" size="sm" to="/settings/network"
+                class="gap-1.5">
+                <UIcon :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-4 h-4" />
+                <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="solid" size="xs">
+                  {{ networkStore.displayName }}
+                </UBadge>
+              </UButton>
             </UTooltip>
 
             <!-- Color mode toggle -->
@@ -166,15 +179,28 @@ const statusColor = computed(() => {
         </template>
       </UDashboardNavbar>
 
-      <div class="flex-1 overflow-auto p-6">
-        <!-- Loading State -->
-        <div v-if="walletStore.loading" class="flex flex-col items-center justify-center h-full gap-4">
-          <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
-          <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading...' }}</p>
+      <div class="flex-1 overflow-auto">
+        <!-- Testnet/Regtest Banner -->
+        <div v-if="!networkStore.isProduction" :class="[
+          'px-4 py-2 text-center text-sm font-medium',
+          networkStore.isTestnet ? 'bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-300' : '',
+          networkStore.isRegtest ? 'bg-info-100 dark:bg-info-900/30 text-info-700 dark:text-info-300' : ''
+        ]">
+          <UIcon name="i-lucide-alert-triangle" class="w-4 h-4 inline mr-1" />
+          You are on {{ networkStore.displayName }}. Coins have no real value.
+          <NuxtLink to="/settings/network" class="underline ml-1">Switch network</NuxtLink>
         </div>
 
-        <!-- Main Content -->
-        <slot v-else />
+        <div class="p-6">
+          <!-- Loading State -->
+          <div v-if="walletStore.loading" class="flex flex-col items-center justify-center h-full gap-4">
+            <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
+            <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading...' }}</p>
+          </div>
+
+          <!-- Main Content -->
+          <slot v-else />
+        </div>
       </div>
     </UDashboardPanel>
   </UDashboardGroup>

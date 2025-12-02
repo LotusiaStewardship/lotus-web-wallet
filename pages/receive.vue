@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useWalletStore } from '~/stores/wallet'
+import { useNetworkStore } from '~/stores/network'
 import { useAddressFormat } from '~/composables/useUtils'
 import QRCode from 'qrcode-vue3'
 
@@ -8,6 +9,7 @@ definePageMeta({
 })
 
 const walletStore = useWalletStore()
+const networkStore = useNetworkStore()
 const toast = useToast()
 const { truncateAddress, formatFingerprint } = useAddressFormat()
 
@@ -81,16 +83,26 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
   <div class="max-w-xl mx-auto space-y-6">
     <UCard>
       <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-qr-code" class="w-5 h-5" />
-          <span class="font-semibold">Receive Lotus</span>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-qr-code" class="w-5 h-5" />
+            <span class="font-semibold">Receive Lotus</span>
+          </div>
+          <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle">
+            {{ networkStore.displayName }}
+          </UBadge>
         </div>
       </template>
 
       <div class="text-center space-y-6">
         <!-- QR Code -->
         <div class="flex justify-center">
-          <div class="bg-white p-4 rounded-xl shadow-sm">
+          <div :class="[
+            'p-4 rounded-xl shadow-sm',
+            networkStore.isProduction ? 'bg-white' : '',
+            networkStore.isTestnet ? 'bg-warning-50 ring-2 ring-warning-300' : '',
+            networkStore.isRegtest ? 'bg-info-50 ring-2 ring-info-300' : ''
+          ]">
             <QRCode :value="walletStore.address" :width="qrOptions.width" :height="qrOptions.height"
               :margin="qrOptions.margin" :dots-options="qrOptions.dotsOptions"
               :corners-square-options="qrOptions.cornersSquareOptions"
@@ -112,11 +124,14 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
               {{ displayAddress }}
             </p>
           </div>
-          <!-- Fingerprint badge for quick identification -->
-          <div v-if="!showFullAddress && fingerprint" class="flex items-center justify-center gap-1.5">
+          <!-- Fingerprint and network badges -->
+          <div v-if="!showFullAddress && fingerprint" class="flex items-center justify-center gap-1.5 flex-wrap">
             <span class="text-xs text-muted">Your ID:</span>
             <UBadge color="primary" variant="subtle" size="sm" class="font-mono">
               {{ fingerprint }}
+            </UBadge>
+            <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle" size="sm">
+              {{ networkStore.displayName }}
             </UBadge>
           </div>
         </div>

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { useContactsStore, type Contact } from '~/stores/contacts'
+import { useContactsStore, type Contact, getContactAddress, hasAddressForNetwork } from '~/stores/contacts'
+import { useNetworkStore, NETWORK_CONFIGS } from '~/stores/network'
 import { useAddressFormat } from '~/composables/useUtils'
 
 const props = defineProps<{
   modelValue: string
   placeholder?: string
+  /** If true, only show contacts that have an address for the current network */
+  filterByNetwork?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -13,7 +16,29 @@ const emit = defineEmits<{
 }>()
 
 const contactsStore = useContactsStore()
-const { truncateAddress } = useAddressFormat()
+const networkStore = useNetworkStore()
+const { truncateAddress, getNetworkName } = useAddressFormat()
+
+// Get the address prefix for the current network
+const addressPlaceholder = computed(() => {
+  const config = NETWORK_CONFIGS[networkStore.currentNetwork]
+  return props.placeholder || `Address or contact name (${config.displayName})...`
+})
+
+// Get display name for network (always use "Mainnet" instead of "livenet")
+const getNetworkDisplayName = (network: string) => {
+  switch (network) {
+    case 'livenet': return 'Mainnet'
+    case 'testnet': return 'Testnet'
+    case 'regtest': return 'Regtest'
+    default: return ''
+  }
+}
+
+// Get the address to display for a contact (current network or fallback)
+const getDisplayAddress = (contact: Contact): string => {
+  return getContactAddress(contact, networkStore.currentNetwork) || contact.address
+}
 
 // Local state
 const inputValue = ref(props.modelValue)
@@ -25,12 +50,20 @@ watch(() => props.modelValue, (newVal) => {
   inputValue.value = newVal
 })
 
-// Search results
+// Search results - show contacts when typing a name, hide when typing an address
 const searchResults = computed(() => {
-  if (!inputValue.value || inputValue.value.startsWith('lotus_')) {
-    return []
+  if (!inputValue.value) return []
+  // If it looks like an address (starts with lotus), don't show contact suggestions
+  if (inputValue.value.startsWith('lotus')) return []
+
+  let results = contactsStore.searchContacts(inputValue.value)
+
+  // Filter by network if requested - only show contacts with address for current network
+  if (props.filterByNetwork) {
+    results = results.filter(c => hasAddressForNetwork(c, networkStore.currentNetwork))
   }
-  return contactsStore.searchContacts(inputValue.value).slice(0, 5)
+
+  return results.slice(0, 5)
 })
 
 // Show dropdown when there are results
@@ -45,10 +78,11 @@ const handleInput = (event: Event) => {
   emit('update:modelValue', target.value)
 }
 
-// Handle contact selection
+// Handle contact selection - use the address for the current network
 const selectContact = (contact: Contact) => {
-  inputValue.value = contact.address
-  emit('update:modelValue', contact.address)
+  const address = getDisplayAddress(contact)
+  inputValue.value = address
+  emit('update:modelValue', address)
   emit('select', contact)
   showDropdown.value = false
 }
@@ -91,8 +125,8 @@ const getAvatarColor = (name: string) => {
 
 <template>
   <div class="relative w-full">
-    <UInput ref="inputRef" :model-value="inputValue" :placeholder="placeholder || 'Address or contact name...'"
-      class="w-full" @input="handleInput" @focus="handleFocus" @blur="handleBlur">
+    <UInput ref="inputRef" :model-value="inputValue" :placeholder="addressPlaceholder" class="w-full"
+      @input="handleInput" @focus="handleFocus" @blur="handleBlur">
       <template #leading>
         <UIcon name="i-lucide-search" class="w-4 h-4 text-muted" />
       </template>
@@ -118,9 +152,17 @@ const getAvatarColor = (name: string) => {
 
             <!-- Info -->
             <div class="flex-1 min-w-0">
-              <p class="font-medium text-sm truncate">{{ contact.name }}</p>
+              <div class="flex items-center gap-1">
+                <p class="font-medium text-sm truncate">{{ contact.name }}</p>
+                <UBadge
+                  v-if="getNetworkName(getDisplayAddress(contact)) !== networkStore.currentNetwork && getNetworkName(getDisplayAddress(contact)) !== 'unknown'"
+                  :color="getNetworkName(getDisplayAddress(contact)) === 'livenet' ? 'primary' : getNetworkName(getDisplayAddress(contact)) === 'testnet' ? 'warning' : 'info'"
+                  variant="subtle" size="xs">
+                  {{ getNetworkDisplayName(getNetworkName(getDisplayAddress(contact))) }}
+                </UBadge>
+              </div>
               <p class="text-xs text-muted font-mono truncate">
-                {{ truncateAddress(contact.address) }}
+                {{ truncateAddress(getDisplayAddress(contact)) }}
               </p>
             </div>
 

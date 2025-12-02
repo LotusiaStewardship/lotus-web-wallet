@@ -36,10 +36,13 @@ export default defineNuxtConfig({
   },
 
   // Runtime config
+  // Note: Network-specific URLs are now managed by the network store (stores/network.ts)
+  // These are kept as fallbacks for components that don't use the store
   runtimeConfig: {
     public: {
+      // Default to mainnet URLs - actual URLs come from network store
       chronikUrl: 'https://chronik.lotusia.org',
-      rankApiUrl: 'https://rank-beta.lotusia.org/api/v1',
+      rankApiUrl: 'https://rank.lotusia.org/api/v1',
       explorerUrl: 'https://lotusia.org/explorer',
     },
   },

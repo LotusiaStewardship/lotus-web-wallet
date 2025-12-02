@@ -314,7 +314,7 @@ export const useAddressFormat = () => {
    */
   const getAddressFingerprint = (
     address: string,
-    chunkSize: number = 4,
+    chunkSize: number = 5,
   ): {
     start: string
     end: string
@@ -341,7 +341,7 @@ export const useAddressFormat = () => {
    */
   const formatFingerprint = (
     address: string,
-    chunkSize: number = 4,
+    chunkSize: number = 5,
     separator: string = '·',
   ): string => {
     const fp = getAddressFingerprint(address, chunkSize)
@@ -355,7 +355,7 @@ export const useAddressFormat = () => {
   const fingerprintsMatch = (
     addr1: string,
     addr2: string,
-    chunkSize: number = 4,
+    chunkSize: number = 5,
   ): boolean => {
     const fp1 = getAddressFingerprint(addr1, chunkSize)
     const fp2 = getAddressFingerprint(addr2, chunkSize)

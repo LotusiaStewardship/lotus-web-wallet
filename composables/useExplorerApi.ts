@@ -4,9 +4,13 @@
  */
 
 import type { ScriptChunkPlatformUTF8 } from 'lotus-sdk/lib/rank'
+import { useNetworkStore } from '~/stores/network'
 
-// Explorer API base URL
-const EXPLORER_API_URL = 'https://lotusia.org/api/explorer'
+// Get Explorer API URL from network store
+const getExplorerApiUrl = () => {
+  const networkStore = useNetworkStore()
+  return networkStore.explorerApiUrl || 'https://lotusia.org/api/explorer'
+}
 
 // Types matching the Explorer API response
 export interface ExplorerTxInput {
@@ -101,14 +105,12 @@ export const useExplorerApi = () => {
    */
   const fetchTransaction = async (txid: string): Promise<ExplorerTx | null> => {
     try {
-      const response = await fetch(`${EXPLORER_API_URL}/tx/${txid}`)
-      console.log(response)
+      const response = await fetch(`${getExplorerApiUrl()}/tx/${txid}`)
       if (!response.ok) {
         console.error(`Failed to fetch transaction ${txid}: ${response.status}`)
         return null
       }
       const json = await response.json()
-      console.log(`Fetched transaction ${txid}:`, json)
       return json
     } catch (error) {
       console.error(`Error fetching transaction ${txid}:`, error)
@@ -358,6 +360,6 @@ export const useExplorerApi = () => {
     getTransactionTypeInfo,
     getSentimentInfo,
     formatPlatformName,
-    EXPLORER_API_URL,
+    getExplorerApiUrl,
   }
 }

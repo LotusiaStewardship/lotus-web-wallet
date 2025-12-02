@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useWalletStore } from '~/stores/wallet'
 import { useContactsStore, type Contact } from '~/stores/contacts'
+import { useNetworkStore, NETWORK_CONFIGS } from '~/stores/network'
+import { useAddressFormat } from '~/composables/useUtils'
 
 const props = defineProps<{
   contact?: Contact | null
@@ -17,7 +19,15 @@ const emit = defineEmits<{
 
 const walletStore = useWalletStore()
 const contactsStore = useContactsStore()
+const networkStore = useNetworkStore()
 const toast = useToast()
+const { getNetworkName } = useAddressFormat()
+
+// Get the address prefix for the current network
+const addressPlaceholder = computed(() => {
+  const config = NETWORK_CONFIGS[networkStore.currentNetwork]
+  return `lotus${config.networkChar}...`
+})
 
 // Form state
 const name = ref(props.contact?.name || props.prefillName || '')
@@ -36,7 +46,21 @@ const isEditing = computed(() => !!props.contact)
 const isValidAddress = computed(() => {
   if (!address.value) return null
   if (!walletStore.initialized) return null
-  return walletStore.isValidAddress(address.value)
+  // Check if it's a valid Lotus address format
+  if (!address.value.startsWith('lotus')) return false
+  const network = getNetworkName(address.value)
+  return network !== 'unknown'
+})
+
+// Check if address matches current network
+const addressNetwork = computed(() => {
+  if (!address.value || isValidAddress.value !== true) return null
+  return getNetworkName(address.value)
+})
+
+const isCurrentNetwork = computed(() => {
+  if (!addressNetwork.value) return null
+  return addressNetwork.value === networkStore.currentNetwork
 })
 
 const isValidName = computed(() => {
@@ -73,9 +97,21 @@ const saveContact = async () => {
   saving.value = true
 
   try {
+    // Determine which network this address belongs to
+    const detectedNetwork = addressNetwork.value || networkStore.currentNetwork
+
+    // Build addresses object with the address in the correct network field
+    const addresses: Record<string, string> = {}
+    if (props.contact?.addresses) {
+      // Preserve existing addresses from other networks
+      Object.assign(addresses, props.contact.addresses)
+    }
+    addresses[detectedNetwork] = address.value.trim()
+
     const contactData = {
       name: name.value.trim(),
-      address: address.value.trim(),
+      address: address.value.trim(), // Keep legacy field for backward compatibility
+      addresses,
       notes: notes.value.trim() || undefined,
       tags: parsedTags.value.length > 0 ? parsedTags.value : undefined,
       peerId: peerId.value || undefined,
@@ -140,8 +176,9 @@ const cancel = () => {
 
     <!-- Address -->
     <UFormField label="Lotus Address" required>
-      <UInput v-model="address" placeholder="lotus_..." class="font-mono"
-        :color="isValidAddress === false || addressExists ? 'error' : undefined" :disabled="isEditing">
+      <UInput v-model="address" :placeholder="addressPlaceholder" class="font-mono"
+        :color="isValidAddress === false || addressExists ? 'error' : (isCurrentNetwork === false ? 'warning' : undefined)"
+        :disabled="isEditing">
         <template #leading>
           <UIcon name="i-lucide-wallet" class="w-5 h-5 text-muted" />
         </template>
@@ -156,8 +193,12 @@ const cancel = () => {
         <span v-else-if="addressExists" class="text-error-500">
           This address is already in your contacts
         </span>
+        <span v-else-if="isCurrentNetwork === false" class="text-warning-500">
+          <UIcon name="i-lucide-alert-triangle" class="w-3 h-3 inline" />
+          This is a {{ addressNetwork }} address. You are on {{ networkStore.displayName }}.
+        </span>
         <span v-else-if="isValidAddress === true" class="text-success-500">
-          Valid address
+          Valid {{ networkStore.displayName }} address
         </span>
       </template>
     </UFormField>

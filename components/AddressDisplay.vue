@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useAddressFormat } from '~/composables/useUtils'
+import { useNetworkStore } from '~/stores/network'
 
 interface AddressDisplayProps {
   address: string
@@ -9,16 +10,44 @@ interface AddressDisplayProps {
   qrLink?: string
   /** Always show full address (no truncation) */
   showFull?: boolean
+  /** Show network badge */
+  showNetworkBadge?: boolean
 }
 
 const props = withDefaults(defineProps<AddressDisplayProps>(), {
   showCopy: true,
   showQr: false,
   showFull: false,
+  showNetworkBadge: true,
 })
 
 const toast = useToast()
-const { truncateAddress, formatFingerprint } = useAddressFormat()
+const networkStore = useNetworkStore()
+const { truncateAddress, formatFingerprint, getNetworkName } = useAddressFormat()
+
+// Get network info for the address
+const addressNetwork = computed(() => getNetworkName(props.address))
+const isCurrentNetwork = computed(() => addressNetwork.value === networkStore.currentNetwork)
+const networkBadgeColor = computed(() => {
+  switch (addressNetwork.value) {
+    case 'testnet':
+      return 'warning'
+    case 'regtest':
+      return 'info'
+    default:
+      return 'primary'
+  }
+})
+const networkBadgeLabel = computed(() => {
+  switch (addressNetwork.value) {
+    case 'testnet':
+      return 'TESTNET'
+    case 'regtest':
+      return 'REGTEST'
+    default:
+      return ''
+  }
+})
 
 // Toggle between truncated and full display
 const showFullAddress = ref(props.showFull)
@@ -80,11 +109,21 @@ const toggleFullAddress = () => {
         <UButton color="neutral" variant="outline" icon="i-lucide-qr-code" :to="qrLink" />
       </UTooltip>
     </div>
-    <!-- Fingerprint badge for quick identification -->
-    <div v-if="fingerprint && !showFullAddress" class="mt-1.5 flex items-center gap-1.5">
-      <span class="text-xs text-muted">ID:</span>
-      <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
-        {{ fingerprint }}
+    <!-- Fingerprint and network badges -->
+    <div v-if="(fingerprint && !showFullAddress) || (showNetworkBadge && networkBadgeLabel)"
+      class="mt-1.5 flex items-center gap-1.5 flex-wrap">
+      <template v-if="fingerprint && !showFullAddress">
+        <span class="text-xs text-muted">ID:</span>
+        <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
+          {{ fingerprint }}
+        </UBadge>
+      </template>
+      <UBadge v-if="showNetworkBadge && networkBadgeLabel" :color="networkBadgeColor" variant="subtle" size="xs">
+        {{ networkBadgeLabel }}
+      </UBadge>
+      <UBadge v-if="showNetworkBadge && !isCurrentNetwork && addressNetwork !== 'unknown'" color="error"
+        variant="subtle" size="xs">
+        Wrong Network
       </UBadge>
     </div>
   </div>
