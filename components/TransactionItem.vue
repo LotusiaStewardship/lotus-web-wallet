@@ -78,10 +78,10 @@ const truncatedTxid = computed(() => {
           {{ formatDateTime(timestamp) }}
         </p>
 
-        <a v-if="showExplorer && explorerUrl" :href="`${explorerUrl}/tx/${txid}`" target="_blank"
+        <NuxtLink v-if="showExplorer && explorerUrl" :to="`/explorer/tx/${txid}`"
           class="text-xs text-primary hover:underline font-mono truncate block mt-1">
           {{ truncatedTxid }}
-        </a>
+        </NuxtLink>
       </div>
     </div>
 

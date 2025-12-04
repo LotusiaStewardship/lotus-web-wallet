@@ -210,28 +210,33 @@ const sendToContact = (contact: Contact) => {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold">Contacts</h1>
-        <p class="text-muted">
+  <div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header Card -->
+    <UCard>
+      <div class="text-center py-4">
+        <UIcon name="i-lucide-users" class="w-12 h-12 text-primary mx-auto mb-3" />
+        <h1 class="text-2xl font-bold mb-1">Contacts</h1>
+        <p class="text-muted text-sm">
           {{ contactsStore.contactCount }} contact{{ contactsStore.contactCount !== 1 ? 's' : '' }}
+          <span v-if="contactsStore.favoriteCount > 0"> · {{ contactsStore.favoriteCount }} favorite{{
+            contactsStore.favoriteCount !== 1 ? 's' : '' }}</span>
         </p>
       </div>
-      <div class="flex gap-2">
-        <UDropdownMenu :items="[
-          [
-            { label: 'Export Contacts', icon: 'i-lucide-download', click: exportContacts, disabled: contactsStore.contactCount === 0 },
-            { label: 'Import Contacts', icon: 'i-lucide-upload', click: triggerImport },
-          ],
-        ]">
-          <UButton color="neutral" variant="outline" icon="i-lucide-more-horizontal" />
-        </UDropdownMenu>
-        <UButton color="primary" icon="i-lucide-user-plus" @click="showAddModal = true">
-          Add Contact
-        </UButton>
-      </div>
+    </UCard>
+
+    <!-- Actions Bar -->
+    <div class="flex items-center justify-end gap-2">
+      <UDropdownMenu :items="[
+        [
+          { label: 'Export Contacts', icon: 'i-lucide-download', click: exportContacts, disabled: contactsStore.contactCount === 0 },
+          { label: 'Import Contacts', icon: 'i-lucide-upload', click: triggerImport },
+        ],
+      ]">
+        <UButton color="neutral" variant="outline" icon="i-lucide-more-horizontal" />
+      </UDropdownMenu>
+      <UButton color="primary" icon="i-lucide-user-plus" @click="showAddModal = true">
+        Add Contact
+      </UButton>
     </div>
 
     <!-- Hidden file input for import -->

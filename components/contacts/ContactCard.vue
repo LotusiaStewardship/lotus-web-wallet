@@ -133,9 +133,9 @@ const handleClick = () => {
             {{ networkDisplayName }}
           </UBadge>
         </div>
-        <p class="text-sm text-muted font-mono truncate">
-          {{ truncatedAddressDisplay }}
-        </p>
+        <div class="text-sm">
+          <ExplorerAddressDisplay :address="displayAddress" size="xs" :show-avatar="false" />
+        </div>
         <div v-if="!compact && contact.tags?.length" class="flex flex-wrap gap-1 mt-1">
           <UBadge v-for="tag in contact.tags.slice(0, 3)" :key="tag" color="neutral" variant="subtle" size="xs">
             {{ tag }}

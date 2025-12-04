@@ -4,6 +4,13 @@
  */
 
 import type { ScriptChunkPlatformUTF8 } from 'lotus-sdk/lib/rank'
+import type {
+  Block as ChronikBlock,
+  BlockInfo as ChronikBlockInfo,
+  Tx as ChronikTx,
+  TxInput as ChronikTxInput,
+  TxOutput as ChronikTxOutput,
+} from 'chronik-client'
 import { useNetworkStore } from '~/stores/network'
 
 // Get Explorer API URL from network store
@@ -60,6 +67,93 @@ export interface ExplorerTx {
   network: string
   confirmations: number
   sumBurnedSats: string
+}
+
+/**
+ * Explorer Block type
+ * Extends Chronik Block with miner address and enriched transactions
+ */
+export type ExplorerBlock = ChronikBlock & {
+  minedBy?: string
+  txs: ExplorerTx[]
+}
+
+// Re-export Chronik types for convenience
+export type { ChronikBlock, ChronikBlockInfo, ChronikTx }
+
+// Network overview types
+export interface GeoIPData {
+  country: string
+  countryCode: string
+  region: string
+  regionName: string
+  city: string
+  lat: number
+  lon: number
+  timezone: string
+  isp: string
+  org: string
+  as: string
+}
+
+export interface PeerInfo {
+  id: number
+  addr: string
+  addrlocal?: string
+  services: string
+  relaytxes: boolean
+  lastsend: number
+  lastrecv: number
+  bytessent: number
+  bytesrecv: number
+  conntime: number
+  timeoffset: number
+  pingtime?: number
+  minping?: number
+  version: number
+  subver: string
+  inbound: boolean
+  startingheight: number
+  banscore: number
+  synced_headers: number
+  synced_blocks: number
+  whitelisted: boolean
+  geoip?: GeoIPData
+}
+
+export interface MiningInfo {
+  blocks: number
+  currentblocksize: number
+  currentblocktx: number
+  difficulty: number
+  networkhashps: number
+  pooledtx: number
+  chain: string
+  warnings: string
+}
+
+export interface NetworkOverview {
+  mininginfo: MiningInfo
+  peerinfo: PeerInfo[]
+}
+
+/**
+ * Address transaction with sumBurnedSats
+ * Used in address history responses
+ */
+export type AddressTx = ChronikTx & {
+  sumBurnedSats: string
+}
+
+/**
+ * Address history response from Explorer API
+ */
+export interface AddressHistoryResponse {
+  lastSeen: string | null
+  history: {
+    txs: AddressTx[]
+    numPages: number
+  }
 }
 
 // Transaction type classification
@@ -353,7 +447,140 @@ export const useExplorerApi = () => {
     )
   }
 
+  /**
+   * Fetch network overview (mining info + peers)
+   */
+  const fetchNetworkOverview = async (): Promise<NetworkOverview | null> => {
+    try {
+      const response = await fetch(`${getExplorerApiUrl()}/overview`)
+      if (!response.ok) {
+        console.error(`Failed to fetch network overview: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching network overview:', error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch paginated block list
+   * Returns BlockInfo array (not full blocks with transactions)
+   */
+  const fetchBlocks = async (
+    page: number = 1,
+    pageSize: number = 10,
+  ): Promise<{ blocks: ChronikBlockInfo[]; tipHeight: number } | null> => {
+    try {
+      const response = await fetch(
+        `${getExplorerApiUrl()}/blocks?page=${page}&pageSize=${pageSize}`,
+      )
+      if (!response.ok) {
+        console.error(`Failed to fetch blocks: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching blocks:', error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch single block by hash or height
+   * Returns full block with transactions enriched with sumBurnedSats and minedBy address
+   */
+  const fetchBlock = async (
+    hashOrHeight: string,
+  ): Promise<ExplorerBlock | null> => {
+    try {
+      const response = await fetch(
+        `${getExplorerApiUrl()}/block/${hashOrHeight}`,
+      )
+      if (!response.ok) {
+        console.error(
+          `Failed to fetch block ${hashOrHeight}: ${response.status}`,
+        )
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error(`Error fetching block ${hashOrHeight}:`, error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch address transaction history
+   * Returns transactions with sumBurnedSats added
+   */
+  const fetchAddressHistory = async (
+    address: string,
+    page: number = 1,
+    pageSize: number = 10,
+  ): Promise<AddressHistoryResponse | null> => {
+    try {
+      const response = await fetch(
+        `${getExplorerApiUrl()}/address/${address}?page=${page}&pageSize=${pageSize}`,
+      )
+      if (!response.ok) {
+        console.error(
+          `Failed to fetch address history ${address}: ${response.status}`,
+        )
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error(`Error fetching address history ${address}:`, error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch address balance
+   * Returns balance as a string in sats
+   */
+  const fetchAddressBalance = async (
+    address: string,
+  ): Promise<string | null> => {
+    try {
+      const response = await fetch(
+        `${getExplorerApiUrl()}/address/${address}/balance`,
+      )
+      if (!response.ok) {
+        console.error(
+          `Failed to fetch address balance ${address}: ${response.status}`,
+        )
+        return null
+      }
+      // Balance endpoint returns just a string, not an object
+      return await response.json()
+    } catch (error) {
+      console.error(`Error fetching address balance ${address}:`, error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch blockchain info (tip height, etc.)
+   */
+  const fetchChainInfo = async (): Promise<{ tipHeight: number } | null> => {
+    try {
+      const response = await fetch(`${getExplorerApiUrl()}/chain-info`)
+      if (!response.ok) {
+        console.error(`Failed to fetch chain info: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching chain info:', error)
+      return null
+    }
+  }
+
   return {
+    // Existing methods
     fetchTransaction,
     fetchTransactions,
     parseTransaction,
@@ -361,5 +588,12 @@ export const useExplorerApi = () => {
     getSentimentInfo,
     formatPlatformName,
     getExplorerApiUrl,
+    // New Explorer methods
+    fetchNetworkOverview,
+    fetchBlocks,
+    fetchBlock,
+    fetchAddressHistory,
+    fetchAddressBalance,
+    fetchChainInfo,
   }
 }

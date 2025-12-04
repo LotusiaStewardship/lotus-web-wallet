@@ -101,7 +101,7 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
             'p-4 rounded-xl shadow-sm',
             networkStore.isProduction ? 'bg-white' : '',
             networkStore.isTestnet ? 'bg-warning-50 ring-2 ring-warning-300' : '',
-            networkStore.isRegtest ? 'bg-info-50 ring-2 ring-info-300' : ''
+            /* networkStore.isRegtest ? 'bg-info-50 ring-2 ring-info-300' : '' */
           ]">
             <QRCode :value="walletStore.address" :width="qrOptions.width" :height="qrOptions.height"
               :margin="qrOptions.margin" :dots-options="qrOptions.dotsOptions"
@@ -137,12 +137,16 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
         </div>
 
         <!-- Action Buttons -->
-        <div class="flex gap-2 justify-center">
+        <div class="flex flex-wrap gap-2 justify-center">
           <UButton color="primary" icon="i-lucide-copy" @click="copyAddress">
             Copy Address
           </UButton>
           <UButton v-if="canShare" color="neutral" variant="outline" icon="i-lucide-share-2" @click="shareAddress">
             Share
+          </UButton>
+          <UButton color="neutral" variant="outline" icon="i-lucide-search"
+            :to="`/explorer/address/${walletStore.address}`">
+            View in Explorer
           </UButton>
         </div>
       </div>

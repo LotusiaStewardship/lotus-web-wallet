@@ -80,8 +80,8 @@ const getNetworkFromAddress = (address: string): NetworkType | null => {
       return 'livenet'
     case 'T':
       return 'testnet'
-    case 'R':
-      return 'regtest'
+    /* case 'R':
+      return 'regtest' */
     default:
       return null
   }

@@ -57,6 +57,20 @@ const navigationItems = computed<NavigationMenuItem[][]>(() => [
   ],
   [
     {
+      label: 'Explorer',
+      icon: 'i-lucide-blocks',
+      to: '/explorer',
+      active: route.path.startsWith('/explorer'),
+    },
+    {
+      label: 'Social',
+      icon: 'i-lucide-thumbs-up',
+      to: '/social',
+      active: route.path.startsWith('/social'),
+    },
+  ],
+  [
+    {
       label: 'Settings',
       icon: 'i-lucide-settings',
       to: '/settings',
@@ -110,7 +124,8 @@ const statusColor = computed(() => {
 
       <template #default="{ collapsed }">
         <UNavigationMenu :collapsed="collapsed" :items="navigationItems[0]" orientation="vertical" />
-        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[1]" orientation="vertical" class="mt-auto" />
+        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[1]" orientation="vertical" class="mt-4" />
+        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[2]" orientation="vertical" class="mt-auto" />
       </template>
 
       <template #footer="{ collapsed }">
@@ -184,7 +199,7 @@ const statusColor = computed(() => {
         <div v-if="!networkStore.isProduction" :class="[
           'px-4 py-2 text-center text-sm font-medium',
           networkStore.isTestnet ? 'bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-300' : '',
-          networkStore.isRegtest ? 'bg-info-100 dark:bg-info-900/30 text-info-700 dark:text-info-300' : ''
+          /* networkStore.isRegtest ? 'bg-info-100 dark:bg-info-900/30 text-info-700 dark:text-info-300' : '' */
         ]">
           <UIcon name="i-lucide-alert-triangle" class="w-4 h-4 inline mr-1" />
           You are on {{ networkStore.displayName }}. Coins have no real value.

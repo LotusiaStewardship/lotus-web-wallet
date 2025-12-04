@@ -42,17 +42,24 @@ const refreshHistory = async () => {
 
 <template>
   <div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header Card -->
+    <UCard>
+      <div class="text-center py-4">
+        <UIcon name="i-lucide-history" class="w-12 h-12 text-primary mx-auto mb-3" />
+        <h1 class="text-2xl font-bold mb-1">Transaction History</h1>
+        <p class="text-muted text-sm">{{ walletStore.parsedTransactions.length }} transactions</p>
+      </div>
+    </UCard>
+
     <UCard>
       <template #header>
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-history" class="w-5 h-5" />
-            <span class="font-semibold">Transaction History</span>
+            <UIcon name="i-lucide-list" class="w-5 h-5 text-primary" />
+            <span class="font-semibold">All Transactions</span>
           </div>
-          <UButton color="neutral" variant="ghost" icon="i-lucide-refresh-cw" :loading="walletStore.historyLoading"
-            @click="refreshHistory">
-            Refresh
-          </UButton>
+          <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw"
+            :loading="walletStore.historyLoading" @click="refreshHistory" />
         </div>
       </template>
 

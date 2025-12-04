@@ -103,6 +103,210 @@ export const useValidation = () => {
   return { isSha256, isValidSeedPhraseLength }
 }
 
+// Explorer-specific formatting utilities
+export const useExplorerFormat = () => {
+  /**
+   * Format a Unix timestamp to a human readable string (UTC)
+   */
+  const formatTimestamp = (timestamp: number | string) => {
+    const date = new Date(Number(timestamp) * 1000)
+    return (
+      date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'UTC',
+      }) + ' UTC'
+    )
+  }
+
+  /**
+   * Truncate a sha256 hash (txid, block hash) for display
+   */
+  const truncateTxid = (txid: string, startChars = 16, endChars = 6) => {
+    if (!txid || txid.length <= startChars + endChars + 3) return txid
+    return `${txid.slice(0, startChars)}...${txid.slice(-endChars)}`
+  }
+
+  /**
+   * Truncate a block hash for display (shows end portion)
+   */
+  const truncateBlockHash = (blockHash: string) => {
+    if (!blockHash) return ''
+    return `${blockHash.slice(0, 1)}...${blockHash.slice(-16)}`
+  }
+
+  /**
+   * Convert networkhashps or blocksize to minified format
+   */
+  const toMinifiedNumber = (
+    type: 'hashrate' | 'blocksize',
+    number: number | string,
+  ): string => {
+    const unit = type === 'hashrate' ? 'H' : 'B'
+    const num = Number(number)
+    if (isNaN(num)) return number.toString()
+
+    if (num >= 1_000_000_000_000_000)
+      return `${(num / 1_000_000_000_000_000).toFixed(1)} P${unit}`
+    if (num >= 1_000_000_000_000)
+      return `${(num / 1_000_000_000_000).toFixed(1)} T${unit}`
+    if (num >= 1_000_000_000)
+      return `${(num / 1_000_000_000).toFixed(1)} G${unit}`
+    if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)} M${unit}`
+    if (num >= 1_000) return `${(num / 1000).toFixed(1)} K${unit}`
+    return `${num} ${unit}`
+  }
+
+  /**
+   * Convert seconds to minified time format
+   */
+  const toMinifiedTime = (seconds: number | string) => {
+    const num = Number(seconds)
+    if (isNaN(num)) return seconds.toString()
+
+    if (num >= 3600) return `${(num / 3600).toFixed(1)} hours`
+    if (num >= 60) return `${(num / 60).toFixed(1)} minutes`
+    return `${num.toFixed(1)} seconds`
+  }
+
+  /**
+   * Calculate blocks from tip
+   */
+  const numBlocksFromTip = (tipHeight: number, blockHeight: number) => {
+    return tipHeight - blockHeight + 1
+  }
+
+  /**
+   * Get sentiment color for RANK votes
+   */
+  const getSentimentColor = (
+    sentiment: 'positive' | 'negative' | 'neutral',
+  ) => {
+    switch (sentiment) {
+      case 'positive':
+        return 'success'
+      case 'negative':
+        return 'error'
+      case 'neutral':
+        return 'neutral'
+    }
+  }
+
+  /**
+   * Convert positive and negative vote counts to percentage
+   */
+  const toMinifiedPercent = (positive: string, negative: string): string => {
+    const positiveNum = BigInt(positive)
+    const negativeNum = BigInt(negative)
+    if (positiveNum === 0n && negativeNum === 0n) return '0'
+    if (positiveNum === 0n && negativeNum > 0n) return '0'
+    if (positiveNum > 0n && negativeNum === 0n) return '100'
+    const total = positiveNum + negativeNum
+    const percent = (Number(positiveNum) / Number(total)) * 100
+    return percent.toFixed(1)
+  }
+
+  /**
+   * Get color based on percentage (for vote ratios)
+   * Returns Nuxt UI compatible color names
+   */
+  const toPercentColor = (
+    percentage: string,
+  ): 'success' | 'warning' | 'error' | 'neutral' => {
+    const num = parseFloat(percentage)
+    if (num >= 75) return 'success'
+    if (num >= 50) return 'warning'
+    if (num >= 25) return 'error'
+    return 'neutral'
+  }
+
+  /**
+   * Get ranking change color
+   */
+  const getRankingColor = (change: number) => {
+    return change > 0 ? 'success' : change < 0 ? 'error' : 'neutral'
+  }
+
+  /**
+   * Format ranking change rate as percentage
+   */
+  const formatRate = (rate: number) => {
+    if (!isFinite(rate)) return 'New'
+    return `${Math.abs(rate).toFixed(1)}%`
+  }
+
+  /**
+   * Minified stat count (for large numbers in sats)
+   */
+  const toMinifiedStatCount = (
+    number: number | string,
+    divisor: number = 1_000_000,
+  ) => {
+    const num = Math.floor(Number(number) / divisor)
+    if (num >= 1e9) return `${(num / 1e9).toFixed(1)}B`
+    if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`
+    if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`
+    if (num <= -1e9) return `${(num / 1e9).toFixed(1)}B`
+    if (num <= -1e6) return `${(num / 1e6).toFixed(1)}M`
+    if (num <= -1e3) return `${(num / 1e3).toFixed(1)}K`
+    return `${num}`
+  }
+
+  /**
+   * Truncate post ID for display
+   */
+  const truncatePostId = (postId: string) => {
+    return postId.length > 8 ? `${postId.substring(0, 8)}...` : postId
+  }
+
+  /**
+   * Capitalize first letter of a string
+   */
+  const toUppercaseFirstLetter = (str: string) => {
+    if (!str) return ''
+    return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase()
+  }
+
+  /**
+   * Get external post URL for a platform
+   */
+  const toExternalPostUrl = (
+    platform: string,
+    profileId: string,
+    postId?: string,
+  ) => {
+    if (platform === 'twitter') {
+      if (postId) {
+        return `https://x.com/${profileId}/status/${postId}`
+      }
+      return `https://x.com/${profileId}`
+    }
+    return '#'
+  }
+
+  return {
+    formatTimestamp,
+    truncateTxid,
+    truncateBlockHash,
+    toMinifiedNumber,
+    toMinifiedTime,
+    numBlocksFromTip,
+    getSentimentColor,
+    toMinifiedPercent,
+    toPercentColor,
+    getRankingColor,
+    formatRate,
+    toMinifiedStatCount,
+    truncatePostId,
+    toUppercaseFirstLetter,
+    toExternalPostUrl,
+  }
+}
+
 /**
  * Address formatting utilities for Lotus addresses
  *
@@ -396,6 +600,30 @@ export const useAddressFormat = () => {
     await loadBitcore()
   }
 
+  /**
+   * Convert a P2PKH hash (20-byte hex string) to a Lotus address
+   * The voterId from RANK API is a 20-byte P2PKH hash
+   *
+   * @param hashHex - 20-byte P2PKH hash as hex string (40 characters)
+   * @param network - Network name: 'livenet', 'testnet', or 'regtest'
+   * @returns Lotus address string or null if invalid
+   */
+  const p2pkhHashToAddress = (
+    hashHex: string,
+    network: 'livenet' | 'testnet' | 'regtest' = 'livenet',
+  ): string | null => {
+    if (!hashHex || hashHex.length !== 40) return null
+    if (!Bitcore?.XAddress) return null
+
+    try {
+      const hashBuffer = Buffer.from(hashHex, 'hex')
+      const address = Bitcore.XAddress.fromPublicKeyHash(hashBuffer, network)
+      return address.toString()
+    } catch {
+      return null
+    }
+  }
+
   return {
     truncateAddress,
     parseAddress,
@@ -407,6 +635,7 @@ export const useAddressFormat = () => {
     isMainnet,
     isValidAddress,
     ensureBitcoreLoaded,
+    p2pkhHashToAddress,
     NETWORK_CHARS,
   }
 }

@@ -100,7 +100,8 @@ const explorerUrl = computed(() => {
 </script>
 
 <template>
-  <div class="flex items-center gap-3 py-3">
+  <NuxtLink :to="`/explorer/tx/${transaction.txid}`"
+    class="flex items-center gap-3 py-3 -mx-4 px-4 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
     <!-- Icon -->
     <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0" :class="typeInfo.bgClass">
       <UIcon :name="typeInfo.icon" class="w-5 h-5" :class="typeInfo.textClass" />
@@ -114,7 +115,7 @@ const explorerUrl = computed(() => {
 
         <!-- RANK sentiment badge -->
         <UBadge v-if="transaction.type === 'rank' && sentimentInfo" :color="sentimentInfo.color" variant="subtle"
-          size="xs">
+          size="sm">
           <template #leading>
             <UIcon :name="sentimentInfo.icon" class="w-3 h-3" />
           </template>
@@ -122,7 +123,7 @@ const explorerUrl = computed(() => {
         </UBadge>
 
         <!-- Confirmation status -->
-        <UBadge :color="confirmationStatus.color" variant="subtle" size="xs">
+        <UBadge :color="confirmationStatus.color" variant="subtle" size="sm">
           {{ confirmationStatus.label }}
         </UBadge>
       </div>
@@ -133,7 +134,7 @@ const explorerUrl = computed(() => {
         <template v-if="transaction.type === 'give' || transaction.type === 'receive'">
           <div v-if="transaction.counterpartyAddress" class="flex items-center gap-1.5 text-sm text-muted">
             <span>{{ transaction.type === 'give' ? 'To' : 'From' }}</span>
-            <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
+            <UBadge color="neutral" variant="subtle" size="sm" class="font-mono">
               {{ counterpartyFingerprint }}
             </UBadge>
           </div>
@@ -169,11 +170,10 @@ const explorerUrl = computed(() => {
         {{ formatDateTime(transaction.timestamp) }}
       </p>
 
-      <!-- Explorer link -->
-      <a v-if="showExplorerLink" :href="explorerUrl" target="_blank"
-        class="text-xs text-primary hover:underline font-mono mt-1 inline-block">
+      <!-- Explorer link (only show in non-compact mode since whole item is clickable) -->
+      <span v-if="showExplorerLink && !compact" class="text-xs text-muted font-mono mt-1 inline-block">
         {{ truncatedTxid }}
-      </a>
+      </span>
     </div>
 
     <!-- Right side: Amount + Time -->
@@ -202,5 +202,5 @@ const explorerUrl = computed(() => {
         {{ relativeTime }}
       </p>
     </div>
-  </div>
+  </NuxtLink>
 </template>

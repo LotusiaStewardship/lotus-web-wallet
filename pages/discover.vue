@@ -193,22 +193,25 @@ const sendToService = (service: ServiceAdvertisement) => {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold">Discover Services</h1>
-        <p class="text-muted">Find wallets, signers, and services on the P2P network</p>
+  <div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header Card -->
+    <UCard>
+      <div class="text-center py-4">
+        <UIcon name="i-lucide-compass" class="w-12 h-12 text-primary mx-auto mb-3" />
+        <h1 class="text-2xl font-bold mb-1">Discover Services</h1>
+        <p class="text-muted text-sm">Find wallets, signers, and services on the P2P network</p>
       </div>
-      <div class="flex gap-2">
-        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="refreshing"
-          @click="refreshServices">
-          Refresh
-        </UButton>
-        <UButton color="primary" icon="i-lucide-plus" to="/settings/advertise">
-          Advertise Service
-        </UButton>
-      </div>
+    </UCard>
+
+    <!-- Actions Bar -->
+    <div class="flex items-center justify-end gap-2">
+      <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="refreshing"
+        @click="refreshServices">
+        Refresh
+      </UButton>
+      <UButton color="primary" icon="i-lucide-plus" to="/settings/advertise">
+        Advertise Service
+      </UButton>
     </div>
 
     <!-- P2P Status -->
@@ -293,6 +296,13 @@ const sendToService = (service: ServiceAdvertisement) => {
                 <UBadge v-if="service.capabilities.length > 3" color="neutral" variant="subtle" size="xs">
                   +{{ service.capabilities.length - 3 }} more
                 </UBadge>
+              </div>
+
+              <!-- Wallet Address (if available) -->
+              <div v-if="service.metadata?.walletAddress" class="flex items-center gap-1 mt-1">
+                <span class="text-xs text-muted">Wallet:</span>
+                <ExplorerAddressDisplay :address="(service.metadata.walletAddress as string)" size="xs"
+                  :show-avatar="false" />
               </div>
 
               <!-- Meta -->

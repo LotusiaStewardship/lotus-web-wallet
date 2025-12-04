@@ -24,14 +24,6 @@ const hasActivity = computed(() => {
   return walletStore.parsedTransactions.length > 0 || walletStore.transactionHistory.length > 0
 })
 
-// Network stats for display
-const networkStats = computed(() => [
-  { value: walletStore.tipHeight.toLocaleString(), label: 'Block Height', mono: true },
-  { value: walletStore.utxoCount, label: 'UTXOs', mono: true },
-  { value: p2pStore.peerCount, label: 'P2P Peers', mono: true },
-  { value: p2pStore.serviceCount, label: 'Services', mono: true },
-])
-
 // Fetch transaction history on mount (only if wallet is initialized)
 onMounted(async () => {
   if (walletStore.initialized && walletStore.transactionHistory.length === 0) {
@@ -104,13 +96,41 @@ const quickActions = [
     <!-- Network Stats -->
     <UCard>
       <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-activity" class="w-5 h-5" />
-          <span class="font-semibold">Network Status</span>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-activity" class="w-5 h-5" />
+            <span class="font-semibold">Network Status</span>
+          </div>
+          <UButton variant="ghost" size="sm" to="/explorer">
+            Explorer
+          </UButton>
         </div>
       </template>
 
-      <NetworkStatsGrid :stats="networkStats" :columns="4" />
+      <div class="grid grid-cols-4 gap-4">
+        <!-- Block Height - clickable -->
+        <NuxtLink to="/explorer"
+          class="text-center hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg p-2 -m-2 transition-colors">
+          <div class="text-xl font-bold font-mono">{{ walletStore.tipHeight.toLocaleString() }}</div>
+          <div class="text-xs text-muted">Block Height</div>
+        </NuxtLink>
+        <!-- UTXOs -->
+        <div class="text-center">
+          <div class="text-xl font-bold font-mono">{{ walletStore.utxoCount }}</div>
+          <div class="text-xs text-muted">UTXOs</div>
+        </div>
+        <!-- P2P Peers -->
+        <div class="text-center">
+          <div class="text-xl font-bold font-mono">{{ p2pStore.peerCount }}</div>
+          <div class="text-xs text-muted">P2P Peers</div>
+        </div>
+        <!-- Services -->
+        <NuxtLink to="/discover"
+          class="text-center hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg p-2 -m-2 transition-colors">
+          <div class="text-xl font-bold font-mono">{{ p2pStore.serviceCount }}</div>
+          <div class="text-xs text-muted">Services</div>
+        </NuxtLink>
+      </div>
     </UCard>
 
     <!-- Recent Activity -->
@@ -138,7 +158,7 @@ const quickActions = [
     </UCard>
 
     <!-- Wallet Address -->
-    <UCard>
+    <!-- <UCard>
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-key" class="w-5 h-5" />
@@ -147,6 +167,6 @@ const quickActions = [
       </template>
 
       <AddressDisplay :address="walletStore.address" :show-qr="true" qr-link="/receive" />
-    </UCard>
+    </UCard> -->
   </div>
 </template>

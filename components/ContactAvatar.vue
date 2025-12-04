@@ -1,7 +1,8 @@
 <script setup lang="ts">
 interface ContactAvatarProps {
   name: string
-  size?: 'xs' | 'sm' | 'md' | 'lg'
+  avatar?: string
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
   color?: 'primary' | 'success' | 'info' | 'warning' | 'error'
 }
 
@@ -41,6 +42,8 @@ const sizeClasses = computed(() => {
       return 'w-10 h-10'
     case 'lg':
       return 'w-12 h-12 text-lg'
+    case 'xl':
+      return 'w-16 h-16 text-xl'
     default:
       return 'w-10 h-10'
   }
@@ -48,7 +51,10 @@ const sizeClasses = computed(() => {
 </script>
 
 <template>
-  <div :class="[
+  <!-- Use avatar image if provided -->
+  <img v-if="avatar" :src="avatar" :alt="name" :class="['rounded-full object-cover shrink-0', sizeClasses]" />
+  <!-- Otherwise show initials -->
+  <div v-else :class="[
     'rounded-full flex items-center justify-center dark:text-white text-black font-semibold shrink-0',
     sizeClasses,
     `bg-${avatarColor}-700`,
