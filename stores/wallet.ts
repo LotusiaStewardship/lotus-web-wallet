@@ -135,6 +135,8 @@ export interface DraftTransactionState {
 
 export interface WalletState {
   initialized: boolean
+  /** SDK is loaded and wallet can be used locally (address, signing, etc.) */
+  sdkReady: boolean
   loading: boolean
   loadingMessage: string
   seedPhrase: string
@@ -188,6 +190,7 @@ export const toXPI = (sats: string | number) => {
 export const useWalletStore = defineStore('wallet', {
   state: (): WalletState => ({
     initialized: false,
+    sdkReady: false,
     loading: false,
     loadingMessage: '',
     seedPhrase: '',
@@ -252,8 +255,12 @@ export const useWalletStore = defineStore('wallet', {
 
     /**
      * Initialize the wallet - load from storage or create new
+     * SDK loading and wallet creation are blocking, but network connection happens in background
      */
     async initialize() {
+      // Prevent double initialization
+      if (this.initialized || this.loading) return
+
       this.loading = true
       this.loadingMessage = 'Loading SDK...'
 
@@ -280,16 +287,26 @@ export const useWalletStore = defineStore('wallet', {
           await this.createNewWallet()
         }
 
-        // Initialize Chronik connection
-        await this.initializeChronik()
+        // SDK is ready - wallet can be used locally now
+        this.sdkReady = true
+        this.loading = false
+        this.loadingMessage = ''
 
-        this.initialized = true
+        // Initialize Chronik connection in background (non-blocking)
+        // This allows pages to render while network connects
+        this.initializeChronik()
+          .then(() => {
+            this.initialized = true
+          })
+          .catch(error => {
+            console.error('Failed to connect to network:', error)
+            // Still mark as initialized so UI is usable, just disconnected
+            this.initialized = true
+          })
       } catch (error) {
         console.error('Failed to initialize wallet:', error)
         this.loadingMessage = 'Failed to initialize wallet'
-      } finally {
         this.loading = false
-        this.loadingMessage = ''
       }
     },
 

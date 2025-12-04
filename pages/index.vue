@@ -69,7 +69,14 @@ const quickActions = [
         <template #extra>
           <!-- Connection Status -->
           <div class="mt-4 flex items-center justify-center gap-2">
-            <UBadge :color="walletStore.connected ? 'success' : 'error'" variant="subtle" size="sm">
+            <UBadge v-if="!walletStore.connected && !walletStore.initialized" color="warning" variant="subtle"
+              size="sm">
+              <template #leading>
+                <UIcon name="i-lucide-loader-2" class="w-3 h-3 animate-spin" />
+              </template>
+              Connecting...
+            </UBadge>
+            <UBadge v-else :color="walletStore.connected ? 'success' : 'error'" variant="subtle" size="sm">
               <template #leading>
                 <UIcon :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-3 h-3" />
               </template>

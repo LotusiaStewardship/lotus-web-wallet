@@ -97,7 +97,11 @@ const userMenuItems = computed(() => [
 
 // Connection status
 const connectionStatus = computed(() => {
-  if (!walletStore.initialized) return 'initializing'
+  // SDK not ready yet - still loading
+  if (!walletStore.sdkReady) return 'loading'
+  // SDK ready but not connected yet - connecting in background
+  if (!walletStore.connected && !walletStore.initialized) return 'connecting'
+  // Initialized but disconnected - network issue
   if (!walletStore.connected) return 'disconnected'
   return 'connected'
 })
@@ -139,13 +143,13 @@ const statusColor = computed(() => {
                 <span class="relative inline-flex rounded-full h-2 w-2" :class="{
                   'bg-green-500': connectionStatus === 'connected',
                   'bg-red-500': connectionStatus === 'disconnected',
-                  'bg-yellow-500': connectionStatus === 'initializing',
+                  'bg-yellow-500': connectionStatus === 'connecting' || connectionStatus === 'loading',
                 }" />
               </span>
             </template>
             <span v-if="!collapsed">
               {{ connectionStatus === 'connected' ? 'Online' : connectionStatus === 'disconnected' ? 'Offline' :
-                'Connecting...' }}
+                connectionStatus === 'connecting' ? 'Connecting...' : 'Loading...' }}
             </span>
           </UBadge>
 
@@ -170,11 +174,13 @@ const statusColor = computed(() => {
         <template #trailing>
           <div class="flex items-center gap-2">
             <!-- Network indicator - clickable button to network settings -->
-            <UTooltip :text="`${networkStore.displayName} - Click to change network`">
+            <UTooltip
+              :text="connectionStatus === 'connecting' ? 'Connecting to network...' : `${networkStore.displayName} - Click to change network`">
               <UButton :color="networkStore.isProduction ? 'neutral' : networkStore.color"
                 :variant="networkStore.isProduction ? 'ghost' : 'soft'" size="sm" to="/settings/network"
                 class="gap-1.5">
-                <UIcon :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-4 h-4" />
+                <UIcon v-if="connectionStatus === 'connecting'" name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
+                <UIcon v-else :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-4 h-4" />
                 <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="solid" size="xs">
                   {{ networkStore.displayName }}
                 </UBadge>
@@ -207,13 +213,14 @@ const statusColor = computed(() => {
         </div>
 
         <div class="p-6">
-          <!-- Loading State -->
-          <div v-if="walletStore.loading" class="flex flex-col items-center justify-center h-full gap-4">
+          <!-- SDK Loading State (only shown during initial SDK load, not network connection) -->
+          <div v-if="walletStore.loading && !walletStore.sdkReady"
+            class="flex flex-col items-center justify-center h-full gap-4">
             <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
             <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading...' }}</p>
           </div>
 
-          <!-- Main Content -->
+          <!-- Main Content (shown once SDK is ready, network connects in background) -->
           <slot v-else />
         </div>
       </div>
