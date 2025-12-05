@@ -15,9 +15,13 @@ import {
   isBitcoreLoaded,
 } from '~/plugins/bitcore.client'
 import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
+import type {
+  ChronikClient as ChronikClientType,
+  ScriptEndpoint,
+} from 'chronik-client'
 
 // Chronik client (loaded dynamically)
-let ChronikClient: any
+let ChronikClient: typeof ChronikClientType
 let chronikLoaded = false
 
 const loadChronik = async () => {
@@ -76,7 +80,7 @@ export interface UtxoData {
 
 export interface TransactionHistoryItem {
   txid: string
-  timestamp: number
+  timestamp: string
   blockHeight: number
   isSend: boolean
   amount: string // in sats
@@ -276,7 +280,7 @@ export const useWalletStore = defineStore('wallet', {
     // Private state for runtime objects (not serializable)
     _chronik: null as any,
     _ws: null as any,
-    _scriptEndpoint: null as any,
+    _scriptEndpoint: null as ScriptEndpoint | null,
     _hdPrivkey: null as any,
     _signingKey: null as any,
     _script: null as any,
@@ -639,7 +643,7 @@ export const useWalletStore = defineStore('wallet', {
       // Check for spent inputs (UTXOs being consumed by this transaction)
       for (const input of tx.inputs) {
         if (input.outputScript === scriptHex) {
-          const outpoint = `${input.outpoint.txid}_${input.outpoint.outIdx}`
+          const outpoint = `${input.prevOut.txid}_${input.prevOut.outIdx}`
           if (this.utxos.has(outpoint)) {
             this.utxos.delete(outpoint)
             changed = true
@@ -816,7 +820,9 @@ export const useWalletStore = defineStore('wallet', {
           history.push({
             txid: tx.txid,
             timestamp:
-              tx.block?.timestamp ?? tx.timeFirstSeen ?? Date.now() / 1000,
+              tx.block?.timestamp ??
+              tx.timeFirstSeen ??
+              (Date.now() / 1000).toString(),
             blockHeight,
             isSend,
             amount: netAmount,
@@ -1832,7 +1838,7 @@ export const useWalletStore = defineStore('wallet', {
       // This will be updated when the WebSocket confirms the transaction
       const newHistoryItem: TransactionHistoryItem = {
         txid: result.txid,
-        timestamp: Math.floor(Date.now() / 1000),
+        timestamp: Math.floor(Date.now() / 1000).toString(),
         blockHeight: -1, // Unconfirmed
         isSend: true,
         amount: totalOutputAmount.toString(),
