@@ -12,6 +12,8 @@ interface AddressDisplayProps {
   showFull?: boolean
   /** Show network badge */
   showNetworkBadge?: boolean
+  /** Show address type badge (Modern/Classic) */
+  showTypeBadge?: boolean
 }
 
 const props = withDefaults(defineProps<AddressDisplayProps>(), {
@@ -19,11 +21,12 @@ const props = withDefaults(defineProps<AddressDisplayProps>(), {
   showQr: false,
   showFull: false,
   showNetworkBadge: true,
+  showTypeBadge: true,
 })
 
 const toast = useToast()
 const networkStore = useNetworkStore()
-const { truncateAddress, formatFingerprint, getNetworkName } = useAddressFormat()
+const { truncateAddress, formatFingerprint, getNetworkName, getAddressTypeLabel } = useAddressFormat()
 
 // Get network info for the address
 const addressNetwork = computed(() => getNetworkName(props.address))
@@ -60,6 +63,9 @@ const displayAddress = computed(() => {
 
 // Fingerprint for quick identification badge
 const fingerprint = computed(() => formatFingerprint(props.address))
+
+// Address type info for badge
+const addressTypeInfo = computed(() => getAddressTypeLabel(props.address))
 
 // Copy address to clipboard (always copies full address)
 const copyAddress = async () => {
@@ -109,8 +115,8 @@ const toggleFullAddress = () => {
         <UButton color="neutral" variant="outline" icon="i-lucide-qr-code" :to="qrLink" />
       </UTooltip>
     </div>
-    <!-- Fingerprint and network badges -->
-    <div v-if="(fingerprint && !showFullAddress) || (showNetworkBadge && networkBadgeLabel)"
+    <!-- Fingerprint, address type, and network badges -->
+    <div v-if="(fingerprint && !showFullAddress) || showTypeBadge || (showNetworkBadge && networkBadgeLabel)"
       class="mt-1.5 flex items-center gap-1.5 flex-wrap">
       <template v-if="fingerprint && !showFullAddress">
         <span class="text-xs text-muted">ID:</span>
@@ -118,6 +124,13 @@ const toggleFullAddress = () => {
           {{ fingerprint }}
         </UBadge>
       </template>
+      <!-- Address type badge -->
+      <UTooltip v-if="showTypeBadge" :text="addressTypeInfo.full">
+        <UBadge :color="addressTypeInfo.color as any" variant="subtle" size="sm" class="gap-1">
+          <UIcon :name="addressTypeInfo.icon" class="w-3 h-3" />
+          {{ addressTypeInfo.short }}
+        </UBadge>
+      </UTooltip>
       <UBadge v-if="showNetworkBadge && networkBadgeLabel" :color="networkBadgeColor" variant="subtle" size="xs">
         {{ networkBadgeLabel }}
       </UBadge>

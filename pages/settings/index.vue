@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useWalletStore } from '~/stores/wallet'
+import { useWalletStore, type AddressType } from '~/stores/wallet'
 import { useP2PStore } from '~/stores/p2p'
 import { useAddressFormat } from '~/composables/useUtils'
 
@@ -11,7 +11,7 @@ const walletStore = useWalletStore()
 const p2pStore = useP2PStore()
 const toast = useToast()
 const colorMode = useColorMode()
-const { truncateAddress, formatFingerprint } = useAddressFormat()
+const { truncateAddress, formatFingerprint, getAddressTypeLabel } = useAddressFormat()
 
 // Address display toggle
 const showFullAddress = ref(false)
@@ -19,6 +19,37 @@ const displayAddress = computed(() =>
   showFullAddress.value ? walletStore.address : truncateAddress(walletStore.address)
 )
 const fingerprint = computed(() => formatFingerprint(walletStore.address))
+
+// Address type info
+const addressTypeInfo = computed(() => getAddressTypeLabel(walletStore.address))
+
+// Address type options for the switcher
+const addressTypeOptions = [
+  { value: 'p2tr' as AddressType, label: 'Modern (Taproot)', description: 'Enhanced privacy and features' },
+  { value: 'p2pkh' as AddressType, label: 'Classic', description: 'Traditional address format' },
+]
+
+// Handle address type change
+const handleAddressTypeChange = async (newType: AddressType) => {
+  if (newType === walletStore.addressType) return
+
+  try {
+    await walletStore.switchAddressType(newType)
+    toast.add({
+      title: 'Address Type Changed',
+      description: `Switched to ${newType === 'p2tr' ? 'Modern (Taproot)' : 'Classic'} address`,
+      color: 'success',
+      icon: 'i-lucide-check',
+    })
+  } catch (err) {
+    toast.add({
+      title: 'Failed to Switch',
+      description: 'Could not change address type',
+      color: 'error',
+      icon: 'i-lucide-x',
+    })
+  }
+}
 
 // Settings sections
 const settingsSections = [
@@ -144,7 +175,34 @@ const copyAddress = async () => {
             <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
               {{ fingerprint }}
             </UBadge>
+            <!-- Address type badge -->
+            <UTooltip :text="addressTypeInfo.full">
+              <UBadge :color="addressTypeInfo.color as any" variant="subtle" size="xs" class="gap-1">
+                <UIcon :name="addressTypeInfo.icon" class="w-3 h-3" />
+                {{ addressTypeInfo.short }}
+              </UBadge>
+            </UTooltip>
           </div>
+        </div>
+
+        <!-- Address Type Selector -->
+        <div>
+          <p class="text-sm text-muted mb-2">Address Type</p>
+          <div class="flex gap-2">
+            <UButton v-for="option in addressTypeOptions" :key="option.value"
+              :color="walletStore.addressType === option.value ? 'primary' : 'neutral'"
+              :variant="walletStore.addressType === option.value ? 'solid' : 'outline'" size="sm"
+              :disabled="walletStore.loading" @click="handleAddressTypeChange(option.value)">
+              <UIcon :name="option.value === 'p2tr' ? 'i-lucide-shield-check' : 'i-lucide-key'" class="w-4 h-4 mr-1" />
+              {{ option.label }}
+            </UButton>
+          </div>
+          <p class="text-xs text-muted mt-1.5">
+            {{ walletStore.addressType === 'p2tr'
+              ? 'Modern addresses offer enhanced privacy and advanced scripting capabilities.'
+              : 'Classic addresses use the traditional format compatible with all wallets.'
+            }}
+          </p>
         </div>
 
         <div class="grid grid-cols-2 gap-4">

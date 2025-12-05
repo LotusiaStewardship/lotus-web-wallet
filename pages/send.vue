@@ -15,7 +15,7 @@ const networkStore = useNetworkStore()
 const toast = useToast()
 const route = useRoute()
 const config = useRuntimeConfig()
-const { truncateAddress, getNetworkName } = useAddressFormat()
+const { truncateAddress, getNetworkName, isValidAddress } = useAddressFormat()
 
 // ============================================================================
 // UI-only state (contact names for display, not stored in wallet)
@@ -326,9 +326,7 @@ const validateAddress = (address: string): boolean | null => {
   if (!address.startsWith('lotus')) return false
   const network = getNetworkName(address)
   if (network === 'unknown') return false
-  console.log('Validating address', address, network)
-  console.log('isValidAddress', walletStore.isValidAddress(address))
-  return walletStore.isValidAddress(address)
+  return isValidAddress(address)
 }
 
 // Check if address is for the current network
@@ -428,17 +426,19 @@ const sendTransaction = async () => {
 
   try {
     const txid = await walletStore.sendDraftTransaction()
+
+    // If successful, show the success card with txid, amount, and actions
     txResult.value = { txid, amountXpi: amountToSend }
 
-    toast.add({
+    /* toast.add({
       title: 'Transaction Sent!',
       description: `Successfully sent ${amountToSend.toFixed(2)} XPI`,
       color: 'success',
       icon: 'i-lucide-check-circle',
-    })
+    }) */
 
     // Reset form after successful send
-    resetForm()
+    //resetForm()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to send transaction'
     toast.add({

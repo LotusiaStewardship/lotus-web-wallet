@@ -10,7 +10,7 @@ const route = useRoute()
 const { fetchAddressHistory, fetchAddressBalance } = useExplorerApi()
 const { formatTimestamp, truncateTxid } = useExplorerFormat()
 const { formatXPI } = useLotusUnits()
-const { formatFingerprint, parseAddressSync } = useAddressFormat()
+const { formatFingerprint, parseAddress } = useAddressFormat()
 const { copy } = useClipboard()
 const walletStore = useWalletStore()
 const contactsStore = useContactsStore()
@@ -39,7 +39,7 @@ const contact = computed(() => {
 })
 
 // Parse address info
-const addressInfo = computed(() => parseAddressSync(address.value))
+const addressInfo = computed(() => parseAddress(address.value))
 
 // Fingerprint display
 const fingerprint = computed(() => formatFingerprint(address.value))
@@ -97,7 +97,7 @@ const addressTypeDisplay = computed(() => {
     case 'scripthash':
       return 'P2SH'
     case 'taproot':
-      return 'Taproot'
+      return 'P2TR'
     default:
       return addressInfo.value.type
   }

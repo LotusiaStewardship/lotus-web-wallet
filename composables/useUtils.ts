@@ -315,20 +315,10 @@ export const useExplorerFormat = () => {
  *
  * For display purposes, we omit the redundant "lotus" prefix and show only
  * the unique identifying portion of the address payload.
+ *
+ * NOTE: This composable uses the centralized Bitcore SDK provider from
+ * ~/composables/useBitcore.ts which is initialized by the bitcore.client.ts plugin.
  */
-
-// Bitcore module (loaded dynamically)
-let Bitcore: any = null
-let bitcoreLoaded = false
-
-const loadBitcore = async () => {
-  if (!bitcoreLoaded) {
-    const sdkModule = await import('lotus-sdk')
-    Bitcore = sdkModule.Bitcore
-    bitcoreLoaded = true
-  }
-  return Bitcore
-}
 
 // Network character constants (from XAddress spec)
 // Note: Bitcore uses 'livenet' internally, but we also support 'mainnet' alias
@@ -343,6 +333,10 @@ const NETWORK_CHARS: Record<string, string> = {
 // All P2PKH addresses start with "16PSJ" because it encodes:
 // type byte (0x00) + P2PKH script prefix (OP_DUP OP_HASH160 OP_PUSH20)
 const P2PKH_PAYLOAD_PREFIX = '16PSJ'
+
+// P2TR (Taproot) payload prefix in Base58 encoding
+// P2TR addresses start with "3" because the type byte is 0x02
+const P2TR_PAYLOAD_PREFIX = '3'
 
 export interface ParsedAddress {
   /** The full original address string */
@@ -368,18 +362,31 @@ export interface ParsedAddress {
 }
 
 export const useAddressFormat = () => {
+  // Get Bitcore SDK from centralized provider
+  const { Bitcore } = useBitcore()
+
   /**
    * Parse a Lotus address using Bitcore's XAddress class
    * Returns null for invalid addresses
+   *
+   * The SDK is guaranteed to be loaded by the bitcore.client.ts plugin
+   * before any component renders, so Bitcore.value will always be available.
    */
   const parseAddress = (address: string): ParsedAddress | null => {
     if (!address || typeof address !== 'string') return null
 
+    const sdk = Bitcore.value
+    if (!sdk?.XAddress) {
+      console.warn('Bitcore SDK not available for address parsing')
+      return null
+    }
+
     try {
       // Use XAddress._decode for parsing without full validation
       // This avoids needing to instantiate the full class
-      const decoded = Bitcore?.XAddress?._decode(address)
+      const decoded = sdk.XAddress._decode(address)
       if (!decoded || !decoded.network || !decoded.hashBuffer) {
+        console.warn(`Failed to decode address ${address}`, decoded)
         return null
       }
 
@@ -414,52 +421,9 @@ export const useAddressFormat = () => {
         isP2SH: type === 'scripthash',
         isTaproot: type === 'taproot',
       }
-    } catch {
+    } catch (e) {
+      console.warn(`Error parsing address ${address}:`, e)
       return null
-    }
-  }
-
-  /**
-   * Synchronous address parsing using string manipulation
-   * Used when Bitcore is not yet loaded
-   */
-  const parseAddressSync = (address: string): ParsedAddress | null => {
-    if (!address || typeof address !== 'string') return null
-    if (!address.startsWith('lotus')) return null
-
-    // Find network character position (first uppercase or underscore after 'lotus')
-    const networkCharMatch = address.slice(5).match(/^[_TR]/)
-    if (!networkCharMatch) return null
-
-    const networkChar = networkCharMatch[0]
-    const payload = address.slice(6) // After "lotus" + network char
-
-    let networkName: 'livenet' | 'testnet' | 'regtest'
-    if (networkChar === '_') networkName = 'livenet'
-    else if (networkChar === 'T') networkName = 'testnet'
-    else if (networkChar === 'R') networkName = 'regtest'
-    else return null
-
-    // Determine type from payload prefix
-    const isP2PKH = payload.startsWith(P2PKH_PAYLOAD_PREFIX)
-    const uniquePayload = isP2PKH
-      ? payload.slice(P2PKH_PAYLOAD_PREFIX.length)
-      : payload
-
-    // We can't determine exact type without Bitcore, assume P2PKH if it has the prefix
-    const type = isP2PKH ? 'pubkeyhash' : 'pubkeyhash' // Default assumption
-
-    return {
-      full: address,
-      networkName,
-      networkChar,
-      type,
-      payload,
-      uniquePayload,
-      hashHex: '', // Can't extract without Bitcore
-      isP2PKH,
-      isP2SH: false,
-      isTaproot: false,
     }
   }
 
@@ -481,8 +445,8 @@ export const useAddressFormat = () => {
   ): string => {
     if (!address) return ''
 
-    // Try Bitcore parsing first, fall back to sync parsing
-    const parsed = Bitcore ? parseAddress(address) : parseAddressSync(address)
+    // Parse using Bitcore SDK
+    const parsed = parseAddress(address)
 
     // Handle non-Lotus addresses with simple truncation
     if (!parsed) {
@@ -525,7 +489,7 @@ export const useAddressFormat = () => {
     networkName: string
     networkChar: string
   } | null => {
-    const parsed = Bitcore ? parseAddress(address) : parseAddressSync(address)
+    const parsed = parseAddress(address)
     if (!parsed) return null
 
     const { networkName, networkChar, uniquePayload } = parsed
@@ -573,7 +537,7 @@ export const useAddressFormat = () => {
   const getNetworkName = (
     address: string,
   ): 'livenet' | 'testnet' | 'regtest' | 'unknown' => {
-    const parsed = Bitcore ? parseAddress(address) : parseAddressSync(address)
+    const parsed = parseAddress(address)
     return parsed?.networkName ?? 'unknown'
   }
 
@@ -589,15 +553,9 @@ export const useAddressFormat = () => {
    * Returns true if the address is valid
    */
   const isValidAddress = (address: string, network?: string): boolean => {
-    if (!Bitcore?.XAddress) return false
-    return Bitcore.XAddress.isValid(address, network)
-  }
-
-  /**
-   * Ensure Bitcore is loaded for full functionality
-   */
-  const ensureBitcoreLoaded = async () => {
-    await loadBitcore()
+    const sdk = Bitcore.value
+    if (!sdk?.XAddress) return false
+    return sdk.XAddress.isValid(address, network)
   }
 
   /**
@@ -613,29 +571,93 @@ export const useAddressFormat = () => {
     network: 'livenet' | 'testnet' | 'regtest' = 'livenet',
   ): string | null => {
     if (!hashHex || hashHex.length !== 40) return null
-    if (!Bitcore?.XAddress) return null
+
+    const sdk = Bitcore.value
+    if (!sdk?.Address) return null
 
     try {
       const hashBuffer = Buffer.from(hashHex, 'hex')
-      const address = Bitcore.XAddress.fromPublicKeyHash(hashBuffer, network)
-      return address.toString()
+      // Use Address.fromPublicKeyHash which returns an Address that can be
+      // converted to XAddress format via toXAddress()
+      const address = sdk.Address.fromPublicKeyHash(hashBuffer, network)
+      return address.toXAddress()
     } catch {
       return null
     }
   }
 
+  /**
+   * Get the address type from an address string
+   * Returns 'taproot', 'pubkeyhash', 'scripthash', or 'unknown'
+   */
+  const getAddressType = (
+    address: string,
+  ): 'pubkeyhash' | 'scripthash' | 'taproot' | 'unknown' => {
+    const parsed = parseAddress(address)
+    return parsed?.type ?? 'unknown'
+  }
+
+  /**
+   * Get a user-friendly label for the address type
+   * Returns labels that are understandable to both average and advanced users
+   */
+  const getAddressTypeLabel = (
+    address: string,
+  ): { short: string; full: string; icon: string; color: string } => {
+    const type = getAddressType(address)
+
+    switch (type) {
+      case 'taproot':
+        return {
+          short: 'Modern',
+          full: 'Modern Address (Taproot)',
+          icon: 'i-lucide-shield-check',
+          color: 'success',
+        }
+      case 'pubkeyhash':
+        return {
+          short: 'Classic',
+          full: 'Classic Address',
+          icon: 'i-lucide-key',
+          color: 'neutral',
+        }
+      case 'scripthash':
+        return {
+          short: 'Script',
+          full: 'Script Address',
+          icon: 'i-lucide-file-code',
+          color: 'info',
+        }
+      default:
+        return {
+          short: 'Unknown',
+          full: 'Unknown Address Type',
+          icon: 'i-lucide-help-circle',
+          color: 'warning',
+        }
+    }
+  }
+
+  /**
+   * Check if an address is a Taproot address
+   */
+  const isTaprootAddress = (address: string): boolean => {
+    return getAddressType(address) === 'taproot'
+  }
+
   return {
     truncateAddress,
     parseAddress,
-    parseAddressSync,
     getAddressFingerprint,
     formatFingerprint,
     fingerprintsMatch,
     getNetworkName,
     isMainnet,
     isValidAddress,
-    ensureBitcoreLoaded,
     p2pkhHashToAddress,
+    getAddressType,
+    getAddressTypeLabel,
+    isTaprootAddress,
     NETWORK_CHARS,
   }
 }

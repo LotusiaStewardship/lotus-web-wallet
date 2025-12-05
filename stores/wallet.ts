@@ -1,39 +1,59 @@
 /**
  * Wallet Store
  * Manages wallet state, UTXO cache, and blockchain interactions
+ *
+ * NOTE: This store uses the centralized Bitcore SDK provider from
+ * ~/plugins/bitcore.client.ts which is initialized at app startup.
+ * The SDK is guaranteed to be available before any component renders.
  */
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import { useNetworkStore, type NetworkType } from './network'
+import {
+  getBitcore,
+  ensureBitcore,
+  isBitcoreLoaded,
+} from '~/plugins/bitcore.client'
+import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
 
-// Dynamic imports for browser compatibility
+// Chronik client (loaded dynamically)
 let ChronikClient: any
-let Bitcore: any
-let Networks: any
-let sdkLoaded = false
+let chronikLoaded = false
 
-const loadSDK = async () => {
-  if (!sdkLoaded) {
-    const [chronikModule, sdkModule] = await Promise.all([
-      import('chronik-client'),
-      import('lotus-sdk'),
-    ])
+const loadChronik = async () => {
+  if (!chronikLoaded) {
+    const chronikModule = await import('chronik-client')
     ChronikClient = chronikModule.ChronikClient
-    Bitcore = sdkModule.Bitcore
-    Networks = Bitcore.Networks
-    sdkLoaded = true
+    chronikLoaded = true
   }
-  return { ChronikClient, Bitcore, Networks }
+  return ChronikClient
 }
 
-// Bitcore classes (loaded dynamically)
-let Mnemonic: any
-let HDPrivateKey: any
-let PrivateKey: any
-let Address: any
-let Script: any
-let Transaction: any
-let Message: any
+/**
+ * Get the Bitcore SDK instance
+ * Throws if not loaded (should never happen after plugin initialization)
+ */
+const getBitcoreSDK = (): typeof BitcoreTypes => {
+  const sdk = getBitcore()
+  if (!sdk) {
+    throw new Error('Bitcore SDK not loaded. This should not happen.')
+  }
+  return sdk
+}
+
+// Convenience getters for commonly used Bitcore classes
+// These are functions to ensure we always get the current SDK instance
+const getMnemonic = () => getBitcoreSDK().Mnemonic
+const getHDPrivateKey = () => getBitcoreSDK().HDPrivateKey
+const getPrivateKey = () => getBitcoreSDK().PrivateKey
+const getAddress = () => getBitcoreSDK().Address
+const getScript = () => getBitcoreSDK().Script
+const getTransaction = () => getBitcoreSDK().Transaction
+const getMessage = () => getBitcoreSDK().Message
+const getNetworks = () => getBitcoreSDK().Networks
+const getTweakPublicKey = () => getBitcoreSDK().tweakPublicKey
+const getTweakPrivateKey = () => getBitcoreSDK().tweakPrivateKey
+const getBuildPayToTaproot = () => getBitcoreSDK().buildPayToTaproot
 
 // Constants
 const BIP44_PURPOSE = 44
@@ -133,6 +153,13 @@ export interface DraftTransactionState {
   validationError: string | null
 }
 
+/**
+ * Address type for wallet generation
+ * - 'p2pkh': Pay-to-Public-Key-Hash (legacy, smaller addresses)
+ * - 'p2tr': Pay-to-Taproot (modern, enhanced privacy and script capabilities)
+ */
+export type AddressType = 'p2pkh' | 'p2tr'
+
 export interface WalletState {
   initialized: boolean
   /** SDK is loaded and wallet can be used locally (address, signing, etc.) */
@@ -141,6 +168,8 @@ export interface WalletState {
   loadingMessage: string
   seedPhrase: string
   address: string
+  /** The type of address currently in use */
+  addressType: AddressType
   scriptPayload: string
   balance: WalletBalance
   utxos: Map<string, UtxoData>
@@ -195,6 +224,7 @@ export const useWalletStore = defineStore('wallet', {
     loadingMessage: '',
     seedPhrase: '',
     address: '',
+    addressType: 'p2tr', // Default to Taproot addresses
     scriptPayload: '',
     balance: { total: '0', spendable: '0' },
     utxos: new Map(),
@@ -247,33 +277,37 @@ export const useWalletStore = defineStore('wallet', {
     _chronik: null as any,
     _ws: null as any,
     _scriptEndpoint: null as any,
-    _hdPrivkey: null as InstanceType<typeof HDPrivateKey> | null,
-    _signingKey: null as InstanceType<typeof PrivateKey> | null,
-    _script: null as InstanceType<typeof Script> | null,
+    _hdPrivkey: null as any,
+    _signingKey: null as any,
+    _script: null as any,
+    /** Internal public key for Taproot key-path spending (before tweaking)
+     * Stored as Buffer to avoid Vue reactivity issues with PublicKey class */
+    _internalPubKey: null as any,
+    /** Merkle root is required in UTXO data for Taproot key-path spending */
+    _merkleRoot: null as Buffer | null,
     /** Internal Transaction object for draft transaction building */
-    _draftTransaction: null as InstanceType<typeof Transaction> | null,
+    _draftTransaction: null as any,
 
     /**
      * Initialize the wallet - load from storage or create new
      * SDK loading and wallet creation are blocking, but network connection happens in background
+     *
+     * NOTE: The Bitcore SDK is already loaded by the bitcore.client.ts plugin
+     * before this store is used. We just need to load Chronik separately.
      */
     async initialize() {
       // Prevent double initialization
       if (this.initialized || this.loading) return
 
       this.loading = true
-      this.loadingMessage = 'Loading SDK...'
+      this.loadingMessage = 'Loading...'
 
       try {
-        // Load SDK modules first
-        const { Bitcore: BitcoreModule } = await loadSDK()
-        Mnemonic = BitcoreModule.Mnemonic
-        HDPrivateKey = BitcoreModule.HDPrivateKey
-        PrivateKey = BitcoreModule.PrivateKey
-        Address = BitcoreModule.Address
-        Script = BitcoreModule.Script
-        Transaction = BitcoreModule.Transaction
-        Message = BitcoreModule.Message
+        // Ensure Bitcore SDK is loaded (should already be loaded by plugin)
+        await ensureBitcore()
+
+        // Load Chronik client
+        await loadChronik()
 
         this.loadingMessage = 'Initializing wallet...'
 
@@ -316,6 +350,7 @@ export const useWalletStore = defineStore('wallet', {
     async createNewWallet() {
       this.loadingMessage = 'Generating new wallet...'
 
+      const Mnemonic = getMnemonic()
       const mnemonic = new Mnemonic()
       await this.buildWalletFromMnemonic(mnemonic.toString())
       await this.saveWalletState()
@@ -325,6 +360,7 @@ export const useWalletStore = defineStore('wallet', {
      * Restore wallet from seed phrase
      */
     async restoreWallet(seedPhrase: string) {
+      const Mnemonic = getMnemonic()
       if (!Mnemonic.isValid(seedPhrase)) {
         throw new Error('Invalid seed phrase')
       }
@@ -360,11 +396,61 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
+     * Switch the wallet address type between P2PKH and P2TR
+     * This regenerates the address from the same seed phrase
+     */
+    async switchAddressType(newType: AddressType) {
+      if (this.addressType === newType) return
+      if (!this.seedPhrase) {
+        throw new Error('Wallet not initialized')
+      }
+
+      this.loading = true
+      this.loadingMessage = `Switching to ${
+        newType === 'p2tr' ? 'Modern' : 'Classic'
+      } address...`
+
+      try {
+        // Clear existing state
+        this.transactionHistory = []
+        this.parsedTransactions = []
+        this.utxos = new Map()
+        this.balance = { total: '0', spendable: '0' }
+
+        // Update address type and rebuild wallet
+        this.addressType = newType
+        await this.buildWalletFromMnemonic(this.seedPhrase)
+        await this.saveWalletState()
+
+        // Reconnect Chronik with new address
+        if (this._ws) {
+          try {
+            this._ws.close()
+          } catch {
+            // Ignore close errors
+          }
+        }
+
+        // Re-initialize Chronik with new address
+        await this.initializeChronik()
+      } finally {
+        this.loading = false
+        this.loadingMessage = ''
+      }
+    },
+
+    /**
      * Build wallet state from mnemonic
      * Uses the current network from the network store for address encoding
+     * Supports both P2PKH and P2TR (Taproot) address types
      */
     async buildWalletFromMnemonic(seedPhrase: string) {
       const networkStore = useNetworkStore()
+      const Networks = getNetworks()
+      const Mnemonic = getMnemonic()
+      const HDPrivateKey = getHDPrivateKey()
+      const Address = getAddress()
+      const Script = getScript()
       const network = Networks.get(networkStore.currentNetwork)
 
       const mnemonic = new Mnemonic(seedPhrase)
@@ -376,9 +462,26 @@ export const useWalletStore = defineStore('wallet', {
         .deriveChild(0)
         .deriveChild(0).privateKey
 
-      // Create address with the current network
-      const address = signingKey.toAddress(network)
-      const script = Script.fromAddress(address)
+      let address: any
+      let script: any
+
+      if (this.addressType === 'p2tr') {
+        // Taproot (P2TR) address generation
+        // For key-path-only Taproot, use empty merkle root (all zeros)
+        const internalPubKey = signingKey.publicKey
+        const merkleRoot = Buffer.alloc(32)
+        const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
+        address = Address.fromTaprootCommitment(commitment, network)
+        script = getBuildPayToTaproot()(commitment)
+        // For Taproot, store the internal public key (before tweaking)
+        // This is needed for proper key-path spending
+        this._internalPubKey = signingKey.publicKey
+        this._merkleRoot = merkleRoot
+      } else {
+        // Legacy P2PKH address
+        address = signingKey.toAddress(network)
+        script = Script.fromAddress(address)
+      }
 
       // Store runtime objects (markRaw prevents Vue reactivity which breaks elliptic curve operations)
       this._hdPrivkey = markRaw(hdPrivkey)
@@ -400,6 +503,11 @@ export const useWalletStore = defineStore('wallet', {
       savedState: Partial<WalletState> & { seedPhrase: string },
     ) {
       this.loadingMessage = 'Loading wallet...'
+
+      // Restore address type before building wallet (affects address generation)
+      if (savedState.addressType) {
+        this.addressType = savedState.addressType
+      }
 
       await this.buildWalletFromMnemonic(savedState.seedPhrase)
 
@@ -425,6 +533,7 @@ export const useWalletStore = defineStore('wallet', {
       const state = {
         seedPhrase: this.seedPhrase,
         address: this.address,
+        addressType: this.addressType,
         scriptPayload: this.scriptPayload,
         balance: this.balance,
         utxos: Object.fromEntries(this.utxos),
@@ -432,6 +541,14 @@ export const useWalletStore = defineStore('wallet', {
         tipHash: this.tipHash,
       }
       localStorage.setItem('lotus-wallet-state', JSON.stringify(state))
+    },
+
+    /**
+     * Get the Chronik script type for the current address type
+     * Chronik uses 'p2tr-commitment' for key-path-only Taproot (no state)
+     */
+    getChronikScriptType(): 'p2pkh' | 'p2tr-commitment' {
+      return this.addressType === 'p2tr' ? 'p2tr-commitment' : 'p2pkh'
     },
 
     /**
@@ -443,10 +560,11 @@ export const useWalletStore = defineStore('wallet', {
 
       const networkStore = useNetworkStore()
       const chronikUrl = networkStore.chronikUrl
+      const scriptType = this.getChronikScriptType()
 
       this._chronik = markRaw(new ChronikClient(chronikUrl))
       this._scriptEndpoint = markRaw(
-        this._chronik.script('p2pkh', this.scriptPayload),
+        this._chronik.script(scriptType, this.scriptPayload),
       )
 
       // Fetch blockchain info
@@ -484,7 +602,7 @@ export const useWalletStore = defineStore('wallet', {
       })
 
       await this._ws.waitForOpen()
-      this._ws.subscribe('p2pkh', this.scriptPayload)
+      this._ws.subscribe(scriptType, this.scriptPayload)
     },
 
     /**
@@ -678,6 +796,7 @@ export const useWalletStore = defineStore('wallet', {
           let counterpartyAddress = ''
           if (counterpartyScript) {
             try {
+              const Script = getScript()
               const scriptBuf = Buffer.from(counterpartyScript, 'hex')
               const script = new Script(scriptBuf)
               const addr = script.toAddress()
@@ -795,6 +914,9 @@ export const useWalletStore = defineStore('wallet', {
         throw new Error('Wallet not initialized')
       }
 
+      const Address = getAddress()
+      const Transaction = getTransaction()
+
       // Validate address using Bitcore's Address class
       if (!Address.isValid(toAddress)) {
         throw new Error('Invalid address format')
@@ -815,6 +937,11 @@ export const useWalletStore = defineStore('wallet', {
       const tx = new Transaction()
       const spentInputs: string[] = []
 
+      // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
+      // the fee calculation will be incorrect
+      tx.change(this.address)
+      tx.feePerByte(effectiveFeeRate)
+
       // Get spendable UTXOs sorted by value ascending for optimal selection
       const sortedUtxos = Array.from(this.utxos.entries())
         .filter(([_, utxo]) => {
@@ -827,23 +954,27 @@ export const useWalletStore = defineStore('wallet', {
         })
         .sort((a, b) => Number(BigInt(a[1].value) - BigInt(b[1].value)))
 
-      // Add all available UTXOs as inputs
+      // Add all available UTXOs as inputs with proper Taproot metadata if applicable
       for (const [outpoint, utxo] of sortedUtxos) {
         const [txid, outIdx] = outpoint.split('_')
-        tx.from({
+        const utxoData: any = {
           txid,
           outputIndex: Number(outIdx),
           script: this._script.toHex(),
           satoshis: Number(utxo.value),
-        })
+        }
+        // For Taproot inputs, include internal public key and merkle root for key-path spending
+        if (this.addressType === 'p2tr') {
+          utxoData.internalPubKey = this._internalPubKey
+          utxoData.merkleRoot = this._merkleRoot
+        }
+        tx.from(utxoData)
         spentInputs.push(outpoint)
       }
 
       // Set recipient, change address, and fee rate
       // Transaction class handles fee calculation and change output automatically
       tx.to(toAddress, amountSats)
-      tx.change(this.address)
-      tx.feePerByte(effectiveFeeRate)
 
       // Verify we have sufficient funds
       const inputAmount = tx.inputAmount
@@ -854,8 +985,16 @@ export const useWalletStore = defineStore('wallet', {
         throw new Error('Insufficient balance for amount + fee')
       }
 
-      // Sign and broadcast
-      tx.sign(this._signingKey)
+      // Sign transaction
+      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
+      // For P2PKH, use standard ECDSA signatures
+      if (this.addressType === 'p2tr') {
+        tx.signSchnorr(this._signingKey)
+      } else {
+        tx.sign(this._signingKey)
+      }
+
+      // Broadcast
       const result = await this._chronik.broadcastTx(tx.toBuffer())
 
       // Remove spent UTXOs (only the ones actually used)
@@ -897,6 +1036,9 @@ export const useWalletStore = defineStore('wallet', {
       if (!this._chronik || !this._signingKey || !this._script) {
         throw new Error('Wallet not initialized')
       }
+
+      const Address = getAddress()
+      const Transaction = getTransaction()
 
       const {
         recipients,
@@ -969,15 +1111,21 @@ export const useWalletStore = defineStore('wallet', {
       // Build transaction using Transaction's built-in fee estimation
       const tx = new Transaction()
 
-      // Add inputs
+      // Add inputs with proper Taproot metadata if applicable
       for (const [outpoint, utxo] of availableUtxos) {
         const [txid, outIdx] = outpoint.split('_')
-        tx.from({
+        const utxoData: any = {
           txid,
           outputIndex: Number(outIdx),
           script: this._script.toHex(),
           satoshis: Number(utxo.value),
-        })
+        }
+        // For Taproot inputs, include internal public key for key-path spending
+        if (this.addressType === 'p2tr') {
+          utxoData.internalPubKey = this._internalPubKey
+          utxoData.merkleRoot = this._merkleRoot
+        }
+        tx.from(utxoData)
       }
 
       // Add recipient outputs
@@ -1040,8 +1188,16 @@ export const useWalletStore = defineStore('wallet', {
         }
       }
 
-      // Sign and broadcast
-      tx.sign(this._signingKey)
+      // Sign transaction
+      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
+      // For P2PKH, use standard ECDSA signatures
+      if (this.addressType === 'p2tr') {
+        tx.signSchnorr(this._signingKey)
+      } else {
+        tx.sign(this._signingKey)
+      }
+
+      // Broadcast
       const result = await this._chronik.broadcastTx(tx.toBuffer())
 
       // Remove spent UTXOs
@@ -1072,6 +1228,8 @@ export const useWalletStore = defineStore('wallet', {
       this._draftTransaction = null
       this.draftTx = createInitialDraftTx()
 
+      const Transaction = getTransaction()
+
       // Calculate available input amount from UTXOs
       const availableUtxos = this._getAvailableUtxos()
       const inputAmount = availableUtxos.reduce(
@@ -1081,21 +1239,27 @@ export const useWalletStore = defineStore('wallet', {
       this.draftTx.inputAmount = inputAmount
 
       // Calculate max sendable (estimate with a single output)
-      if (availableUtxos.length > 0 && this._script && Transaction) {
+      if (availableUtxos.length > 0 && this._script) {
         const txForMax = new Transaction()
         // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
         // the fee calculation will be incorrect
         txForMax.change(this.address)
         txForMax.feePerByte(this.draftTx.feeRate)
-        // Add inputs
+        // Add inputs with proper Taproot metadata if applicable
         for (const [outpoint, utxo] of availableUtxos) {
           const [txid, outIdx] = outpoint.split('_')
-          txForMax.from({
+          const utxoData: any = {
             txid,
             outputIndex: Number(outIdx),
             script: this._script.toHex(),
             satoshis: Number(utxo.value),
-          })
+          }
+          // For Taproot inputs, include internal public key for key-path spending
+          if (this.addressType === 'p2tr') {
+            utxoData.internalPubKey = this._internalPubKey
+            utxoData.merkleRoot = this._merkleRoot
+          }
+          txForMax.from(utxoData)
         }
         // Add recipient output
         txForMax.to(this.address, Number(inputAmount))
@@ -1268,11 +1432,14 @@ export const useWalletStore = defineStore('wallet', {
       // -----------------------------------------------------------------------
       // Step 1: Validate prerequisites
       // -----------------------------------------------------------------------
-      if (!this._script || !Transaction || !Address) {
+      if (!this._script || !isBitcoreLoaded()) {
         this.draftTx.isValid = false
         this.draftTx.validationError = 'Wallet not initialized'
         return
       }
+
+      const Address = getAddress()
+      const Transaction = getTransaction()
 
       const availableUtxos = this._getAvailableUtxos()
       if (availableUtxos.length === 0) {
@@ -1386,15 +1553,21 @@ export const useWalletStore = defineStore('wallet', {
       feeEstTx.change(this.address)
       feeEstTx.feePerByte(feeRate)
 
-      // Add all inputs
+      // Add all inputs with proper Taproot metadata if applicable
       for (const [outpoint, utxo] of availableUtxos) {
         const [txid, outIdx] = outpoint.split('_')
-        feeEstTx.from({
+        const utxoData: any = {
           txid,
           outputIndex: Number(outIdx),
           script: this._script.toHex(),
           satoshis: Number(utxo.value),
-        })
+        }
+        // For Taproot inputs, include internal public key for key-path spending
+        if (this.addressType === 'p2tr') {
+          utxoData.internalPubKey = this._internalPubKey
+          utxoData.merkleRoot = this._merkleRoot
+        }
+        feeEstTx.from(utxoData)
       }
 
       // Add regular recipient outputs
@@ -1441,15 +1614,21 @@ export const useWalletStore = defineStore('wallet', {
       tx.feePerByte(feeRate)
       tx.change(this.address)
 
-      // Add all inputs
+      // Add all inputs with proper Taproot metadata if applicable
       for (const [outpoint, utxo] of availableUtxos) {
         const [txid, outIdx] = outpoint.split('_')
-        tx.from({
+        const utxoData: any = {
           txid,
           outputIndex: Number(outIdx),
           script: this._script.toHex(),
           satoshis: Number(utxo.value),
-        })
+        }
+        // For Taproot inputs, include internal public key and merkle root for key-path spending
+        if (this.addressType === 'p2tr') {
+          utxoData.internalPubKey = this._internalPubKey
+          utxoData.merkleRoot = this._merkleRoot
+        }
+        tx.from(utxoData)
       }
 
       // Add regular recipient outputs
@@ -1626,7 +1805,15 @@ export const useWalletStore = defineStore('wallet', {
       )
 
       // Sign the transaction
-      this._draftTransaction.sign(this._signingKey)
+      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
+      // For P2PKH, use standard ECDSA signatures
+      if (this.addressType === 'p2tr') {
+        this._draftTransaction.signSchnorr(this._signingKey)
+      } else {
+        this._draftTransaction.sign(this._signingKey)
+      }
+
+      console.log(this._draftTransaction.toJSON())
 
       // Broadcast
       const result = await this._chronik.broadcastTx(
@@ -1670,6 +1857,7 @@ export const useWalletStore = defineStore('wallet', {
       if (!this._signingKey) {
         throw new Error('Wallet not initialized')
       }
+      const Message = getMessage()
       const message = new Message(text)
       return message.sign(this._signingKey)
     },
@@ -1678,6 +1866,7 @@ export const useWalletStore = defineStore('wallet', {
      * Verify a signed message
      */
     verifyMessage(text: string, address: string, signature: string): boolean {
+      const Message = getMessage()
       const message = new Message(text)
       return message.verify(address, signature)
     },
@@ -1686,7 +1875,8 @@ export const useWalletStore = defineStore('wallet', {
      * Validate a seed phrase
      */
     isValidSeedPhrase(seedPhrase: string): boolean {
-      if (!sdkLoaded || !Mnemonic) return false
+      if (!isBitcoreLoaded()) return false
+      const Mnemonic = getMnemonic()
       return Mnemonic.isValid(seedPhrase)
     },
 
@@ -1694,7 +1884,8 @@ export const useWalletStore = defineStore('wallet', {
      * Validate a Lotus address
      */
     isValidAddress(address: string): boolean {
-      if (!sdkLoaded || !Address) return false
+      if (!isBitcoreLoaded()) return false
+      const Address = getAddress()
       return Address.isValid(address)
     },
 
@@ -1703,7 +1894,8 @@ export const useWalletStore = defineStore('wallet', {
      */
     async disconnect() {
       if (this._ws) {
-        this._ws.unsubscribe('p2pkh', this.scriptPayload)
+        const scriptType = this.getChronikScriptType()
+        this._ws.unsubscribe(scriptType, this.scriptPayload)
         this._ws.close()
       }
       this.connected = false
@@ -1726,7 +1918,8 @@ export const useWalletStore = defineStore('wallet', {
         // Disconnect existing WebSocket
         if (this._ws) {
           try {
-            this._ws.unsubscribe('p2pkh', this.scriptPayload)
+            const scriptType = this.getChronikScriptType()
+            this._ws.unsubscribe(scriptType, this.scriptPayload)
             this._ws.close()
           } catch {
             // Ignore close errors

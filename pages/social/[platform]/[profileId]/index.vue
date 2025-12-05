@@ -20,7 +20,7 @@ const {
   getRankingColor,
 } = useExplorerFormat()
 const { formatXPI } = useLotusUnits()
-const { p2pkhHashToAddress, ensureBitcoreLoaded } = useAddressFormat()
+const { p2pkhHashToAddress } = useAddressFormat()
 
 // Route params
 const platform = computed(() => route.params.platform as ScriptChunkPlatformUTF8)
@@ -92,8 +92,8 @@ watch([postsPage, postsPageSize], fetchPosts)
 watch([votesPage, votesPageSize], fetchVotes)
 
 // Initial fetch
+// Note: Bitcore SDK is loaded by the bitcore.client.ts plugin before components render
 onMounted(async () => {
-  await ensureBitcoreLoaded()
   await fetchProfileData()
   await Promise.all([fetchPosts(), fetchVotes()])
 })

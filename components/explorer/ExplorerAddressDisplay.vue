@@ -8,6 +8,8 @@ interface ExplorerAddressDisplayProps {
   linkToExplorer?: boolean
   showAvatar?: boolean
   showAddContact?: boolean
+  /** Show address type indicator (Modern/Classic) */
+  showAddressType?: boolean
   size?: 'xs' | 'sm' | 'md'
 }
 
@@ -15,13 +17,14 @@ const props = withDefaults(defineProps<ExplorerAddressDisplayProps>(), {
   linkToExplorer: true,
   showAvatar: true,
   showAddContact: false,
+  showAddressType: false,
   size: 'sm',
 })
 
 const contactsStore = useContactsStore()
 const walletStore = useWalletStore()
 const networkStore = useNetworkStore()
-const { formatFingerprint, truncateAddress } = useAddressFormat()
+const { formatFingerprint, truncateAddress, getAddressTypeLabel } = useAddressFormat()
 
 // Initialize contacts store
 onMounted(() => {
@@ -77,6 +80,9 @@ const badgeColor = computed(() => {
   if (contact.value) return 'primary'
   return 'neutral'
 })
+
+// Address type info
+const addressTypeInfo = computed(() => getAddressTypeLabel(props.address))
 </script>
 
 <template>
@@ -105,6 +111,15 @@ const badgeColor = computed(() => {
       :class="size === 'xs' ? 'text-xs' : 'text-sm'">
       ({{ fingerprint }})
     </span>
+
+    <!-- Address type indicator -->
+    <UTooltip v-if="showAddressType" :text="addressTypeInfo.full">
+      <UBadge :color="addressTypeInfo.color as any" variant="subtle" :size="size === 'xs' ? 'sm' : 'md'"
+        class="gap-0.5">
+        <UIcon :name="addressTypeInfo.icon" :class="size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'" />
+        <span v-if="size !== 'xs'">{{ addressTypeInfo.short }}</span>
+      </UBadge>
+    </UTooltip>
 
     <!-- Add to contacts button -->
     <AddToContactButton v-if="showAddContact" :address="address" :size="size === 'xs' ? 'xs' : 'sm'" variant="icon" />
