@@ -15,7 +15,7 @@ const networkStore = useNetworkStore()
 const toast = useToast()
 const route = useRoute()
 const config = useRuntimeConfig()
-const { truncateAddress, getNetworkName, isValidAddress } = useAddressFormat()
+const { formatFingerprint, getNetworkName, isValidAddress } = useAddressFormat()
 
 // ============================================================================
 // UI-only state (contact names for display, not stored in wallet)
@@ -86,6 +86,7 @@ watch(advancedMode, (enabled) => {
 // Recipients (from store)
 // ============================================================================
 const recipients = computed(() => walletStore.draftTx.recipients)
+const isMultiSend = computed(() => walletStore.draftTx.recipients.length > 1)
 
 const addRecipient = () => {
   walletStore.addDraftRecipient()
@@ -542,20 +543,20 @@ const formatNumber = (num: number) => {
           <div>
             <div class="flex items-center justify-between mb-3">
               <label class="text-sm font-medium">
-                {{ recipients.length > 1 ? 'Recipients' : 'Send to' }}
+                {{ isMultiSend ? 'Recipients' : 'Send to' }}
               </label>
-              <UButton v-if="recipients.length > 1 || advancedMode" color="primary" variant="ghost" size="xs"
-                icon="i-lucide-plus" @click="addRecipient">
+              <UButton v-if="isMultiSend || advancedMode" color="primary" variant="ghost" size="xs" icon="i-lucide-plus"
+                @click="addRecipient">
                 Add Recipient
               </UButton>
             </div>
 
             <div class="space-y-3">
               <div v-for="(recipient, index) in recipients" :key="recipient.id"
-                :class="['rounded-lg', recipients.length > 1 ? 'p-4 bg-muted/30 space-y-3' : 'space-y-3']">
+                :class="['rounded-lg', isMultiSend ? 'p-4 bg-muted/30 space-y-3' : 'space-y-3']">
 
                 <!-- Multi-recipient header -->
-                <div v-if="recipients.length > 1" class="flex items-center justify-between">
+                <div v-if="isMultiSend" class="flex items-center justify-between">
                   <span class="text-xs font-medium text-muted">Recipient {{ index + 1 }}</span>
                   <UButton color="error" variant="ghost" size="xs" icon="i-lucide-x"
                     @click="removeRecipient(recipient.id)" />
@@ -567,7 +568,7 @@ const formatNumber = (num: number) => {
                   <ContactAvatar :name="getContactName(recipient.id)!" size="sm" />
                   <div class="flex-1 min-w-0">
                     <p class="font-medium text-sm">{{ getContactName(recipient.id) }}</p>
-                    <p class="text-xs text-muted font-mono truncate">{{ truncateAddress(recipient.address) }}</p>
+                    <p class="text-xs text-muted font-mono truncate">{{ formatFingerprint(recipient.address) }}</p>
                   </div>
                   <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-x"
                     @click="clearRecipient(recipient.id)" />

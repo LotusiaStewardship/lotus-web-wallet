@@ -11,7 +11,7 @@ definePageMeta({
 const walletStore = useWalletStore()
 const networkStore = useNetworkStore()
 const toast = useToast()
-const { truncateAddress, formatFingerprint } = useAddressFormat()
+const { formatFingerprint } = useAddressFormat()
 
 // QR Code options
 const qrOptions = {
@@ -72,10 +72,7 @@ const shareAddress = async () => {
 const canShare = computed(() => typeof navigator !== 'undefined' && !!navigator.share)
 
 // Toggle between truncated and full address display
-const showFullAddress = ref(false)
-const displayAddress = computed(() =>
-  showFullAddress.value ? walletStore.address : truncateAddress(walletStore.address)
-)
+const displayAddress = computed(() => walletStore.address)
 const fingerprint = computed(() => formatFingerprint(walletStore.address))
 </script>
 
@@ -112,25 +109,18 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
 
         <!-- Address Display -->
         <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <p class="text-sm text-muted">Your Lotus Address</p>
-            <button type="button" class="text-xs text-primary hover:underline"
-              @click="showFullAddress = !showFullAddress">
-              {{ showFullAddress ? 'Show less' : 'Show full' }}
-            </button>
-          </div>
-          <div class="bg-muted/50 rounded-lg p-4 cursor-pointer" @click="showFullAddress = !showFullAddress">
+          <div class="bg-muted/50 rounded-lg p-4 cursor-pointer">
             <p class="font-mono text-sm break-all select-all">
               {{ displayAddress }}
             </p>
           </div>
           <!-- Fingerprint and network badges -->
-          <div v-if="!showFullAddress && fingerprint" class="flex items-center justify-center gap-1.5 flex-wrap">
-            <span class="text-xs text-muted">Your ID:</span>
-            <UBadge color="primary" variant="subtle" size="sm" class="font-mono">
+          <div v-if="fingerprint" class="flex items-center justify-center gap-1.5 flex-wrap">
+            <span class="text-sm text-muted">Your ID:</span>
+            <UBadge color="primary" variant="subtle" size="md" class="font-mono">
               {{ fingerprint }}
             </UBadge>
-            <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle" size="sm">
+            <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle" size="md">
               {{ networkStore.displayName }}
             </UBadge>
           </div>
