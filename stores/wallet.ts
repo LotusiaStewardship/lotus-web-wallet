@@ -286,11 +286,9 @@ export const useWalletStore = defineStore('wallet', {
     _script: null as any,
     /** Internal public key for Taproot key-path spending (before tweaking)
      * Stored as Buffer to avoid Vue reactivity issues with PublicKey class */
-    _internalPubKey: null as any,
+    _internalPubKey: undefined as any,
     /** Merkle root is required in UTXO data for Taproot key-path spending */
-    _merkleRoot: null as Buffer | null,
-    /** Internal Transaction object for draft transaction building */
-    _draftTransaction: null as any,
+    _merkleRoot: undefined as Buffer | undefined,
 
     /**
      * Initialize the wallet - load from storage or create new
@@ -479,7 +477,7 @@ export const useWalletStore = defineStore('wallet', {
         script = getBuildPayToTaproot()(commitment)
         // For Taproot, store the internal public key (before tweaking)
         // This is needed for proper key-path spending
-        this._internalPubKey = signingKey.publicKey
+        this._internalPubKey = markRaw(signingKey.publicKey)
         this._merkleRoot = merkleRoot
       } else {
         // Legacy P2PKH address
@@ -904,325 +902,10 @@ export const useWalletStore = defineStore('wallet', {
       }
     },
 
-    /**
-     * Send Lotus to an address
-     * Uses Transaction's built-in fee estimation for accurate calculations
-     * @param toAddress - Recipient address
-     * @param amountSats - Amount in satoshis
-     * @param feeRate - Fee rate in sat/byte (default: 1)
-     */
-    async sendLotus(
-      toAddress: string,
-      amountSats: number,
-      feeRate: number = 1,
-    ): Promise<string> {
-      if (!this._chronik || !this._signingKey || !this._script) {
-        throw new Error('Wallet not initialized')
-      }
-
-      const Address = getAddress()
-      const Transaction = getTransaction()
-
-      // Validate address using Bitcore's Address class
-      if (!Address.isValid(toAddress)) {
-        throw new Error('Invalid address format')
-      }
-
-      // Validate address is for current network
-      const networkStore = useNetworkStore()
-      if (!Address.isValid(toAddress, networkStore.currentNetwork)) {
-        throw new Error(
-          `Address is for wrong network. Expected ${networkStore.displayName}.`,
-        )
-      }
-
-      // Ensure minimum fee rate
-      const effectiveFeeRate = Math.max(1, Math.floor(feeRate))
-
-      // Build transaction using Transaction's built-in fee estimation
-      const tx = new Transaction()
-      const spentInputs: string[] = []
-
-      // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
-      // the fee calculation will be incorrect
-      tx.change(this.address)
-      tx.feePerByte(effectiveFeeRate)
-
-      // Get spendable UTXOs sorted by value ascending for optimal selection
-      const sortedUtxos = Array.from(this.utxos.entries())
-        .filter(([_, utxo]) => {
-          if (utxo.isCoinbase) {
-            const confirmations =
-              utxo.height > 0 ? this.tipHeight - utxo.height + 1 : 0
-            return confirmations >= 100
-          }
-          return true
-        })
-        .sort((a, b) => Number(BigInt(a[1].value) - BigInt(b[1].value)))
-
-      // Add all available UTXOs as inputs with proper Taproot metadata if applicable
-      for (const [outpoint, utxo] of sortedUtxos) {
-        const [txid, outIdx] = outpoint.split('_')
-        const utxoData: any = {
-          txid,
-          outputIndex: Number(outIdx),
-          script: this._script.toHex(),
-          satoshis: Number(utxo.value),
-        }
-        // For Taproot inputs, include internal public key and merkle root for key-path spending
-        if (this.addressType === 'p2tr') {
-          utxoData.internalPubKey = this._internalPubKey
-          utxoData.merkleRoot = this._merkleRoot
-        }
-        tx.from(utxoData)
-        spentInputs.push(outpoint)
-      }
-
-      // Set recipient, change address, and fee rate
-      // Transaction class handles fee calculation and change output automatically
-      tx.to(toAddress, amountSats)
-
-      // Verify we have sufficient funds
-      const inputAmount = tx.inputAmount
-      const outputAmount = tx.outputAmount
-      const fee = tx.getFee()
-
-      if (inputAmount < outputAmount + fee) {
-        throw new Error('Insufficient balance for amount + fee')
-      }
-
-      // Sign transaction
-      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
-      // For P2PKH, use standard ECDSA signatures
-      if (this.addressType === 'p2tr') {
-        tx.signSchnorr(this._signingKey)
-      } else {
-        tx.sign(this._signingKey)
-      }
-
-      // Broadcast
-      const result = await this._chronik.broadcastTx(tx.toBuffer())
-
-      // Remove spent UTXOs (only the ones actually used)
-      // The transaction may not use all inputs if we added more than needed
-      for (const input of tx.inputs) {
-        const outpoint = `${input.prevTxId.toString('hex')}_${
-          input.outputIndex
-        }`
-        this.utxos.delete(outpoint)
-      }
-      this.recalculateBalance()
-      await this.saveWalletState()
-
-      return result.txid
-    },
-
-    /**
-     * Advanced transaction builder with multi-output, OP_RETURN, locktime, and coin control support
-     * Uses Transaction's built-in fee estimation for accurate calculations
-     */
-    async sendAdvanced(options: {
-      /** Array of recipients with address and amount in satoshis */
-      recipients: Array<{ address: string; amountSats: number }>
-      /** Fee rate in sat/byte (default: 1) */
-      feeRate?: number
-      /** Specific UTXOs to use (outpoint strings like "txid_outIdx"). If empty, auto-select. */
-      selectedUtxos?: string[]
-      /** OP_RETURN data to attach */
-      opReturnData?: {
-        data: string
-        encoding: 'utf8' | 'hex'
-      }
-      /** Transaction locktime */
-      locktime?: {
-        type: 'block' | 'time'
-        value: number
-      }
-    }): Promise<string> {
-      if (!this._chronik || !this._signingKey || !this._script) {
-        throw new Error('Wallet not initialized')
-      }
-
-      const Address = getAddress()
-      const Transaction = getTransaction()
-
-      const {
-        recipients,
-        feeRate = 1,
-        selectedUtxos,
-        opReturnData,
-        locktime,
-      } = options
-
-      // Validate recipients
-      if (!recipients || recipients.length === 0) {
-        throw new Error('At least one recipient is required')
-      }
-
-      const networkStore = useNetworkStore()
-      for (const recipient of recipients) {
-        // Validate address using Bitcore's Address class
-        if (!Address.isValid(recipient.address)) {
-          throw new Error(`Invalid address format: ${recipient.address}`)
-        }
-        // Validate address is for current network
-        if (!Address.isValid(recipient.address, networkStore.currentNetwork)) {
-          throw new Error(
-            `Address is for wrong network: ${recipient.address}. Expected ${networkStore.displayName}.`,
-          )
-        }
-        if (recipient.amountSats <= 0) {
-          throw new Error('Amount must be greater than 0')
-        }
-      }
-
-      // Ensure minimum fee rate
-      const effectiveFeeRate = Math.max(1, Math.floor(feeRate))
-
-      // Get available UTXOs (either selected or all spendable)
-      let availableUtxos: Array<[string, UtxoData]>
-      if (selectedUtxos && selectedUtxos.length > 0) {
-        // Use only selected UTXOs
-        availableUtxos = selectedUtxos
-          .map(outpoint => {
-            const utxo = this.utxos.get(outpoint)
-            return utxo ? ([outpoint, utxo] as [string, UtxoData]) : null
-          })
-          .filter((entry): entry is [string, UtxoData] => entry !== null)
-
-        if (availableUtxos.length === 0) {
-          throw new Error('No valid UTXOs selected')
-        }
-      } else {
-        // Auto-select: filter for spendable UTXOs (excluding immature coinbase)
-        availableUtxos = Array.from(this.utxos.entries()).filter(
-          ([_, utxo]) => {
-            if (utxo.isCoinbase) {
-              const confirmations =
-                utxo.height > 0 ? this.tipHeight - utxo.height + 1 : 0
-              return confirmations >= 100
-            }
-            return true
-          },
-        )
-      }
-
-      // Sort by value ascending for optimal coin selection (when auto-selecting)
-      if (!selectedUtxos || selectedUtxos.length === 0) {
-        availableUtxos.sort((a, b) =>
-          Number(BigInt(a[1].value) - BigInt(b[1].value)),
-        )
-      }
-
-      // Build transaction using Transaction's built-in fee estimation
-      const tx = new Transaction()
-
-      // Add inputs with proper Taproot metadata if applicable
-      for (const [outpoint, utxo] of availableUtxos) {
-        const [txid, outIdx] = outpoint.split('_')
-        const utxoData: any = {
-          txid,
-          outputIndex: Number(outIdx),
-          script: this._script.toHex(),
-          satoshis: Number(utxo.value),
-        }
-        // For Taproot inputs, include internal public key for key-path spending
-        if (this.addressType === 'p2tr') {
-          utxoData.internalPubKey = this._internalPubKey
-          utxoData.merkleRoot = this._merkleRoot
-        }
-        tx.from(utxoData)
-      }
-
-      // Add recipient outputs
-      for (const recipient of recipients) {
-        tx.to(recipient.address, recipient.amountSats)
-      }
-
-      // Add OP_RETURN output if present
-      if (opReturnData && opReturnData.data) {
-        let dataBuffer: Buffer
-        if (opReturnData.encoding === 'hex') {
-          // Validate hex string
-          if (!/^[0-9a-fA-F]*$/.test(opReturnData.data)) {
-            throw new Error('Invalid hex data for OP_RETURN')
-          }
-          if (opReturnData.data.length % 2 !== 0) {
-            throw new Error('Hex data must have even length')
-          }
-          dataBuffer = Buffer.from(opReturnData.data, 'hex')
-        } else {
-          dataBuffer = Buffer.from(opReturnData.data, 'utf8')
-        }
-
-        // Max OP_RETURN data is 220 bytes
-        if (dataBuffer.length > 220) {
-          throw new Error('OP_RETURN data exceeds maximum size of 220 bytes')
-        }
-
-        tx.addData(dataBuffer)
-      }
-
-      // Set change address and fee rate
-      // Transaction class handles fee calculation and change output automatically
-      tx.change(this.address)
-      tx.feePerByte(effectiveFeeRate)
-
-      // Verify we have sufficient funds
-      const inputAmount = tx.inputAmount
-      const outputAmount = tx.outputAmount
-      const fee = tx.getFee()
-
-      if (inputAmount < outputAmount + fee) {
-        throw new Error('Insufficient balance for amount + fee')
-      }
-
-      // Set locktime if specified
-      if (locktime) {
-        if (locktime.type === 'block') {
-          // Block height locktime (must be < 500000000)
-          if (locktime.value >= 500000000) {
-            throw new Error('Block height locktime must be less than 500000000')
-          }
-          tx.lockUntilBlockHeight(locktime.value)
-        } else {
-          // Unix timestamp locktime (must be >= 500000000)
-          if (locktime.value < 500000000) {
-            throw new Error('Unix timestamp locktime must be >= 500000000')
-          }
-          tx.lockUntilDate(new Date(locktime.value * 1000))
-        }
-      }
-
-      // Sign transaction
-      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
-      // For P2PKH, use standard ECDSA signatures
-      if (this.addressType === 'p2tr') {
-        tx.signSchnorr(this._signingKey)
-      } else {
-        tx.sign(this._signingKey)
-      }
-
-      // Broadcast
-      const result = await this._chronik.broadcastTx(tx.toBuffer())
-
-      // Remove spent UTXOs
-      for (const input of tx.inputs) {
-        const outpoint = `${input.prevTxId.toString('hex')}_${
-          input.outputIndex
-        }`
-        this.utxos.delete(outpoint)
-      }
-      this.recalculateBalance()
-      await this.saveWalletState()
-
-      return result.txid
-    },
-
     // =========================================================================
-    // Draft Transaction Builder
-    // These methods manage a Transaction object that updates dynamically
-    // as the user inputs transaction details in the UI
+    // Draft Transaction Management
+    // These methods manage draft transaction metadata. The actual Transaction
+    // object is built fresh at send time from _buildTransaction().
     // =========================================================================
 
     /**
@@ -1231,10 +914,7 @@ export const useWalletStore = defineStore('wallet', {
      * balance is displayed before any recipients are added
      */
     initializeDraftTransaction() {
-      this._draftTransaction = null
       this.draftTx = createInitialDraftTx()
-
-      const Transaction = getTransaction()
 
       // Calculate available input amount from UTXOs
       const availableUtxos = this._getAvailableUtxos()
@@ -1243,38 +923,6 @@ export const useWalletStore = defineStore('wallet', {
         0n,
       )
       this.draftTx.inputAmount = inputAmount
-
-      // Calculate max sendable (estimate with a single output)
-      if (availableUtxos.length > 0 && this._script) {
-        const txForMax = new Transaction()
-        // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
-        // the fee calculation will be incorrect
-        txForMax.change(this.address)
-        txForMax.feePerByte(this.draftTx.feeRate)
-        // Add inputs with proper Taproot metadata if applicable
-        for (const [outpoint, utxo] of availableUtxos) {
-          const [txid, outIdx] = outpoint.split('_')
-          const utxoData: any = {
-            txid,
-            outputIndex: Number(outIdx),
-            script: this._script.toHex(),
-            satoshis: Number(utxo.value),
-          }
-          // For Taproot inputs, include internal public key for key-path spending
-          if (this.addressType === 'p2tr') {
-            utxoData.internalPubKey = this._internalPubKey
-            utxoData.merkleRoot = this._merkleRoot
-          }
-          txForMax.from(utxoData)
-        }
-        // Add recipient output
-        txForMax.to(this.address, Number(inputAmount))
-        const feeForMaxSend = txForMax.getFee()
-        console.log('feeForMaxSend', feeForMaxSend)
-        console.log('inputAmount (reduced from UTXO set)', inputAmount)
-        console.log('maxSendable', inputAmount - BigInt(feeForMaxSend))
-        this.draftTx.maxSendable = inputAmount - BigInt(feeForMaxSend)
-      }
 
       // Add a default empty recipient
       this.draftTx.recipients = [
@@ -1287,6 +935,9 @@ export const useWalletStore = defineStore('wallet', {
       ]
 
       this.draftTx.initialized = true
+
+      // Note: maxSendable will be calculated by _recalculateDraftMetadata
+      // when the user enables sendMax for a recipient
     },
 
     // =========================================================================
@@ -1306,7 +957,7 @@ export const useWalletStore = defineStore('wallet', {
         amountSats: 0n,
         sendMax: false,
       })
-      this._rebuildDraftTransaction()
+      this._recalculateDraftMetadata()
       return id
     },
 
@@ -1318,7 +969,7 @@ export const useWalletStore = defineStore('wallet', {
       const index = this.draftTx.recipients.findIndex(r => r.id === id)
       if (index !== -1 && this.draftTx.recipients.length > 1) {
         this.draftTx.recipients.splice(index, 1)
-        this._rebuildDraftTransaction()
+        this._recalculateDraftMetadata()
       }
     },
 
@@ -1331,7 +982,7 @@ export const useWalletStore = defineStore('wallet', {
       const recipient = this.draftTx.recipients.find(r => r.id === id)
       if (recipient) {
         recipient.address = address
-        this._rebuildDraftTransaction()
+        this._recalculateDraftMetadata()
       }
     },
 
@@ -1345,7 +996,7 @@ export const useWalletStore = defineStore('wallet', {
       if (recipient) {
         recipient.amountSats = amountSats
         recipient.sendMax = false // Clear sendMax when setting explicit amount
-        this._rebuildDraftTransaction()
+        this._recalculateDraftMetadata()
       }
     },
 
@@ -1369,7 +1020,7 @@ export const useWalletStore = defineStore('wallet', {
         if (sendMax) {
           recipient.amountSats = 0n // Clear explicit amount when sendMax is enabled
         }
-        this._rebuildDraftTransaction()
+        this._recalculateDraftMetadata()
       }
     },
 
@@ -1383,7 +1034,7 @@ export const useWalletStore = defineStore('wallet', {
         recipient.address = ''
         recipient.amountSats = 0n
         recipient.sendMax = false
-        this._rebuildDraftTransaction()
+        this._recalculateDraftMetadata()
       }
     },
 
@@ -1424,32 +1075,209 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
-     * Rebuild the internal Transaction object from current draft state.
-     * This is the single source of truth for all transaction calculations.
-     *
-     * Flow:
-     * 1. Gather available UTXOs and calculate total input
-     * 2. Process recipients (regular amounts + sendMax)
-     * 3. Calculate fees and maxSendable
-     * 4. Build the actual transaction
-     * 5. Validate and update state
+     * Parse OP_RETURN data from draft state.
+     * Returns null if no OP_RETURN or if data is invalid.
+     * Sets validation error on draftTx if invalid.
      */
-    _rebuildDraftTransaction() {
-      // -----------------------------------------------------------------------
-      // Step 1: Validate prerequisites
-      // -----------------------------------------------------------------------
-      if (!this._script || !isBitcoreLoaded()) {
-        this.draftTx.isValid = false
-        this.draftTx.validationError = 'Wallet not initialized'
-        return
+    _parseOpReturnData(): Buffer | null {
+      if (!this.draftTx.opReturn?.data) return null
+
+      if (this.draftTx.opReturn.encoding === 'hex') {
+        if (!/^[0-9a-fA-F]*$/.test(this.draftTx.opReturn.data)) {
+          this.draftTx.isValid = false
+          this.draftTx.validationError = 'Invalid hex data for OP_RETURN'
+          return null
+        }
+        if (this.draftTx.opReturn.data.length % 2 !== 0) {
+          this.draftTx.isValid = false
+          this.draftTx.validationError = 'Hex data must have even length'
+          return null
+        }
+        const buffer = Buffer.from(this.draftTx.opReturn.data, 'hex')
+        if (buffer.length > 220) {
+          this.draftTx.isValid = false
+          this.draftTx.validationError = 'OP_RETURN data exceeds 220 bytes'
+          return null
+        }
+        return buffer
       }
+
+      const buffer = Buffer.from(this.draftTx.opReturn.data, 'utf8')
+      if (buffer.length > 220) {
+        this.draftTx.isValid = false
+        this.draftTx.validationError = 'OP_RETURN data exceeds 220 bytes'
+        return null
+      }
+      return buffer
+    },
+
+    /**
+     * Add inputs to a transaction with proper Taproot metadata if applicable.
+     */
+    _addInputsToTransaction(
+      tx: InstanceType<typeof BitcoreTypes.Transaction>,
+      utxos: Array<[string, UtxoData]>,
+    ) {
+      for (const [outpoint, utxo] of utxos) {
+        const [txid, outIdx] = outpoint.split('_')
+        const utxoData: BitcoreTypes.UnspentOutputData = {
+          txid,
+          outputIndex: Number(outIdx),
+          script: this._script,
+          satoshis: Number(utxo.value),
+        }
+        if (this.addressType === 'p2tr') {
+          utxoData.internalPubKey = this._internalPubKey
+          utxoData.merkleRoot = this._merkleRoot
+          // ADD THIS LOGGING:
+          console.log('Adding Taproot input:', {
+            outpoint,
+            internalPubKey: this._internalPubKey?.toString?.() || 'undefined',
+            merkleRoot: this._merkleRoot?.toString?.('hex') || 'undefined',
+          })
+        }
+        tx.from(utxoData)
+      }
+    },
+
+    /**
+     * Calculate the fee for a sendMax transaction (no change output).
+     * This builds a complete transaction with the full input amount as output
+     * to get an accurate fee estimate, then returns the fee.
+     */
+    _calculateSendMaxFee(
+      availableUtxos: Array<[string, UtxoData]>,
+      sendMaxAddress: string,
+      regularOutputTotal: bigint,
+      regularRecipients: DraftRecipient[],
+    ): number {
+      const Address = getAddress()
+      const Transaction = getTransaction()
+
+      const inputAmount = availableUtxos.reduce(
+        (sum, [_, utxo]) => sum + BigInt(utxo.value),
+        0n,
+      )
+      const feeRate = Math.max(1, Math.floor(this.draftTx.feeRate))
+
+      // Build transaction to get accurate fee
+      const tx = new Transaction()
+      // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
+      // the fee calculation will be incorrect
+      tx.feePerByte(feeRate)
+      tx.change(this.address)
+
+      this._addInputsToTransaction(tx, availableUtxos)
+
+      // Add regular recipient outputs
+      for (const recipient of regularRecipients) {
+        if (
+          recipient.address &&
+          Address.isValid(recipient.address) &&
+          recipient.amountSats > 0n
+        ) {
+          tx.to(recipient.address, Number(recipient.amountSats))
+        }
+      }
+
+      // Add the sendMax output with remaining amount (input - regular outputs)
+      // We use a placeholder that will be close to the final amount
+      const preliminaryMax = inputAmount - regularOutputTotal
+      if (preliminaryMax > DUST_THRESHOLD) {
+        tx.to(sendMaxAddress, Number(preliminaryMax))
+      }
+
+      // Add OP_RETURN if present
+      const opReturnBuffer = this._parseOpReturnData()
+      if (opReturnBuffer) {
+        tx.addData(opReturnBuffer)
+      }
+
+      return tx.getFee()
+    },
+
+    /**
+     * Build a Transaction object from current draft state.
+     * This is the single source of truth for transaction construction.
+     *
+     * @returns Transaction object or null if prerequisites not met
+     */
+    _buildTransaction(): InstanceType<typeof BitcoreTypes.Transaction> | null {
+      if (!this._script || !isBitcoreLoaded()) return null
 
       const Address = getAddress()
       const Transaction = getTransaction()
 
       const availableUtxos = this._getAvailableUtxos()
+      if (availableUtxos.length === 0) return null
+
+      const feeRate = Math.max(1, Math.floor(this.draftTx.feeRate))
+      const sendMaxRecipient = this.draftTx.recipients.find(r => r.sendMax)
+      const regularRecipients = this.draftTx.recipients.filter(r => !r.sendMax)
+
+      const tx = new Transaction()
+      tx.feePerByte(feeRate)
+      tx.change(this.address)
+
+      this._addInputsToTransaction(tx, availableUtxos)
+
+      // Add regular recipient outputs
+      for (const recipient of regularRecipients) {
+        if (
+          recipient.address &&
+          Address.isValid(recipient.address) &&
+          recipient.amountSats > 0n
+        ) {
+          tx.to(recipient.address, Number(recipient.amountSats))
+        }
+      }
+
+      // Add sendMax output with calculated amount
+      if (
+        sendMaxRecipient?.address &&
+        Address.isValid(sendMaxRecipient.address)
+      ) {
+        if (this.draftTx.maxSendable > 0n) {
+          tx.to(sendMaxRecipient.address, Number(this.draftTx.maxSendable))
+        }
+      }
+
+      // Add OP_RETURN if present and valid
+      const opReturnBuffer = this._parseOpReturnData()
+      if (this.draftTx.opReturn?.data && !opReturnBuffer) {
+        // OP_RETURN was requested but invalid - _parseOpReturnData set the error
+        return null
+      }
+      if (opReturnBuffer) {
+        tx.addData(opReturnBuffer)
+      }
+
+      return tx
+    },
+
+    /**
+     * Recalculate draft transaction metadata from current state.
+     * This updates computed values (fees, maxSendable, validation) without
+     * storing a cached Transaction object.
+     *
+     * Called whenever recipients, amounts, fee rate, or UTXOs change.
+     */
+    _recalculateDraftMetadata() {
+      // Reset validation state
+      this.draftTx.isValid = false
+      this.draftTx.validationError = null
+
+      // Validate prerequisites
+      if (!this._script || !isBitcoreLoaded()) {
+        this.draftTx.validationError = 'Wallet not initialized'
+        return
+      }
+
+      const Address = getAddress()
+      const availableUtxos = this._getAvailableUtxos()
+
+      // Calculate input amount
       if (availableUtxos.length === 0) {
-        this.draftTx.isValid = false
         this.draftTx.validationError = 'No spendable UTXOs available'
         this.draftTx.inputAmount = 0n
         this.draftTx.maxSendable = 0n
@@ -1459,24 +1287,17 @@ export const useWalletStore = defineStore('wallet', {
         return
       }
 
-      // -----------------------------------------------------------------------
-      // Step 2: Calculate total available input
-      // -----------------------------------------------------------------------
       const inputAmount = availableUtxos.reduce(
         (sum, [_, utxo]) => sum + BigInt(utxo.value),
         0n,
       )
       this.draftTx.inputAmount = inputAmount
 
-      // -----------------------------------------------------------------------
-      // Step 3: Categorize recipients
-      // -----------------------------------------------------------------------
+      // Categorize recipients
       const sendMaxRecipient = this.draftTx.recipients.find(r => r.sendMax)
       const regularRecipients = this.draftTx.recipients.filter(r => !r.sendMax)
 
-      // -----------------------------------------------------------------------
-      // Step 4: Calculate regular output total and validate addresses
-      // -----------------------------------------------------------------------
+      // Validate addresses and calculate regular output total
       const networkStore = useNetworkStore()
       const currentNetwork = networkStore.currentNetwork
 
@@ -1492,7 +1313,6 @@ export const useWalletStore = defineStore('wallet', {
           invalidAddressError = `Invalid address: ${recipient.address}`
           continue
         }
-        // Check if address matches current network
         if (!Address.isValid(recipient.address, currentNetwork)) {
           hasNetworkMismatch = true
           invalidAddressError = `Address is for wrong network: ${recipient.address}`
@@ -1503,7 +1323,7 @@ export const useWalletStore = defineStore('wallet', {
         }
       }
 
-      // Validate sendMax recipient address if present
+      // Validate sendMax recipient address
       if (sendMaxRecipient?.address) {
         if (!Address.isValid(sendMaxRecipient.address)) {
           hasInvalidAddress = true
@@ -1514,226 +1334,81 @@ export const useWalletStore = defineStore('wallet', {
         }
       }
 
-      // -----------------------------------------------------------------------
-      // Step 5: Parse OP_RETURN data if present
-      // -----------------------------------------------------------------------
-      let opReturnBuffer: Buffer | null = null
-      if (this.draftTx.opReturn?.data) {
-        if (this.draftTx.opReturn.encoding === 'hex') {
-          if (!/^[0-9a-fA-F]*$/.test(this.draftTx.opReturn.data)) {
-            this.draftTx.isValid = false
-            this.draftTx.validationError = 'Invalid hex data for OP_RETURN'
-            return
+      // Calculate fees and amounts based on whether sendMax is enabled
+      if (sendMaxRecipient) {
+        // For sendMax: calculate fee for transaction WITHOUT change output
+        const sendMaxAddress =
+          sendMaxRecipient.address && Address.isValid(sendMaxRecipient.address)
+            ? sendMaxRecipient.address
+            : this.address
+
+        const sendMaxFee = this._calculateSendMaxFee(
+          availableUtxos,
+          sendMaxAddress,
+          regularOutputTotal,
+          regularRecipients,
+        )
+
+        // maxSendable = input - regularOutputs - fee (no change)
+        const maxSendableRaw =
+          inputAmount - regularOutputTotal - BigInt(sendMaxFee)
+        this.draftTx.maxSendable =
+          maxSendableRaw > DUST_THRESHOLD ? maxSendableRaw : 0n
+        this.draftTx.outputAmount =
+          regularOutputTotal + this.draftTx.maxSendable
+        this.draftTx.changeAmount = 0n
+        this.draftTx.estimatedFee = sendMaxFee
+      } else {
+        // For regular transactions: build with change output
+        const tx = this._buildTransaction()
+        if (!tx) {
+          if (!this.draftTx.validationError) {
+            this.draftTx.validationError = 'Failed to build transaction'
           }
-          if (this.draftTx.opReturn.data.length % 2 !== 0) {
-            this.draftTx.isValid = false
-            this.draftTx.validationError = 'Hex data must have even length'
-            return
-          }
-          opReturnBuffer = Buffer.from(this.draftTx.opReturn.data, 'hex')
-        } else {
-          opReturnBuffer = Buffer.from(this.draftTx.opReturn.data, 'utf8')
-        }
-        if (opReturnBuffer.length > 220) {
-          this.draftTx.isValid = false
-          this.draftTx.validationError = 'OP_RETURN data exceeds 220 bytes'
           return
         }
-      }
 
-      // -----------------------------------------------------------------------
-      // Step 6: Calculate maxSendable (what remains after regular outputs + fee)
-      // We need to estimate the fee for a transaction that includes:
-      // - All inputs
-      // - All regular outputs
-      // - One output for sendMax (even if no address yet, for fee estimation)
-      // - OP_RETURN if present
-      // -----------------------------------------------------------------------
-      const feeRate = Math.max(1, Math.floor(this.draftTx.feeRate))
-
-      // Build a fee estimation transaction
-      const feeEstTx = new Transaction()
-
-      // IMPORTANT: the change and fee rate must ALWAYS be set first, otherwise
-      // the fee calculation will be incorrect
-      feeEstTx.change(this.address)
-      feeEstTx.feePerByte(feeRate)
-
-      // Add all inputs with proper Taproot metadata if applicable
-      for (const [outpoint, utxo] of availableUtxos) {
-        const [txid, outIdx] = outpoint.split('_')
-        const utxoData: any = {
-          txid,
-          outputIndex: Number(outIdx),
-          script: this._script.toHex(),
-          satoshis: Number(utxo.value),
-        }
-        // For Taproot inputs, include internal public key for key-path spending
-        if (this.addressType === 'p2tr') {
-          utxoData.internalPubKey = this._internalPubKey
-          utxoData.merkleRoot = this._merkleRoot
-        }
-        feeEstTx.from(utxoData)
-      }
-
-      // Add regular recipient outputs
-      for (const recipient of regularRecipients) {
-        if (
-          recipient.address &&
-          Address.isValid(recipient.address) &&
-          recipient.amountSats > 0n
-        ) {
-          feeEstTx.to(recipient.address, Number(recipient.amountSats))
-        }
-      }
-
-      // Add placeholder for sendMax output (to get accurate fee estimate)
-      // Use the sendMax recipient's address if valid, otherwise use our own address
-      const sendMaxAddress =
-        sendMaxRecipient?.address && Address.isValid(sendMaxRecipient.address)
-          ? sendMaxRecipient.address
-          : this.address
-      feeEstTx.to(sendMaxAddress, Number(DUST_THRESHOLD))
-
-      // Add OP_RETURN if present
-      if (opReturnBuffer) {
-        feeEstTx.addData(opReturnBuffer)
-      }
-
-      const estimatedFeeForMaxSend = feeEstTx.getFee()
-
-      // maxSendable = input - regularOutputs - fee
-      const maxSendableRaw =
-        inputAmount - regularOutputTotal - BigInt(estimatedFeeForMaxSend)
-      console.log('maxSendableRaw', maxSendableRaw)
-
-      this.draftTx.maxSendable =
-        maxSendableRaw > DUST_THRESHOLD ? maxSendableRaw : 0n
-
-      // -----------------------------------------------------------------------
-      // Step 7: Build the actual transaction
-      // -----------------------------------------------------------------------
-      const tx = new Transaction()
-
-      // IMPORTANT: the change and fee rate must ALWAYS be set first, otherwise
-      // the fee calculation will be incorrect
-      tx.feePerByte(feeRate)
-      tx.change(this.address)
-
-      // Add all inputs with proper Taproot metadata if applicable
-      for (const [outpoint, utxo] of availableUtxos) {
-        const [txid, outIdx] = outpoint.split('_')
-        const utxoData: any = {
-          txid,
-          outputIndex: Number(outIdx),
-          script: this._script.toHex(),
-          satoshis: Number(utxo.value),
-        }
-        // For Taproot inputs, include internal public key and merkle root for key-path spending
-        if (this.addressType === 'p2tr') {
-          utxoData.internalPubKey = this._internalPubKey
-          utxoData.merkleRoot = this._merkleRoot
-        }
-        tx.from(utxoData)
-      }
-
-      // Add regular recipient outputs
-      for (const recipient of regularRecipients) {
-        if (
-          recipient.address &&
-          Address.isValid(recipient.address) &&
-          recipient.amountSats > 0n
-        ) {
-          tx.to(recipient.address, Number(recipient.amountSats))
-        }
-      }
-
-      // Add sendMax output if recipient has valid address and there's something to send
-      let sendMaxAmount = 0n
-      if (
-        sendMaxRecipient?.address &&
-        Address.isValid(sendMaxRecipient.address) &&
-        this.draftTx.maxSendable > 0n
-      ) {
-        sendMaxAmount = this.draftTx.maxSendable
-        tx.to(sendMaxRecipient.address, Number(sendMaxAmount))
-      }
-
-      // Add OP_RETURN if present
-      if (opReturnBuffer) {
-        tx.addData(opReturnBuffer)
-      }
-
-      // -----------------------------------------------------------------------
-      // Step 8: Calculate final values
-      // -----------------------------------------------------------------------
-      const actualFee = tx.getFee()
-      this.draftTx.estimatedFee = actualFee
-
-      // Output amount: regular outputs + sendMax (for display purposes)
-      // If sendMax recipient exists but has no address, still show the intended amount
-      const totalOutputAmount =
-        regularOutputTotal + (sendMaxRecipient ? this.draftTx.maxSendable : 0n)
-      this.draftTx.outputAmount = totalOutputAmount
-
-      // Change amount: only exists if no sendMax recipient
-      if (sendMaxRecipient) {
-        this.draftTx.changeAmount = 0n
-      } else {
-        const totalSpent = regularOutputTotal + BigInt(actualFee)
+        const estimatedFee = tx.getFee()
+        this.draftTx.maxSendable = 0n // Not applicable for non-sendMax
+        this.draftTx.outputAmount = regularOutputTotal
+        const totalSpent = regularOutputTotal + BigInt(estimatedFee)
         this.draftTx.changeAmount =
           inputAmount > totalSpent ? inputAmount - totalSpent : 0n
+        this.draftTx.estimatedFee = estimatedFee
       }
 
-      // Store the transaction
-      this._draftTransaction = tx
-
-      // -----------------------------------------------------------------------
-      // Step 9: Validate
-      // -----------------------------------------------------------------------
+      // Validation
       if (hasInvalidAddress || hasNetworkMismatch) {
-        this.draftTx.isValid = false
         this.draftTx.validationError = invalidAddressError
       } else if (this.draftTx.recipients.length === 0) {
-        this.draftTx.isValid = false
         this.draftTx.validationError = 'No recipients specified'
       } else if (regularOutputTotal === 0n && !sendMaxRecipient) {
-        this.draftTx.isValid = false
         this.draftTx.validationError = 'No amount specified'
       } else if (sendMaxRecipient && this.draftTx.maxSendable === 0n) {
-        this.draftTx.isValid = false
         this.draftTx.validationError =
           'Insufficient balance for this transaction'
       } else if (
         !sendMaxRecipient &&
-        inputAmount < regularOutputTotal + BigInt(actualFee)
+        inputAmount < regularOutputTotal + BigInt(this.draftTx.estimatedFee)
       ) {
-        this.draftTx.isValid = false
         this.draftTx.validationError =
           'Insufficient balance for this transaction'
       } else if (sendMaxRecipient && !sendMaxRecipient.address) {
-        // sendMax recipient exists but no address yet - not ready to send
-        this.draftTx.isValid = false
         this.draftTx.validationError = 'Enter recipient address'
       } else if (
         regularRecipients.some(
           r => r.address && Address.isValid(r.address) && r.amountSats === 0n,
         )
       ) {
-        // Regular recipient has address but no amount
-        this.draftTx.isValid = false
         this.draftTx.validationError = 'Enter amount for all recipients'
       } else {
-        // Check all recipients have addresses
         const allHaveAddresses = this.draftTx.recipients.every(
           r => r.address && Address.isValid(r.address),
         )
         if (!allHaveAddresses) {
-          this.draftTx.isValid = false
           this.draftTx.validationError = 'Enter address for all recipients'
         } else {
           this.draftTx.isValid = true
-          this.draftTx.validationError = null
         }
       }
     },
@@ -1743,7 +1418,7 @@ export const useWalletStore = defineStore('wallet', {
      */
     setDraftFeeRate(feeRate: number) {
       this.draftTx.feeRate = Math.max(1, Math.floor(feeRate))
-      this._rebuildDraftTransaction()
+      this._recalculateDraftMetadata()
     },
 
     /**
@@ -1751,7 +1426,7 @@ export const useWalletStore = defineStore('wallet', {
      */
     setDraftSelectedUtxos(utxos: string[]) {
       this.draftTx.selectedUtxos = utxos
-      this._rebuildDraftTransaction()
+      this._recalculateDraftMetadata()
     },
 
     /**
@@ -1759,7 +1434,7 @@ export const useWalletStore = defineStore('wallet', {
      */
     setDraftOpReturn(opReturn: DraftOpReturn | null) {
       this.draftTx.opReturn = opReturn
-      this._rebuildDraftTransaction()
+      this._recalculateDraftMetadata()
     },
 
     /**
@@ -1767,16 +1442,17 @@ export const useWalletStore = defineStore('wallet', {
      */
     setDraftLocktime(locktime: DraftLocktime | null) {
       this.draftTx.locktime = locktime
-      this._rebuildDraftTransaction()
+      this._recalculateDraftMetadata()
     },
 
     /**
-     * Sign and broadcast the draft transaction
+     * Sign and broadcast the draft transaction.
+     * Builds a fresh transaction from current state to ensure consistency.
      * @returns Transaction ID
      */
     async sendDraftTransaction(): Promise<string> {
-      if (!this._chronik || !this._signingKey || !this._draftTransaction) {
-        throw new Error('Wallet or draft transaction not initialized')
+      if (!this._chronik || !this._signingKey) {
+        throw new Error('Wallet not initialized')
       }
 
       if (!this.draftTx.isValid) {
@@ -1785,22 +1461,24 @@ export const useWalletStore = defineStore('wallet', {
         )
       }
 
+      // Build fresh transaction from current state
+      const tx = this._buildTransaction()
+      if (!tx) {
+        throw new Error('Failed to build transaction')
+      }
+
       // Apply locktime if set
       if (this.draftTx.locktime) {
         if (this.draftTx.locktime.type === 'block') {
           if (this.draftTx.locktime.value >= 500000000) {
             throw new Error('Block height locktime must be less than 500000000')
           }
-          this._draftTransaction.lockUntilBlockHeight(
-            this.draftTx.locktime.value,
-          )
+          tx.lockUntilBlockHeight(this.draftTx.locktime.value)
         } else {
           if (this.draftTx.locktime.value < 500000000) {
             throw new Error('Unix timestamp locktime must be >= 500000000')
           }
-          this._draftTransaction.lockUntilDate(
-            new Date(this.draftTx.locktime.value * 1000),
-          )
+          tx.lockUntilDate(new Date(this.draftTx.locktime.value * 1000))
         }
       }
 
@@ -1814,20 +1492,24 @@ export const useWalletStore = defineStore('wallet', {
       // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
       // For P2PKH, use standard ECDSA signatures
       if (this.addressType === 'p2tr') {
-        this._draftTransaction.signSchnorr(this._signingKey)
+        tx.signSchnorr(this._signingKey)
       } else {
-        this._draftTransaction.sign(this._signingKey)
+        tx.sign(this._signingKey)
       }
 
-      console.log(this._draftTransaction.toJSON())
-
-      // Broadcast
-      const result = await this._chronik.broadcastTx(
-        this._draftTransaction.toBuffer(),
+      console.log(
+        'Transaction built:',
+        tx.toJSON(),
+        tx.toBuffer().toString('hex'),
       )
+      console.log('Verifying transaction details...')
+      const verified = tx.verify()
+      console.log('Transaction verified:', verified)
+      // Broadcast
+      const result = await this._chronik.broadcastTx(tx.toBuffer())
 
       // Remove spent UTXOs
-      for (const input of this._draftTransaction.inputs) {
+      for (const input of tx.inputs) {
         const outpoint = `${input.prevTxId.toString('hex')}_${
           input.outputIndex
         }`
