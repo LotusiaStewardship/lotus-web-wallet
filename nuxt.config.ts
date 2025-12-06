@@ -1,6 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import { fileURLToPath } from 'node:url'
-import inject from '@rollup/plugin-inject'
+import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
@@ -48,34 +48,68 @@ export default defineNuxtConfig({
   },
 
   // Vite configuration for browser compatibility
+  // See docs/plans/BROWSER_COMPATIBILITY_FIX.md for detailed analysis
   vite: {
+    plugins: [
+      // Comprehensive Node.js polyfills for browser environment
+      // This replaces manual Buffer injection and runtime shims
+      nodePolyfills({
+        include: ['buffer', 'events', 'process', 'util', 'stream', 'crypto'],
+        globals: {
+          Buffer: true,
+          global: true,
+          process: true,
+        },
+        // Use native browser crypto where available
+        overrides: {
+          crypto: 'crypto-browserify',
+        },
+      }),
+    ],
     optimizeDeps: {
-      // Don't pre-bundle lotus-sdk - we use dynamic imports
-      exclude: ['lotus-sdk'],
-      // Include Node.js polyfills for pre-bundling
-      include: ['buffer', 'events'],
+      // Include ALL CommonJS dependencies for proper ESM transformation
+      // This ensures they're pre-bundled with correct module format
+      include: [
+        // Node.js polyfills
+        'buffer',
+        'events',
+        'process',
+        // Chronik and its dependencies
+        'chronik-client',
+        'protobufjs',
+        'protobufjs/minimal',
+        'long',
+        'axios',
+        'isomorphic-ws',
+        // Crypto dependencies (used by lotus-sdk/bitcore)
+        'elliptic',
+        'bn.js',
+        'brorand',
+        'hash.js',
+        'hmac-drbg',
+        'inherits',
+        'minimalistic-assert',
+        'minimalistic-crypto-utils',
+      ],
+      esbuildOptions: {
+        define: {
+          global: 'globalThis',
+        },
+      },
     },
-    define: {
-      // Node.js polyfills for browser
-      'process.env': '{}',
-      'process.cwd': '(() => "/")',
-      'global': 'globalThis',
+    build: {
+      // Ensure CommonJS modules are properly transformed
+      commonjsOptions: {
+        include: [/node_modules/],
+        transformMixedEsModules: true,
+      },
     },
     resolve: {
       alias: {
-        // Stub out Node.js modules that don't work in browser
+        // Stub out Node.js-only modules that can't be polyfilled
         dotenv: fileURLToPath(new URL('./stubs/dotenv.js', import.meta.url)),
-        // Node.js polyfills for browser
-        buffer: 'buffer/',
-        events: 'events/',
       },
     },
-    plugins: [
-      // Inject Buffer globally for browser compatibility
-      inject({
-        Buffer: ['buffer', 'Buffer'],
-      }),
-    ],
   },
 
   // TypeScript configuration
