@@ -25,10 +25,10 @@ const navigationItems = computed<NavigationMenuItem[][]>(() => [
       active: route.path === '/',
     },
     {
-      label: 'Discover',
-      icon: 'i-lucide-compass',
-      to: '/discover',
-      active: route.path === '/discover',
+      label: 'P2P',
+      icon: 'i-lucide-globe',
+      to: '/p2p',
+      active: route.path === '/p2p' || route.path === '/discover',
     },
     {
       label: 'Send',

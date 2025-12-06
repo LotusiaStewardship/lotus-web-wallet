@@ -291,7 +291,7 @@ const copyAddress = async () => {
         <div class="grid grid-cols-3 gap-4">
           <StatsCard :value="p2pStore.peerCount" label="Connected Peers" />
           <StatsCard :value="p2pStore.dhtReady ? 'Ready' : 'Syncing'" label="DHT Status" />
-          <StatsCard :value="`${p2pStore.serviceCount} discovered`" label="Services" />
+          <StatsCard :value="`${p2pStore.signerCount} discovered`" label="Signers" />
         </div>
       </div>
     </UCard>

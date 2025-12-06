@@ -131,11 +131,11 @@ const quickActions = [
           <div class="text-xl font-bold font-mono">{{ p2pStore.peerCount }}</div>
           <div class="text-xs text-muted">P2P Peers</div>
         </div>
-        <!-- Services -->
-        <NuxtLink to="/discover"
+        <!-- Signers -->
+        <NuxtLink to="/p2p"
           class="text-center hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg p-2 -m-2 transition-colors">
-          <div class="text-xl font-bold font-mono">{{ p2pStore.serviceCount }}</div>
-          <div class="text-xs text-muted">Services</div>
+          <div class="text-xl font-bold font-mono">{{ p2pStore.signerCount }}</div>
+          <div class="text-xs text-muted">Signers</div>
         </NuxtLink>
       </div>
     </UCard>

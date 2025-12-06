@@ -1,6 +1,19 @@
 <script setup lang="ts">
-import { useP2PStore, type ServiceAdvertisement } from '~/stores/p2p'
+import { useP2PStore } from '~/stores/p2p'
 import { useWalletStore } from '~/stores/wallet'
+import { useBitcore } from '~/composables/useBitcore'
+
+// Transaction type constants (matching SDK's TransactionType enum values)
+const TransactionType = {
+  SPEND: 'spend',
+  SWAP: 'swap',
+  COINJOIN: 'coinjoin',
+  CUSTODY: 'custody',
+  ESCROW: 'escrow',
+  CHANNEL: 'channel',
+} as const
+
+type TransactionTypeValue = (typeof TransactionType)[keyof typeof TransactionType]
 
 definePageMeta({
   title: 'Advertise Service',
@@ -8,175 +21,144 @@ definePageMeta({
 
 const p2pStore = useP2PStore()
 const walletStore = useWalletStore()
+const { Bitcore } = useBitcore()
 const toast = useToast()
 const router = useRouter()
 
-// Form mode: 'select' for preconfigured, 'custom' for manual
-const formMode = ref<'select' | 'custom'>('select')
+// ============================================================================
+// State
+// ============================================================================
 
-// Preconfigured service templates
-const serviceTemplates = [
-  {
-    id: 'wallet-basic',
-    type: 'wallet' as const,
-    name: 'Lotus Wallet',
-    description: 'Standard Lotus wallet for sending and receiving',
-    icon: 'i-lucide-wallet',
-    color: 'primary',
-    capabilities: ['send', 'receive'],
-  },
-  {
-    id: 'wallet-p2p',
-    type: 'wallet' as const,
-    name: 'P2P Wallet',
-    description: 'Wallet with peer-to-peer transfer support',
-    icon: 'i-lucide-users',
-    color: 'primary',
-    capabilities: ['send', 'receive', 'p2p-transfer'],
-  },
-  {
-    id: 'signer-musig2',
-    type: 'signer' as const,
-    name: 'MuSig2 Signer',
-    description: 'Multi-signature signing service using MuSig2',
-    icon: 'i-lucide-pen-tool',
-    color: 'success',
-    capabilities: ['musig2', '2-of-2'],
-  },
-  {
-    id: 'signer-threshold',
-    type: 'signer' as const,
-    name: 'Threshold Signer',
-    description: 'Flexible threshold signing (n-of-m)',
-    icon: 'i-lucide-shield-check',
-    color: 'success',
-    capabilities: ['musig2', 'threshold-signing', 'n-of-m'],
-  },
-  {
-    id: 'relay-node',
-    type: 'relay' as const,
-    name: 'Relay Node',
-    description: 'Help others connect through NAT',
-    icon: 'i-lucide-radio',
-    color: 'info',
-    capabilities: ['circuit-relay', 'nat-traversal'],
-  },
-  {
-    id: 'exchange-otc',
-    type: 'exchange' as const,
-    name: 'OTC Exchange',
-    description: 'Over-the-counter trading service',
-    icon: 'i-lucide-arrow-left-right',
-    color: 'warning',
-    capabilities: ['buy', 'sell', 'otc'],
-  },
-]
-
-// Selected template
-const selectedTemplate = ref<string | null>(null)
-
-// Custom form state
-const customName = ref('')
-const customDescription = ref('')
-const customType = ref<ServiceAdvertisement['type']>('wallet')
-const customCapabilities = ref<string[]>([])
-const customCapabilityInput = ref('')
 const publishing = ref(false)
 
-// Service type options for custom form
-const serviceTypeOptions = [
-  { label: 'Wallet', value: 'wallet' },
-  { label: 'Signer', value: 'signer' },
-  { label: 'Relay', value: 'relay' },
-  { label: 'Exchange', value: 'exchange' },
+// Wallet Presence
+const presenceEnabled = ref(p2pStore.isAdvertisingPresence)
+const presenceNickname = ref('')
+
+// MuSig2 Signer Configuration
+const signerEnabled = ref(p2pStore.isAdvertisingSigner)
+const signerNickname = ref('')
+const signerDescription = ref('')
+const signerFee = ref<number | undefined>(undefined)
+const signerMinAmount = ref<number | undefined>(undefined)
+const signerMaxAmount = ref<number | undefined>(undefined)
+const selectedTransactionTypes = ref<TransactionTypeValue[]>([TransactionType.SPEND])
+
+// Transaction type options with metadata
+const transactionTypeOptions = [
+  {
+    value: TransactionType.SPEND,
+    label: 'Spend',
+    icon: 'i-lucide-send',
+    description: 'Standard multi-sig spend transactions',
+  },
+  {
+    value: TransactionType.SWAP,
+    label: 'Atomic Swap',
+    icon: 'i-lucide-repeat',
+    description: 'Cross-chain atomic swaps',
+  },
+  {
+    value: TransactionType.COINJOIN,
+    label: 'CoinJoin',
+    icon: 'i-lucide-shuffle',
+    description: 'Privacy-enhancing CoinJoin rounds',
+  },
+  {
+    value: TransactionType.CUSTODY,
+    label: 'Custody',
+    icon: 'i-lucide-shield',
+    description: 'Multi-sig custody arrangements',
+  },
+  {
+    value: TransactionType.ESCROW,
+    label: 'Escrow',
+    icon: 'i-lucide-lock',
+    description: 'Escrow and dispute resolution',
+  },
+  {
+    value: TransactionType.CHANNEL,
+    label: 'Channel',
+    icon: 'i-lucide-git-branch',
+    description: 'Payment channel operations',
+  },
 ]
 
-// Available capabilities by type
-const availableCapabilities = computed(() => {
-  switch (customType.value) {
-    case 'wallet':
-      return ['send', 'receive', 'p2p-transfer', 'atomic-swap']
-    case 'signer':
-      return ['musig2', 'threshold-signing', '2-of-2', '2-of-3', 'n-of-m']
-    case 'relay':
-      return ['circuit-relay', 'dht-server', 'bootstrap', 'nat-traversal']
-    case 'exchange':
-      return ['buy', 'sell', 'swap', 'escrow', 'otc']
-    default:
-      return []
+// ============================================================================
+// Computed
+// ============================================================================
+
+// Get public key from wallet
+// Note: The wallet store exposes _hdPrivkey as a private property
+// We access it via the store's internal state for signing purposes
+const walletPublicKey = computed(() => {
+  if (!walletStore.address || !Bitcore) return null
+  try {
+    // Access the internal HD private key from the wallet store
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const hdPrivkey = (walletStore as any)._hdPrivkey
+    if (!hdPrivkey) return null
+    return hdPrivkey.publicKey.toString()
+  } catch {
+    return null
   }
 })
 
-// Toggle capability
-const toggleCapability = (cap: string) => {
-  const index = customCapabilities.value.indexOf(cap)
-  if (index >= 0) {
-    customCapabilities.value.splice(index, 1)
-  } else {
-    customCapabilities.value.push(cap)
-  }
-}
-
-// Add custom capability
-const addCustomCapability = () => {
-  const cap = customCapabilityInput.value.trim().toLowerCase()
-  if (cap && !customCapabilities.value.includes(cap)) {
-    customCapabilities.value.push(cap)
-    customCapabilityInput.value = ''
-  }
-}
-
-// Validation
-const canPublish = computed(() => {
+// Validation for signer
+const canPublishSigner = computed(() => {
   if (!p2pStore.initialized || publishing.value) return false
-  if (formMode.value === 'select') {
-    return selectedTemplate.value !== null
-  }
-  return customName.value.trim().length >= 3
+  if (!walletPublicKey.value) return false
+  return selectedTransactionTypes.value.length > 0
 })
 
-// Publish service
-const publishService = async () => {
-  if (!canPublish.value) return
+// ============================================================================
+// Actions
+// ============================================================================
 
+// Toggle transaction type
+const toggleTransactionType = (txType: TransactionTypeValue) => {
+  const index = selectedTransactionTypes.value.indexOf(txType)
+  if (index >= 0) {
+    selectedTransactionTypes.value.splice(index, 1)
+  } else {
+    selectedTransactionTypes.value.push(txType)
+  }
+}
+
+// Toggle wallet presence
+const togglePresence = async () => {
+  if (publishing.value) return
   publishing.value = true
 
   try {
-    let serviceData: Parameters<typeof p2pStore.announceService>[0]
-
-    if (formMode.value === 'select' && selectedTemplate.value) {
-      const template = serviceTemplates.find(t => t.id === selectedTemplate.value)!
-      serviceData = {
-        type: template.type,
-        name: template.name,
-        description: template.description,
-        capabilities: template.capabilities,
-        metadata: { walletAddress: walletStore.address },
-      }
+    if (presenceEnabled.value) {
+      // Withdraw presence
+      await p2pStore.withdrawPresence()
+      presenceEnabled.value = false
+      toast.add({
+        title: 'Presence Disabled',
+        description: 'You are no longer visible on the network',
+        color: 'neutral',
+        icon: 'i-lucide-eye-off',
+      })
     } else {
-      serviceData = {
-        type: customType.value,
-        name: customName.value.trim(),
-        description: customDescription.value.trim() || undefined,
-        capabilities: customCapabilities.value,
-        metadata: { walletAddress: walletStore.address },
-      }
+      // Advertise presence
+      await p2pStore.advertisePresence({
+        walletAddress: walletStore.address,
+        nickname: presenceNickname.value || undefined,
+      })
+      presenceEnabled.value = true
+      toast.add({
+        title: 'Presence Enabled',
+        description: 'You are now visible on the network',
+        color: 'success',
+        icon: 'i-lucide-eye',
+      })
     }
-
-    await p2pStore.announceService(serviceData)
-
-    toast.add({
-      title: 'Service Published',
-      description: 'Your service is now visible on the P2P network',
-      color: 'success',
-      icon: 'i-lucide-check-circle',
-    })
-
-    router.push('/discover')
   } catch (err) {
     toast.add({
-      title: 'Publish Failed',
-      description: err instanceof Error ? err.message : 'Failed to publish service',
+      title: 'Failed',
+      description: err instanceof Error ? err.message : 'Operation failed',
       color: 'error',
       icon: 'i-lucide-x-circle',
     })
@@ -185,11 +167,96 @@ const publishService = async () => {
   }
 }
 
-// Initialize P2P if needed - note: initialization may fail silently
-// The UI already handles the uninitialized state with a warning alert
+// Publish signer advertisement
+const publishSigner = async () => {
+  if (!canPublishSigner.value || !walletPublicKey.value) return
+
+  publishing.value = true
+
+  try {
+    await p2pStore.advertiseSigner({
+      publicKeyHex: walletPublicKey.value,
+      transactionTypes: selectedTransactionTypes.value as string[],
+      amountRange:
+        signerMinAmount.value || signerMaxAmount.value
+          ? { min: signerMinAmount.value, max: signerMaxAmount.value }
+          : undefined,
+      nickname: signerNickname.value || undefined,
+      description: signerDescription.value || undefined,
+      fee: signerFee.value,
+    })
+
+    signerEnabled.value = true
+
+    toast.add({
+      title: 'Signer Published',
+      description: 'You are now available as a MuSig2 signer',
+      color: 'success',
+      icon: 'i-lucide-check-circle',
+    })
+
+    router.push('/p2p')
+  } catch (err) {
+    toast.add({
+      title: 'Publish Failed',
+      description: err instanceof Error ? err.message : 'Failed to publish signer',
+      color: 'error',
+      icon: 'i-lucide-x-circle',
+    })
+  } finally {
+    publishing.value = false
+  }
+}
+
+// Withdraw signer advertisement
+const withdrawSigner = async () => {
+  if (publishing.value) return
+  publishing.value = true
+
+  try {
+    await p2pStore.withdrawSignerAdvertisement()
+    signerEnabled.value = false
+    toast.add({
+      title: 'Signer Withdrawn',
+      description: 'You are no longer available as a signer',
+      color: 'neutral',
+      icon: 'i-lucide-x',
+    })
+  } catch (err) {
+    toast.add({
+      title: 'Failed',
+      description: err instanceof Error ? err.message : 'Operation failed',
+      color: 'error',
+      icon: 'i-lucide-x-circle',
+    })
+  } finally {
+    publishing.value = false
+  }
+}
+
+// Initialize P2P if needed
 onMounted(async () => {
   if (!p2pStore.initialized) {
-    await p2pStore.initialize()
+    try {
+      await p2pStore.initialize()
+    } catch {
+      // Error handled by store
+    }
+  }
+
+  // Sync state with store
+  presenceEnabled.value = p2pStore.isAdvertisingPresence
+  signerEnabled.value = p2pStore.isAdvertisingSigner
+
+  // Load existing signer config if available
+  if (p2pStore.mySignerConfig) {
+    const config = p2pStore.mySignerConfig
+    signerNickname.value = config.nickname || ''
+    signerDescription.value = config.description || ''
+    signerFee.value = config.fee
+    signerMinAmount.value = config.amountRange?.min
+    signerMaxAmount.value = config.amountRange?.max
+    selectedTransactionTypes.value = [...config.transactionTypes] as TransactionTypeValue[]
   }
 })
 </script>
@@ -202,8 +269,8 @@ onMounted(async () => {
         <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
         Back to Settings
       </NuxtLink>
-      <h1 class="text-2xl font-bold">Advertise Service</h1>
-      <p class="text-muted">Make your service discoverable on the P2P network</p>
+      <h1 class="text-2xl font-bold">P2P Services</h1>
+      <p class="text-muted">Configure your presence and services on the P2P network</p>
     </div>
 
     <!-- P2P Status -->
@@ -214,146 +281,158 @@ onMounted(async () => {
       </template>
     </UAlert>
 
-    <!-- Mode Toggle -->
-    <div class="flex gap-2">
-      <UButton :color="formMode === 'select' ? 'primary' : 'neutral'"
-        :variant="formMode === 'select' ? 'solid' : 'outline'" @click="formMode = 'select'">
-        Quick Setup
-      </UButton>
-      <UButton :color="formMode === 'custom' ? 'primary' : 'neutral'"
-        :variant="formMode === 'custom' ? 'solid' : 'outline'" @click="formMode = 'custom'">
-        Custom Service
-      </UButton>
-    </div>
-
-    <!-- Quick Setup: Service Templates -->
-    <template v-if="formMode === 'select'">
-      <div class="grid gap-3 sm:grid-cols-2">
-        <button v-for="template in serviceTemplates" :key="template.id"
-          class="p-4 rounded-lg border-2 text-left transition-all" :class="[
-            selectedTemplate === template.id
-              ? 'border-primary bg-primary/5'
-              : 'border-default hover:border-primary/50'
-          ]" @click="selectedTemplate = template.id">
-          <div class="flex items-start gap-3">
-            <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-              :class="`bg-${template.color}-100 dark:bg-${template.color}-900/20`">
-              <UIcon :name="template.icon" class="w-5 h-5" :class="`text-${template.color}-500`" />
-            </div>
-            <div class="min-w-0">
-              <p class="font-semibold">{{ template.name }}</p>
-              <p class="text-sm text-muted">{{ template.description }}</p>
-              <div class="flex flex-wrap gap-1 mt-2">
-                <UBadge v-for="cap in template.capabilities" :key="cap" color="neutral" variant="subtle" size="xs">
-                  {{ cap }}
-                </UBadge>
-              </div>
-            </div>
+    <!-- Wallet Presence Card -->
+    <UCard>
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <div
+            class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-primary-100 dark:bg-primary-900/20">
+            <UIcon name="i-lucide-wifi" class="w-5 h-5 text-primary-500" />
           </div>
-        </button>
+          <div>
+            <p class="font-semibold">Wallet Presence</p>
+            <p class="text-sm text-muted">Let others know you're online and available for P2P interactions</p>
+          </div>
+        </div>
+        <USwitch :model-value="presenceEnabled" :disabled="!p2pStore.initialized || publishing"
+          @update:model-value="togglePresence" />
       </div>
 
-      <UButton block size="lg" :loading="publishing" :disabled="!canPublish" icon="i-lucide-send"
-        @click="publishService">
-        {{ publishing ? 'Publishing...' : 'Publish Service' }}
-      </UButton>
-    </template>
-
-    <!-- Custom Service Form -->
-    <template v-else>
-      <UCard>
-        <template #header>
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-settings-2" class="w-5 h-5" />
-            <span class="font-semibold">Custom Service</span>
-          </div>
-        </template>
-
-        <div class="space-y-4">
-          <!-- Service Type -->
-          <UFormField label="Service Type" required>
-            <USelectMenu v-model="customType" :items="serviceTypeOptions" value-key="value" />
-          </UFormField>
-
-          <!-- Service Name -->
-          <UFormField label="Service Name" required hint="Minimum 3 characters">
-            <UInput v-model="customName" placeholder="My Custom Service"
-              :color="customName && customName.length < 3 ? 'error' : undefined" />
-          </UFormField>
-
-          <!-- Description -->
-          <UFormField label="Description" hint="Optional">
-            <UTextarea v-model="customDescription" placeholder="Describe your service..." :rows="2" />
-          </UFormField>
-
-          <!-- Capabilities -->
-          <UFormField label="Capabilities">
-            <div class="space-y-3">
-              <div class="flex flex-wrap gap-2">
-                <UButton v-for="cap in availableCapabilities" :key="cap" size="xs"
-                  :color="customCapabilities.includes(cap) ? 'primary' : 'neutral'"
-                  :variant="customCapabilities.includes(cap) ? 'solid' : 'outline'" @click="toggleCapability(cap)">
-                  {{ cap }}
-                </UButton>
-              </div>
-
-              <div class="flex gap-2">
-                <UInput v-model="customCapabilityInput" placeholder="Add custom..." size="sm" class="flex-1"
-                  @keyup.enter="addCustomCapability" />
-                <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-plus"
-                  :disabled="!customCapabilityInput" @click="addCustomCapability">
-                  Add
-                </UButton>
-              </div>
-
-              <div v-if="customCapabilities.length" class="flex flex-wrap gap-1">
-                <UBadge v-for="cap in customCapabilities" :key="cap" color="primary" variant="subtle">
-                  {{ cap }}
-                  <button class="ml-1 hover:text-error-500"
-                    @click="customCapabilities = customCapabilities.filter(c => c !== cap)">
-                    <UIcon name="i-lucide-x" class="w-3 h-3" />
-                  </button>
-                </UBadge>
-              </div>
-            </div>
-          </UFormField>
-
-          <UButton block size="lg" :loading="publishing" :disabled="!canPublish" icon="i-lucide-send"
-            @click="publishService">
-            {{ publishing ? 'Publishing...' : 'Publish Service' }}
-          </UButton>
-        </div>
-      </UCard>
-    </template>
-
-    <!-- Info -->
-    <UCard>
-      <div class="flex gap-3">
-        <UIcon name="i-lucide-info" class="w-5 h-5 text-info-500 shrink-0 mt-0.5" />
-        <p class="text-sm text-muted">
-          Your service will be advertised on the P2P network. Advertisements expire after 1 hour.
-        </p>
+      <!-- Presence Options (shown when enabled) -->
+      <div v-if="presenceEnabled" class="mt-4 pt-4 border-t border-default">
+        <UFormField label="Display Name" hint="Optional nickname visible to others">
+          <UInput v-model="presenceNickname" placeholder="Anonymous" />
+        </UFormField>
       </div>
     </UCard>
 
-    <!-- My Advertisements -->
-    <UCard v-if="p2pStore.myAdvertisements.length">
+    <!-- MuSig2 Signer Card -->
+    <UCard>
       <template #header>
         <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-list" class="w-5 h-5" />
-          <span class="font-semibold">My Active Advertisements</span>
+          <UIcon name="i-lucide-pen-tool" class="w-5 h-5 text-success-500" />
+          <span class="font-semibold">MuSig2 Signer</span>
+          <UBadge v-if="signerEnabled" color="success" variant="subtle" size="xs">Active</UBadge>
+        </div>
+      </template>
+
+      <div class="space-y-4">
+        <p class="text-sm text-muted">
+          Become a MuSig2 signer to participate in multi-signature transactions with other users.
+        </p>
+
+        <!-- Transaction Types -->
+        <UFormField label="Transaction Types" required hint="Select the types of transactions you're willing to sign">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <button v-for="txType in transactionTypeOptions" :key="txType.value"
+              class="p-3 rounded-lg border-2 text-left transition-all" :class="[
+                selectedTransactionTypes.includes(txType.value)
+                  ? 'border-success-500 bg-success-50 dark:bg-success-900/20'
+                  : 'border-default hover:border-success-300'
+              ]" @click="toggleTransactionType(txType.value)">
+              <div class="flex items-center gap-2">
+                <UIcon :name="txType.icon" class="w-4 h-4"
+                  :class="selectedTransactionTypes.includes(txType.value) ? 'text-success-500' : 'text-muted'" />
+                <span class="text-sm font-medium">{{ txType.label }}</span>
+              </div>
+            </button>
+          </div>
+        </UFormField>
+
+        <!-- Signer Details -->
+        <div class="grid sm:grid-cols-2 gap-4">
+          <UFormField label="Display Name" hint="Optional">
+            <UInput v-model="signerNickname" placeholder="Anonymous Signer" />
+          </UFormField>
+
+          <UFormField label="Signing Fee (XPI)" hint="Optional fee per signature">
+            <UInput v-model="signerFee" type="number" placeholder="0" min="0" step="0.01" />
+          </UFormField>
+        </div>
+
+        <!-- Amount Range -->
+        <UFormField label="Amount Range (XPI)" hint="Optional limits on transaction amounts">
+          <div class="grid grid-cols-2 gap-4">
+            <UInput v-model="signerMinAmount" type="number" placeholder="Min" min="0" />
+            <UInput v-model="signerMaxAmount" type="number" placeholder="Max" min="0" />
+          </div>
+        </UFormField>
+
+        <!-- Description -->
+        <UFormField label="Description" hint="Optional description of your signing service">
+          <UTextarea v-model="signerDescription" placeholder="Describe your signing service..." :rows="2" />
+        </UFormField>
+
+        <!-- Action Buttons -->
+        <div class="flex gap-2">
+          <UButton v-if="!signerEnabled" block color="success" :loading="publishing" :disabled="!canPublishSigner"
+            icon="i-lucide-check" @click="publishSigner">
+            {{ publishing ? 'Publishing...' : 'Become a Signer' }}
+          </UButton>
+          <template v-else>
+            <UButton block color="neutral" variant="outline" :loading="publishing" icon="i-lucide-x"
+              @click="withdrawSigner">
+              Stop Signing
+            </UButton>
+          </template>
+        </div>
+      </div>
+    </UCard>
+
+    <!-- Info Card -->
+    <UCard>
+      <div class="flex gap-3">
+        <UIcon name="i-lucide-info" class="w-5 h-5 text-info-500 shrink-0 mt-0.5" />
+        <div class="text-sm text-muted space-y-2">
+          <p>
+            <strong>Wallet Presence</strong> lets others see you're online. It expires after 1 hour but auto-refreshes
+            while
+            you're connected.
+          </p>
+          <p>
+            <strong>MuSig2 Signer</strong> advertises your availability to participate in multi-signature transactions.
+            Other users can discover you and request your signature.
+          </p>
+        </div>
+      </div>
+    </UCard>
+
+    <!-- Current Status -->
+    <UCard v-if="p2pStore.mySignerConfig || p2pStore.myPresenceConfig">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-radio" class="w-5 h-5" />
+          <span class="font-semibold">Active Advertisements</span>
         </div>
       </template>
 
       <div class="divide-y divide-default -my-2">
-        <div v-for="ad in p2pStore.myAdvertisements" :key="ad.id" class="py-3 flex items-center justify-between">
-          <div>
-            <p class="font-medium">{{ ad.name }}</p>
-            <p class="text-sm text-muted">{{ ad.type }}</p>
+        <!-- Presence -->
+        <div v-if="p2pStore.myPresenceConfig" class="py-3 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <UIcon name="i-lucide-wifi" class="w-4 h-4 text-primary-500" />
+            <div>
+              <p class="font-medium">Wallet Presence</p>
+              <p class="text-xs text-muted">{{ p2pStore.myPresenceConfig.walletAddress.slice(0, 20)
+                }}...
+              </p>
+            </div>
           </div>
-          <UBadge color="success" variant="subtle" size="xs">
-            Active
-          </UBadge>
+          <UBadge color="success" variant="subtle" size="xs">Active</UBadge>
+        </div>
+
+        <!-- Signer -->
+        <div v-if="p2pStore.mySignerConfig" class="py-3 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <UIcon name="i-lucide-pen-tool" class="w-4 h-4 text-success-500" />
+            <div>
+              <p class="font-medium">MuSig2 Signer</p>
+              <p class="text-xs text-muted">
+                {{ p2pStore.mySignerConfig.transactionTypes.join(', ') }}
+              </p>
+            </div>
+          </div>
+          <UBadge color="success" variant="subtle" size="xs">Active</UBadge>
         </div>
       </div>
     </UCard>
