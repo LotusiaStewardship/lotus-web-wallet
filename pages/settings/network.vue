@@ -70,8 +70,7 @@ const disconnecting = ref(false)
 
 // Bootstrap peers (editable)
 const bootstrapPeers = ref<string[]>([
-  //'/dns4/bootstrap.lotusia.org/tcp/6970/ws/p2p/12D3KooWCsJoL2VW9Fp3Z2s4qUJQRuFkSTFtg144FdACZnu2FoX1',
-  '/ip4/172.16.2.20/tcp/6970/ws/p2p/12D3KooWCsJoL2VW9Fp3Z2s4qUJQRuFkSTFtg144FdACZnu2FoX1'
+  '/dns4/bootstrap.lotusia.org/tcp/6970/wss/p2p/12D3KooWCsJoL2VW9Fp3Z2s4qUJQRuFkSTFtg144FdACZnu2FoX1',
 ])
 const newPeer = ref('')
 
@@ -150,10 +149,7 @@ const copyPeerId = async () => {
   <div class="max-w-2xl mx-auto space-y-6">
     <!-- Header -->
     <div>
-      <NuxtLink to="/settings" class="text-sm text-muted hover:text-foreground flex items-center gap-1 mb-4">
-        <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
-        Back to Settings
-      </NuxtLink>
+      <SettingsBackButton />
       <h1 class="text-2xl font-bold">Network Settings</h1>
       <p class="text-muted">Configure blockchain network and P2P connections</p>
     </div>

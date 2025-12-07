@@ -11,7 +11,10 @@ definePageMeta({
 const walletStore = useWalletStore()
 const networkStore = useNetworkStore()
 const toast = useToast()
-const { formatFingerprint } = useAddressFormat()
+const { formatFingerprint, getAddressTypeLabel } = useAddressFormat()
+
+// Address type info
+const addressTypeInfo = computed(() => getAddressTypeLabel(walletStore.address))
 
 // QR Code options
 const qrOptions = {
@@ -120,8 +123,8 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
             <UBadge color="primary" variant="subtle" size="md" class="font-mono">
               {{ fingerprint }}
             </UBadge>
-            <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="subtle" size="md">
-              {{ networkStore.displayName }}
+            <UBadge :icon="addressTypeInfo.icon" :color="addressTypeInfo.color as any" variant="subtle" size="md">
+              {{ addressTypeInfo.short }}
             </UBadge>
           </div>
         </div>

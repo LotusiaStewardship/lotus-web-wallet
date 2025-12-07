@@ -265,10 +265,7 @@ onMounted(async () => {
   <div class="max-w-2xl mx-auto space-y-6">
     <!-- Header -->
     <div>
-      <NuxtLink to="/settings" class="text-sm text-muted hover:text-foreground flex items-center gap-1 mb-4">
-        <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
-        Back to Settings
-      </NuxtLink>
+      <SettingsBackButton />
       <h1 class="text-2xl font-bold">P2P Services</h1>
       <p class="text-muted">Configure your presence and services on the P2P network</p>
     </div>
@@ -342,11 +339,11 @@ onMounted(async () => {
         <!-- Signer Details -->
         <div class="grid sm:grid-cols-2 gap-4">
           <UFormField label="Display Name" hint="Optional">
-            <UInput v-model="signerNickname" placeholder="Anonymous Signer" />
+            <UInput class="w-full" v-model="signerNickname" placeholder="Anonymous Signer" />
           </UFormField>
 
           <UFormField label="Signing Fee (XPI)" hint="Optional fee per signature">
-            <UInput v-model="signerFee" type="number" placeholder="0" min="0" step="0.01" />
+            <UInput class="w-full" v-model="signerFee" type="number" placeholder="0" min="0" step="0.01" />
           </UFormField>
         </div>
 
@@ -359,8 +356,9 @@ onMounted(async () => {
         </UFormField>
 
         <!-- Description -->
-        <UFormField label="Description" hint="Optional description of your signing service">
-          <UTextarea v-model="signerDescription" placeholder="Describe your signing service..." :rows="2" />
+        <UFormField label="Description">
+          <UTextarea class="w-full" v-model="signerDescription" placeholder="Describe your signing service..."
+            :rows="3" />
         </UFormField>
 
         <!-- Action Buttons -->

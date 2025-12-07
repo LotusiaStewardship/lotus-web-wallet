@@ -10,7 +10,7 @@ const route = useRoute()
 const { fetchAddressHistory, fetchAddressBalance } = useExplorerApi()
 const { formatTimestamp, truncateTxid } = useExplorerFormat()
 const { formatXPI } = useLotusUnits()
-const { formatFingerprint, parseAddress } = useAddressFormat()
+const { formatFingerprint, parseAddress, getAddressTypeLabel } = useAddressFormat()
 const { copy } = useClipboard()
 const walletStore = useWalletStore()
 const contactsStore = useContactsStore()
@@ -27,6 +27,7 @@ const pageSize = ref(25)
 
 // Get address from route
 const address = computed(() => route.params.address as string)
+const addressTypeInfo = computed(() => getAddressTypeLabel(address.value))
 
 // Check if this is the user's address
 const isOwnAddress = computed(() => {
@@ -177,6 +178,8 @@ const networkDisplay = computed(() => {
               <UIcon name="i-lucide-check" class="w-3 h-3 mr-1" />
               Your Wallet
             </UBadge>
+            <UBadge variant="soft" :color="addressTypeInfo.color" :icon="addressTypeInfo.icon"
+              :label="addressTypeInfo.short" />
             <UBadge v-if="contact" color="primary" variant="subtle" size="md">
               <UIcon name="i-lucide-user" class="w-3 h-3 mr-1" />
               Contact
@@ -184,14 +187,14 @@ const networkDisplay = computed(() => {
           </div>
 
           <!-- Address (copyable) -->
-          <button class="font-mono text-xs text-muted hover:text-primary break-all max-w-full px-4"
+          <button class="font-mono text-sm text-muted hover:text-primary break-all max-w-full px-4"
             @click="copy(address, 'Address copied')">
             {{ address }}
           </button>
 
           <!-- Add to Contacts button -->
           <div v-if="!isOwnAddress && !contact" class="mt-4">
-            <AddToContactButton :address="address" variant="button" size="sm" />
+            <AddToContactButton :address="address" variant="button" size="md" />
           </div>
         </div>
       </UCard>

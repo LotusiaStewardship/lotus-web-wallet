@@ -39,6 +39,8 @@ const shouldShow = computed(() => {
 // Slideover state
 const isOpen = ref(false)
 const newContactName = ref('')
+const newContactNotes = ref('')
+const newContactIsFavorite = ref(false)
 const saving = ref(false)
 
 // Open slideover
@@ -48,14 +50,16 @@ const openAddContact = () => {
 }
 
 // Save contact
-const saveContact = async () => {
+const saveContact = () => {
   if (!newContactName.value.trim()) return
 
   saving.value = true
   try {
-    await contactsStore.addContact({
+    contactsStore.addContact({
       name: newContactName.value.trim(),
       address: props.address,
+      notes: newContactNotes.value.trim() || undefined,
+      isFavorite: newContactIsFavorite.value,
     })
     isOpen.value = false
   } catch (e) {
@@ -83,11 +87,11 @@ const iconSize = computed(() => {
       @click.stop.prevent="openAddContact" title="Add to Contacts" />
 
     <!-- Text variant -->
-    <button v-else-if="variant === 'text'" class="text-xs text-muted hover:text-primary inline-flex items-center gap-1"
+    <UButton v-else-if="variant === 'text'" color="neutral" variant="ghost" :size="size" icon="i-lucide-user-plus"
       @click.stop.prevent="openAddContact">
       <UIcon name="i-lucide-user-plus" :class="iconSize" />
       Add to Contacts
-    </button>
+    </UButton>
 
     <!-- Button variant -->
     <UButton v-else color="primary" variant="soft" :size="size" icon="i-lucide-user-plus"
@@ -96,36 +100,48 @@ const iconSize = computed(() => {
     </UButton>
 
     <!-- Add Contact Slideover -->
-    <USlideover v-model:open="isOpen">
+    <USlideover :dismissible="true" v-model:open="isOpen" side="bottom">
+
       <template #title>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-user-plus" class="w-5 h-5 text-primary" />
-          <span>Add Contact</span>
+        Add to Contacts
+      </template>
+
+      <template #body>
+        <div class="space-y-4">
+          <!-- Name input -->
+          <div>
+            <label class="text-sm font-medium text-muted mb-1 block">Name</label>
+            <UInput class="w-full" v-model="newContactName" placeholder="Enter contact name" autofocus
+              @keyup.enter="saveContact" />
+          </div>
+
+          <!-- Notes -->
+          <UFormField label="Notes" hint="Optional">
+            <UTextarea class="w-full" v-model="newContactNotes" placeholder="Add notes about this contact..."
+              :rows="3" />
+          </UFormField>
+
+          <!-- Favorite Toggle -->
+          <div class="flex items-center gap-3 p-3 rounded-lg border border-default">
+            <UCheckbox v-model="newContactIsFavorite" />
+            <div class="flex items-center gap-2">
+              <UIcon name="i-lucide-star" :class="newContactIsFavorite ? 'text-warning-500' : 'text-muted'"
+                class="w-5 h-5" />
+              <div>
+                <p class="font-medium text-sm">Add to Favorites</p>
+                <p class="text-xs text-muted">Favorites appear first in search and quick send</p>
+              </div>
+            </div>
+          </div>
         </div>
       </template>
 
-      <div class="p-4 space-y-4">
-        <!-- Address display -->
-        <div>
-          <label class="text-sm font-medium text-muted mb-1 block">Address</label>
-          <div class="font-mono text-xs bg-gray-100 dark:bg-gray-800 p-3 rounded-lg break-all">
-            {{ address }}
-          </div>
-        </div>
-
-        <!-- Name input -->
-        <div>
-          <label class="text-sm font-medium text-muted mb-1 block">Name</label>
-          <UInput v-model="newContactName" placeholder="Enter contact name" autofocus @keyup.enter="saveContact" />
-        </div>
-      </div>
-
       <template #footer>
         <div class="flex gap-2">
-          <UButton color="neutral" variant="ghost" @click="isOpen = false">Cancel</UButton>
           <UButton color="primary" :loading="saving" :disabled="!newContactName.trim()" @click="saveContact">
             Save Contact
           </UButton>
+          <UButton color="neutral" variant="ghost" @click="isOpen = false">Cancel</UButton>
         </div>
       </template>
     </USlideover>

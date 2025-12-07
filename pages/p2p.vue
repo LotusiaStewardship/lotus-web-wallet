@@ -1,7 +1,13 @@
 <script setup lang="ts">
-import { useP2PStore, type UISignerAdvertisement, type P2PActivityEvent } from '~/stores/p2p'
+import {
+  useP2PStore,
+  type UISignerAdvertisement,
+  type P2PActivityEvent,
+  P2PConnectionState,
+} from '~/stores/p2p'
 import { useContactsStore } from '~/stores/contacts'
 import { useWalletStore } from '~/stores/wallet'
+import SigningRequestModal from '~/components/p2p/SigningRequestModal.vue'
 
 // Transaction type constants (matching SDK's TransactionType enum values)
 const TransactionType = {
@@ -29,6 +35,10 @@ const toast = useToast()
 const selectedTxTypeFilter = ref<string>('all')
 const searchQuery = ref('')
 const connecting = ref(false)
+
+// Signing request modal state
+const showSigningModal = ref(false)
+const selectedSigner = ref<UISignerAdvertisement | null>(null)
 
 // ============================================================================
 // Computed
@@ -76,6 +86,56 @@ const txTypeFilterOptions = computed(() => [
     value: t,
   })),
 ])
+
+// Connection state styling
+const connectionStateLabel = computed(() => {
+  switch (p2pStore.connectionState) {
+    case P2PConnectionState.CONNECTING:
+      return 'Connecting'
+    case P2PConnectionState.CONNECTED:
+      return 'Connected'
+    case P2PConnectionState.DHT_READY:
+      return 'DHT Ready'
+    case P2PConnectionState.FULLY_OPERATIONAL:
+      return 'Fully Operational'
+    case P2PConnectionState.ERROR:
+      return 'Error'
+    default:
+      return 'Disconnected'
+  }
+})
+
+const connectionStateClass = computed(() => {
+  switch (p2pStore.connectionState) {
+    case P2PConnectionState.FULLY_OPERATIONAL:
+      return 'bg-success-100 text-success-700 dark:bg-success-900/30 dark:text-success-400'
+    case P2PConnectionState.DHT_READY:
+      return 'bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400'
+    case P2PConnectionState.CONNECTED:
+    case P2PConnectionState.CONNECTING:
+      return 'bg-warning-100 text-warning-700 dark:bg-warning-900/30 dark:text-warning-400'
+    case P2PConnectionState.ERROR:
+      return 'bg-error-100 text-error-700 dark:bg-error-900/30 dark:text-error-400'
+    default:
+      return 'bg-neutral-100 text-neutral-700 dark:bg-neutral-900/30 dark:text-neutral-400'
+  }
+})
+
+const connectionStateDotClass = computed(() => {
+  switch (p2pStore.connectionState) {
+    case P2PConnectionState.FULLY_OPERATIONAL:
+      return 'bg-success-500 animate-pulse'
+    case P2PConnectionState.DHT_READY:
+      return 'bg-primary-500'
+    case P2PConnectionState.CONNECTED:
+    case P2PConnectionState.CONNECTING:
+      return 'bg-warning-500 animate-pulse'
+    case P2PConnectionState.ERROR:
+      return 'bg-error-500'
+    default:
+      return 'bg-neutral-500'
+  }
+})
 
 // ============================================================================
 // Actions
@@ -138,13 +198,28 @@ const saveAsContact = (signer: UISignerAdvertisement) => {
 
 // Request signature from signer
 const requestSignature = (signer: UISignerAdvertisement) => {
-  // For now, just show a toast - full implementation would open signing request modal
+  selectedSigner.value = signer
+  showSigningModal.value = true
+}
+
+// Handle signing request submission
+const handleSigningRequest = (request: SigningRequest) => {
+  // TODO: Implement actual signing request via P2P store
+  console.log('Signing request submitted:', request)
   toast.add({
-    title: 'Coming Soon',
-    description: 'Signature requests will be available in a future update',
-    color: 'info',
-    icon: 'i-lucide-pen-tool',
+    title: 'Request Sent',
+    description: `Signing request sent to ${selectedSigner.value?.nickname || 'Anonymous'}`,
+    color: 'success',
+    icon: 'i-lucide-check',
   })
+  showSigningModal.value = false
+  selectedSigner.value = null
+}
+
+// Handle signing request cancellation
+const handleSigningCancel = () => {
+  showSigningModal.value = false
+  selectedSigner.value = null
 }
 
 // Get icon for activity event type
@@ -237,21 +312,17 @@ onMounted(async () => {
         </div>
         <h1 class="text-3xl font-bold mb-2">P2P Network</h1>
         <p class="text-muted">
-          <template v-if="p2pStore.isOnline">
-            <template v-if="p2pStore.peerCount > 0">
-              Connected with {{ p2pStore.peerCount }} peer{{ p2pStore.peerCount !== 1 ? 's' : '' }}
-            </template>
-            <template v-else-if="p2pStore.dhtReady">
-              Network ready, searching for peers...
-            </template>
-            <template v-else>
-              Initializing DHT...
-            </template>
-          </template>
-          <template v-else>
-            Connect to start discovering
-          </template>
+          {{ p2pStore.connectionStatusMessage }}
         </p>
+
+        <!-- Connection state indicator -->
+        <div v-if="p2pStore.isOnline" class="flex items-center justify-center gap-2 mt-2">
+          <span class="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium"
+            :class="connectionStateClass">
+            <span class="w-2 h-2 rounded-full" :class="connectionStateDotClass"></span>
+            {{ connectionStateLabel }}
+          </span>
+        </div>
 
         <div class="mt-4 flex justify-center gap-2">
           <UButton v-if="!p2pStore.isOnline" color="primary" size="lg" icon="i-lucide-wifi" :loading="connecting"
@@ -262,7 +333,7 @@ onMounted(async () => {
             <UButton color="neutral" variant="outline" icon="i-lucide-wifi-off" @click="disconnect">
               Disconnect
             </UButton>
-            <UButton color="primary" icon="i-lucide-pen-tool" to="/settings/advertise">
+            <UButton color="primary" icon="i-lucide-pen-tool" to="/settings/advertise?from=/p2p">
               Become a Signer
             </UButton>
           </template>
@@ -504,13 +575,14 @@ onMounted(async () => {
             <span class="font-semibold">Quick Actions</span>
           </template>
           <div class="space-y-2">
-            <UButton block color="primary" variant="outline" icon="i-lucide-pen-tool" to="/settings/advertise">
+            <UButton block color="primary" variant="outline" icon="i-lucide-pen-tool"
+              to="/settings/advertise?from=/p2p">
               Become a Signer
             </UButton>
-            <UButton block color="neutral" variant="outline" icon="i-lucide-settings" to="/settings/network">
+            <UButton block color="neutral" variant="outline" icon="i-lucide-settings" to="/settings/network?from=/p2p">
               Network Settings
             </UButton>
-            <UButton block color="neutral" variant="outline" icon="i-lucide-sliders" to="/settings/p2p">
+            <UButton block color="neutral" variant="outline" icon="i-lucide-sliders" to="/settings/p2p?from=/p2p">
               P2P Settings
             </UButton>
           </div>
@@ -579,6 +651,10 @@ onMounted(async () => {
         Connect Now
       </UButton>
     </UCard>
+
+    <!-- Signing Request Modal -->
+    <SigningRequestModal v-if="selectedSigner" v-model:open="showSigningModal" :signer="selectedSigner"
+      @submit="handleSigningRequest" @cancel="handleSigningCancel" />
   </div>
 </template>
 

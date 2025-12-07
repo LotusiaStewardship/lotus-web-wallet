@@ -79,12 +79,21 @@ const navigationItems = computed<NavigationMenuItem[][]>(() => [
   ],
 ])
 
+// Compute network settings URL with current page as return path
+const networkSettingsUrl = computed(() => {
+  // Only add from param for non-settings pages
+  if (route.path.startsWith('/settings')) {
+    return '/settings/network'
+  }
+  return `/settings/network?from=${route.path}`
+})
+
 // User menu items
 const userMenuItems = computed(() => [
   [{
     label: 'Network',
     icon: 'i-lucide-network',
-    to: '/settings/network',
+    to: networkSettingsUrl.value,
   }],
   [{
     label: colorMode.value === 'dark' ? 'Light Mode' : 'Dark Mode',
@@ -177,7 +186,7 @@ const statusColor = computed(() => {
             <UTooltip
               :text="connectionStatus === 'connecting' ? 'Connecting to network...' : `${networkStore.displayName} - Click to change network`">
               <UButton :color="networkStore.isProduction ? 'neutral' : networkStore.color"
-                :variant="networkStore.isProduction ? 'ghost' : 'soft'" size="sm" to="/settings/network"
+                :variant="networkStore.isProduction ? 'ghost' : 'soft'" size="sm" :to="networkSettingsUrl"
                 class="gap-1.5">
                 <UIcon v-if="connectionStatus === 'connecting'" name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
                 <UIcon v-else :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-4 h-4" />
@@ -209,7 +218,7 @@ const statusColor = computed(() => {
         ]">
           <UIcon name="i-lucide-alert-triangle" class="w-4 h-4 inline mr-1" />
           You are on {{ networkStore.displayName }}. Coins have no real value.
-          <NuxtLink to="/settings/network" class="underline ml-1">Switch network</NuxtLink>
+          <NuxtLink :to="networkSettingsUrl" class="underline ml-1">Switch network</NuxtLink>
         </div>
 
         <div class="p-6">

@@ -39,7 +39,7 @@ const enableDCUTR = ref(true)
 const enableUPnP = ref(false)
 
 // Connection Settings
-const maxConnections = ref(100)
+const maxConnections = ref(20)
 
 // Relay Monitoring
 const enableRelayMonitoring = ref(false)
@@ -92,7 +92,7 @@ const saveSettings = async () => {
     },
   }
 
-  localStorage.setItem('p2p-config', JSON.stringify(config))
+  p2pStore._saveConfig(config)
 
   toast.add({
     title: 'Settings Saved',
@@ -157,10 +157,7 @@ onMounted(() => {
   <div class="max-w-2xl mx-auto space-y-6">
     <!-- Header -->
     <div>
-      <NuxtLink to="/settings" class="text-sm text-muted hover:text-foreground flex items-center gap-1 mb-4">
-        <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
-        Back to Settings
-      </NuxtLink>
+      <SettingsBackButton />
       <h1 class="text-2xl font-bold">P2P Settings</h1>
       <p class="text-muted">Configure advanced P2P network options</p>
     </div>

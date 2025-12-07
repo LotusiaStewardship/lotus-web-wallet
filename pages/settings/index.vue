@@ -3,6 +3,23 @@ import { useWalletStore, type AddressType } from '~/stores/wallet'
 import { useP2PStore } from '~/stores/p2p'
 import { useAddressFormat } from '~/composables/useUtils'
 
+// Settings item types
+interface SettingsItem {
+  label: string
+  icon: string
+  to?: string
+  href?: string
+  external?: boolean
+  action?: () => void
+  description?: string
+}
+
+interface SettingsSection {
+  title: string
+  icon: string
+  items: SettingsItem[]
+}
+
 definePageMeta({
   title: 'Settings',
 })
@@ -11,13 +28,10 @@ const walletStore = useWalletStore()
 const p2pStore = useP2PStore()
 const toast = useToast()
 const colorMode = useColorMode()
-const { truncateAddress, formatFingerprint, getAddressTypeLabel } = useAddressFormat()
+const { formatFingerprint, getAddressTypeLabel } = useAddressFormat()
 
 // Address display toggle
-const showFullAddress = ref(false)
-const displayAddress = computed(() =>
-  showFullAddress.value ? walletStore.address : truncateAddress(walletStore.address)
-)
+const displayAddress = computed(() => walletStore.address)
 const fingerprint = computed(() => formatFingerprint(walletStore.address))
 
 // Address type info
@@ -51,8 +65,8 @@ const handleAddressTypeChange = async (newType: AddressType) => {
   }
 }
 
-// Settings sections
-const settingsSections = [
+// Settings sections - organized by logical grouping
+const settingsSections: SettingsSection[] = [
   {
     title: 'Wallet',
     icon: 'i-lucide-wallet',
@@ -65,8 +79,9 @@ const settingsSections = [
     title: 'Network',
     icon: 'i-lucide-network',
     items: [
-      { label: 'P2P Settings', icon: 'i-lucide-radio', to: '/settings/network' },
-      { label: 'Advertise Service', icon: 'i-lucide-megaphone', to: '/settings/advertise' },
+      { label: 'Blockchain Network', icon: 'i-lucide-globe', to: '/settings/network', description: 'Switch networks, view connection status' },
+      { label: 'P2P Configuration', icon: 'i-lucide-radio', to: '/settings/p2p', description: 'DHT, GossipSub, NAT traversal' },
+      { label: 'Advertise Services', icon: 'i-lucide-megaphone', to: '/settings/advertise', description: 'Become a signer, set presence' },
     ],
   },
   {
@@ -156,28 +171,20 @@ const copyAddress = async () => {
 
       <div class="space-y-4">
         <div>
-          <div class="flex items-center justify-between mb-1">
-            <p class="text-sm text-muted">Address</p>
-            <button type="button" class="text-xs text-primary hover:underline"
-              @click="showFullAddress = !showFullAddress">
-              {{ showFullAddress ? 'Show less' : 'Show full' }}
-            </button>
-          </div>
           <div class="flex items-center gap-2">
-            <code class="text-sm bg-muted/50 px-2 py-1 rounded flex-1 truncate cursor-pointer"
-              @click="showFullAddress = !showFullAddress">
+            <code class="text-sm bg-muted/50 px-2 py-1 rounded flex-1 truncate cursor-pointer">
         {{ displayAddress }}
       </code>
             <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-copy" @click="copyAddress" />
           </div>
-          <div v-if="!showFullAddress && fingerprint" class="flex items-center gap-1.5 mt-1.5">
+          <div class="flex items-center gap-1.5 mt-1.5">
             <span class="text-xs text-muted">ID:</span>
-            <UBadge color="neutral" variant="subtle" size="xs" class="font-mono">
+            <UBadge color="neutral" variant="subtle" size="md" class="font-mono">
               {{ fingerprint }}
             </UBadge>
             <!-- Address type badge -->
             <UTooltip :text="addressTypeInfo.full">
-              <UBadge :color="addressTypeInfo.color as any" variant="subtle" size="xs" class="gap-1">
+              <UBadge :color="addressTypeInfo.color as any" variant="subtle" size="md" class="gap-1">
                 <UIcon :name="addressTypeInfo.icon" class="w-3 h-3" />
                 {{ addressTypeInfo.short }}
               </UBadge>
@@ -244,7 +251,10 @@ const copyAddress = async () => {
             class="flex items-center justify-between py-3 hover:bg-muted/50 -mx-4 px-4 transition-colors">
             <div class="flex items-center gap-3">
               <UIcon :name="item.icon" class="w-5 h-5 text-muted" />
-              <span>{{ item.label }}</span>
+              <div>
+                <span>{{ item.label }}</span>
+                <p v-if="item.description" class="text-xs text-muted">{{ item.description }}</p>
+              </div>
             </div>
             <UIcon name="i-lucide-chevron-right" class="w-5 h-5 text-muted" />
           </NuxtLink>
@@ -291,7 +301,7 @@ const copyAddress = async () => {
         <div class="grid grid-cols-3 gap-4">
           <StatsCard :value="p2pStore.peerCount" label="Connected Peers" />
           <StatsCard :value="p2pStore.dhtReady ? 'Ready' : 'Syncing'" label="DHT Status" />
-          <StatsCard :value="`${p2pStore.signerCount} discovered`" label="Signers" />
+          <StatsCard :value="`${p2pStore.signerCount}`" label="Signers discovered" />
         </div>
       </div>
     </UCard>

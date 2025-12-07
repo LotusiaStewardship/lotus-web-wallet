@@ -603,7 +603,19 @@ export const useAddressFormat = () => {
    */
   const getAddressTypeLabel = (
     address: string,
-  ): { short: string; full: string; icon: string; color: string } => {
+  ): {
+    short: string
+    full: string
+    icon: string
+    color:
+      | 'primary'
+      | 'warning'
+      | 'info'
+      | 'error'
+      | 'neutral'
+      | 'success'
+      | 'secondary'
+  } => {
     const type = getAddressType(address)
 
     switch (type) {

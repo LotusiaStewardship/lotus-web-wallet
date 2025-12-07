@@ -163,7 +163,10 @@ const nextBlockHeight = computed(() => {
           </div>
           <div v-if="block.minedBy" class="flex items-center justify-between">
             <span class="text-muted">Miner</span>
-            <ExplorerAddressDisplay :address="block.minedBy" size="sm" :show-add-contact="true" />
+            <div class="flex items-right gap-2">
+              <ExplorerAddressDisplay :link-to-explorer="true" :address="block.minedBy" size="sm"
+                :show-add-contact="true" />
+            </div>
           </div>
         </div>
       </UCard>

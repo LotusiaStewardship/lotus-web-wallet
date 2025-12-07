@@ -512,8 +512,8 @@ const formatNumber = (num: number) => {
 
         <div class="flex gap-2 justify-center">
           <UButton color="neutral" variant="outline" icon="i-lucide-external-link"
-            :href="`${config.public.explorerUrl}/tx/${txResult.txid}`" target="_blank">
-            View on Explorer
+            :to="`/explorer/tx/${txResult.txid}`">
+            View Details
           </UButton>
           <UButton color="primary" icon="i-lucide-plus" @click="resetForm">
             Send More
@@ -593,11 +593,11 @@ const formatNumber = (num: number) => {
                 <UInput v-show="validateAddress(recipient.address)" :model-value="getRecipientDisplayAmount(recipient)"
                   @update:model-value="updateRecipientAmount(recipient.id, $event)" type="number" placeholder="0.00"
                   class="w-full font-mono" :color="recipientValidations[index]?.amount === false ? 'error' : undefined"
-                  :readonly="recipient.sendMax" step="0.000001" min="0">
+                  :disabled="recipient.sendMax" step="0.000001" min="0">
                   <template #trailing>
                     <div class="flex items-center gap-1">
                       <span class="text-sm text-muted">XPI</span>
-                      <UButton v-if="recipient.sendMax" size="xs" variant="link" color="neutral" class="px-1"
+                      <UButton v-if="recipient.sendMax" size="xs" variant="link" color="primary" class="px-1"
                         @click="clearSendMax(recipient.id)">
                         CLEAR
                       </UButton>

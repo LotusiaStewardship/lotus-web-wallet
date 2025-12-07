@@ -169,7 +169,7 @@ const networkStats = computed(() => {
               <div v-if="Number(block.sumBurnedSats) > 0" class="font-mono text-warning-500 text-sm">
                 {{ formatXPI(block.sumBurnedSats) }} burned
               </div>
-              <div class="text-xs text-muted font-mono">{{ truncateBlockHash(block.hash) }}</div>
+
             </div>
           </NuxtLink>
         </div>

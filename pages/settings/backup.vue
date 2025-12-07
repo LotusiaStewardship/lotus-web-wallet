@@ -47,10 +47,7 @@ const seedWords = computed(() => {
   <div class="max-w-xl mx-auto space-y-6">
     <!-- Header -->
     <div>
-      <NuxtLink to="/settings" class="text-sm text-muted hover:text-foreground flex items-center gap-1 mb-4">
-        <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
-        Back to Settings
-      </NuxtLink>
+      <SettingsBackButton />
       <h1 class="text-2xl font-bold">Backup Seed Phrase</h1>
       <p class="text-muted">Your seed phrase is the only way to recover your wallet</p>
     </div>

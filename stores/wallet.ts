@@ -1578,6 +1578,26 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
+     * Get the signing private key (hex encoded)
+     * Used for MuSig2 signing sessions
+     * Returns null if wallet is not initialized
+     */
+    getPrivateKeyHex(): string | null {
+      if (!this._signingKey) return null
+      return this._signingKey.toString()
+    },
+
+    /**
+     * Get the signing public key (hex encoded)
+     * Used for MuSig2 signer advertisement
+     * Returns null if wallet is not initialized
+     */
+    getPublicKeyHex(): string | null {
+      if (!this._signingKey) return null
+      return this._signingKey.publicKey.toString()
+    },
+
+    /**
      * Disconnect and cleanup
      */
     async disconnect() {

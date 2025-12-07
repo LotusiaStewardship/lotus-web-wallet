@@ -86,8 +86,7 @@ const addressTypeInfo = computed(() => getAddressTypeLabel(props.address))
 </script>
 
 <template>
-  <component :is="linkToExplorer ? 'NuxtLink' : 'span'"
-    :to="linkToExplorer ? `/explorer/address/${address}` : undefined" class="inline-flex items-center gap-1.5 group"
+  <NuxtLink :to="`/explorer/address/${address}`" class="inline-flex items-center gap-1.5 group"
     :class="{ 'hover:text-primary': linkToExplorer }">
     <!-- Avatar for contacts/self -->
     <template v-if="showAvatar && (contact || isOwnAddress)">
@@ -105,23 +104,16 @@ const addressTypeInfo = computed(() => getAddressTypeLabel(props.address))
     <UBadge v-else :color="badgeColor" variant="subtle" :size="size === 'xs' ? 'sm' : 'md'" class="font-mono">
       {{ fingerprint }}
     </UBadge>
+  </NuxtLink>
 
-    <!-- Show fingerprint as subtitle when we have a name -->
-    <span v-if="displayName && !isOwnAddress" class="text-muted font-mono"
-      :class="size === 'xs' ? 'text-xs' : 'text-sm'">
-      ({{ fingerprint }})
-    </span>
+  <!-- Address type indicator -->
+  <UTooltip v-if="showAddressType" :text="addressTypeInfo.full">
+    <UBadge :color="addressTypeInfo.color as any" variant="subtle" :size="size === 'xs' ? 'sm' : 'md'" class="gap-0.5">
+      <UIcon :name="addressTypeInfo.icon" :class="size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'" />
+      <span v-if="size !== 'xs'">{{ addressTypeInfo.short }}</span>
+    </UBadge>
+  </UTooltip>
 
-    <!-- Address type indicator -->
-    <UTooltip v-if="showAddressType" :text="addressTypeInfo.full">
-      <UBadge :color="addressTypeInfo.color as any" variant="subtle" :size="size === 'xs' ? 'sm' : 'md'"
-        class="gap-0.5">
-        <UIcon :name="addressTypeInfo.icon" :class="size === 'xs' ? 'w-2.5 h-2.5' : 'w-3 h-3'" />
-        <span v-if="size !== 'xs'">{{ addressTypeInfo.short }}</span>
-      </UBadge>
-    </UTooltip>
-
-    <!-- Add to contacts button -->
-    <AddToContactButton v-if="showAddContact" :address="address" :size="size === 'xs' ? 'xs' : 'sm'" variant="icon" />
-  </component>
+  <!-- Add to contacts button -->
+  <AddToContactButton v-show="showAddContact" :address="address" :size="size === 'xs' ? 'xs' : 'sm'" variant="icon" />
 </template>
