@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useWalletStore } from '~/stores/wallet'
 import { useP2PStore } from '~/stores/p2p'
+import { useMuSig2 } from '~/composables/useMuSig2'
 import type { ParsedTransaction } from '~/composables/useExplorerApi'
 
 definePageMeta({
@@ -9,6 +10,7 @@ definePageMeta({
 
 const walletStore = useWalletStore()
 const p2pStore = useP2PStore()
+const musig2 = useMuSig2()
 
 // Recent activity from wallet store (limited to 5 most recent)
 // Prefer parsed transactions from Explorer API, fallback to basic history
@@ -24,17 +26,28 @@ const hasActivity = computed(() => {
   return walletStore.parsedTransactions.length > 0 || walletStore.transactionHistory.length > 0
 })
 
-// Fetch transaction history on mount (only if wallet is initialized)
-onMounted(async () => {
-  if (walletStore.initialized && walletStore.transactionHistory.length === 0) {
-    await walletStore.fetchTransactionHistory(5)
-  }
+// Track if we've already fetched history to prevent duplicate fetches
+const historyFetched = ref(false)
+
+// Fetch transaction history when wallet is initialized
+const fetchHistoryOnce = async () => {
+  if (historyFetched.value) return
+  if (!walletStore.initialized) return
+  if (walletStore.transactionHistory.length > 0) return
+
+  historyFetched.value = true
+  await walletStore.fetchTransactionHistory(5)
+}
+
+// Fetch on mount if already initialized
+onMounted(() => {
+  fetchHistoryOnce()
 })
 
 // Watch for initialization to complete and fetch history
-watch(() => walletStore.initialized, async (initialized) => {
-  if (initialized && walletStore.transactionHistory.length === 0) {
-    await walletStore.fetchTransactionHistory(5)
+watch(() => walletStore.initialized, (initialized) => {
+  if (initialized) {
+    fetchHistoryOnce()
   }
 })
 
@@ -134,7 +147,7 @@ const quickActions = [
         <!-- Signers -->
         <NuxtLink to="/p2p"
           class="text-center hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-lg p-2 -m-2 transition-colors">
-          <div class="text-xl font-bold font-mono">{{ p2pStore.signerCount }}</div>
+          <div class="text-xl font-bold font-mono">{{ musig2.signerCount.value }}</div>
           <div class="text-xs text-muted">Signers</div>
         </NuxtLink>
       </div>

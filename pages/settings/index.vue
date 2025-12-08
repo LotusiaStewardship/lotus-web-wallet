@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useWalletStore, type AddressType } from '~/stores/wallet'
 import { useP2PStore } from '~/stores/p2p'
+import { useMuSig2 } from '~/composables/useMuSig2'
 import { useAddressFormat } from '~/composables/useUtils'
 
 // Settings item types
@@ -26,6 +27,7 @@ definePageMeta({
 
 const walletStore = useWalletStore()
 const p2pStore = useP2PStore()
+const musig2 = useMuSig2()
 const toast = useToast()
 const colorMode = useColorMode()
 const { formatFingerprint, getAddressTypeLabel } = useAddressFormat()
@@ -301,7 +303,7 @@ const copyAddress = async () => {
         <div class="grid grid-cols-3 gap-4">
           <StatsCard :value="p2pStore.peerCount" label="Connected Peers" />
           <StatsCard :value="p2pStore.dhtReady ? 'Ready' : 'Syncing'" label="DHT Status" />
-          <StatsCard :value="`${p2pStore.signerCount}`" label="Signers discovered" />
+          <StatsCard :value="`${musig2.signerCount.value}`" label="Signers discovered" />
         </div>
       </div>
     </UCard>

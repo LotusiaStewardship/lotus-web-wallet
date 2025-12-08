@@ -605,6 +605,17 @@ export const useWalletStore = defineStore('wallet', {
 
       await this._ws.waitForOpen()
       this._ws.subscribe(scriptType, this.scriptPayload)
+
+      // Handle mobile browser tab visibility changes
+      // Mobile browsers aggressively suspend background tabs, causing stale state
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible' && this._scriptEndpoint) {
+            // Refresh UTXOs when tab becomes visible to ensure fresh state
+            this.refreshUtxos().catch(console.error)
+          }
+        })
+      }
     },
 
     /**
@@ -747,6 +758,12 @@ export const useWalletStore = defineStore('wallet', {
 
       this.recalculateBalance()
       await this.saveWalletState()
+
+      // If draft transaction is initialized, recalculate to update inputAmount
+      // This fixes the race condition where send page loads before UTXOs
+      if (this.draftTx.initialized) {
+        this._recalculateDraftMetadata()
+      }
     },
 
     /**
@@ -1261,37 +1278,45 @@ export const useWalletStore = defineStore('wallet', {
      * storing a cached Transaction object.
      *
      * Called whenever recipients, amounts, fee rate, or UTXOs change.
+     * Also called automatically when UTXOs are refreshed to keep inputAmount in sync.
      */
     _recalculateDraftMetadata() {
       // Reset validation state
       this.draftTx.isValid = false
       this.draftTx.validationError = null
 
-      // Validate prerequisites
+      // Validate prerequisites - show loading state instead of error during init
       if (!this._script || !isBitcoreLoaded()) {
-        this.draftTx.validationError = 'Wallet not initialized'
+        this.draftTx.validationError = 'Loading wallet...'
         return
       }
 
       const Address = getAddress()
       const availableUtxos = this._getAvailableUtxos()
 
-      // Calculate input amount
+      // ALWAYS recalculate input amount from current UTXOs
+      // This fixes the race condition where initializeDraftTransaction() runs
+      // before UTXOs are loaded from Chronik
+      const inputAmount = availableUtxos.reduce(
+        (sum, [_, utxo]) => sum + BigInt(utxo.value),
+        0n,
+      )
+      this.draftTx.inputAmount = inputAmount
+
+      // Handle case where no UTXOs are available
       if (availableUtxos.length === 0) {
-        this.draftTx.validationError = 'No spendable UTXOs available'
-        this.draftTx.inputAmount = 0n
+        // Only show error if wallet is fully initialized (not still loading)
+        if (this.initialized) {
+          this.draftTx.validationError = 'No spendable UTXOs available'
+        } else {
+          this.draftTx.validationError = 'Loading balance...'
+        }
         this.draftTx.maxSendable = 0n
         this.draftTx.outputAmount = 0n
         this.draftTx.estimatedFee = 0
         this.draftTx.changeAmount = 0n
         return
       }
-
-      const inputAmount = availableUtxos.reduce(
-        (sum, [_, utxo]) => sum + BigInt(utxo.value),
-        0n,
-      )
-      this.draftTx.inputAmount = inputAmount
 
       // Categorize recipients
       const sendMaxRecipient = this.draftTx.recipients.find(r => r.sendMax)

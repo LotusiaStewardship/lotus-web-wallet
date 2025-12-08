@@ -14,7 +14,6 @@ const contactsStore = useContactsStore()
 const networkStore = useNetworkStore()
 const toast = useToast()
 const route = useRoute()
-const config = useRuntimeConfig()
 const { formatFingerprint, getNetworkName, isValidAddress } = useAddressFormat()
 
 // ============================================================================
@@ -59,6 +58,18 @@ onMounted(() => {
     }
   }
 })
+
+// Watch for wallet initialization to complete and refresh draft transaction
+// This handles the race condition where send page loads before UTXOs are fetched
+watch(
+  () => walletStore.initialized,
+  (initialized) => {
+    if (initialized && walletStore.draftTx.inputAmount === 0n && walletStore.utxos.size > 0) {
+      // UTXOs are now available but draft wasn't updated - reinitialize
+      walletStore.initializeDraftTransaction()
+    }
+  }
+)
 
 // ============================================================================
 // Mode Toggle
@@ -528,7 +539,15 @@ const formatNumber = (num: number) => {
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-xl font-bold">Send Lotus</h1>
-          <p class="text-sm text-muted">{{ formatNumber(availableBalanceXPI) }} XPI available</p>
+          <p class="text-sm text-muted">
+            <template v-if="!walletStore.initialized && availableBalanceXPI === 0">
+              <UIcon name="i-lucide-loader-2" class="w-3 h-3 animate-spin inline mr-1" />
+              Loading balance...
+            </template>
+            <template v-else>
+              {{ formatNumber(availableBalanceXPI) }} XPI available
+            </template>
+          </p>
         </div>
         <div class="flex items-center gap-2">
           <span class="text-sm text-muted">Advanced</span>

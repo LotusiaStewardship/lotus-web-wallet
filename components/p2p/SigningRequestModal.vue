@@ -5,7 +5,7 @@
  * Modal for initiating a MuSig2 signing request with a discovered signer.
  * Allows the user to specify transaction type, amount, and purpose.
  */
-import { useP2PStore, type UISignerAdvertisement } from '~/stores/p2p'
+import { useMuSig2, type UISignerAdvertisement } from '~/composables/useMuSig2'
 
 // Transaction type constants (matching SDK's TransactionType enum values)
 const TransactionType = {
@@ -38,7 +38,7 @@ export interface SigningRequest {
   purpose?: string
 }
 
-const p2pStore = useP2PStore()
+const musig2 = useMuSig2()
 const toast = useToast()
 
 // ============================================================================
@@ -134,7 +134,23 @@ const sendRequest = async () => {
 
   requesting.value = true
 
+  console.log('[SigningRequestModal] Sending request to', props.signer.nickname)
+
+  console.log('[SigningRequestModal] Request details:', props.signer.publicKeyHex)
+
   try {
+    // Send the signing request via P2P
+    const requestId = await musig2.sendSigningRequest(
+      props.signer.publicKeyHex,
+      {
+        transactionType: selectedTxType.value,
+        amount: amount.value,
+        purpose: purpose.value || undefined,
+      },
+    )
+
+    console.log('[SigningRequestModal] Request sent, ID:', requestId)
+
     const request: SigningRequest = {
       signerId: props.signer.id,
       signerPeerId: props.signer.peerId,
@@ -143,8 +159,6 @@ const sendRequest = async () => {
       purpose: purpose.value || undefined,
     }
 
-    // TODO: Implement actual signing request via P2P store
-    // For now, emit the request for parent component to handle
     emit('submit', request)
 
     toast.add({
@@ -158,6 +172,7 @@ const sendRequest = async () => {
     resetForm()
     open.value = false
   } catch (err) {
+    console.error('[SigningRequestModal] Failed to send request:', err)
     toast.add({
       title: 'Request Failed',
       description: err instanceof Error ? err.message : 'Failed to send request',

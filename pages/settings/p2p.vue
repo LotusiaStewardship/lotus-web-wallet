@@ -92,7 +92,11 @@ const saveSettings = async () => {
     },
   }
 
-  p2pStore._saveConfig(config)
+  // Save to localStorage for persistence
+  // These settings will be read on next P2P initialization
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('p2p-config', JSON.stringify(config))
+  }
 
   toast.add({
     title: 'Settings Saved',

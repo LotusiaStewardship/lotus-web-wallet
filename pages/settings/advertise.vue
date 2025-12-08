@@ -2,6 +2,7 @@
 import { useP2PStore } from '~/stores/p2p'
 import { useWalletStore } from '~/stores/wallet'
 import { useBitcore } from '~/composables/useBitcore'
+import { useMuSig2 } from '~/composables/useMuSig2'
 
 // Transaction type constants (matching SDK's TransactionType enum values)
 const TransactionType = {
@@ -21,6 +22,7 @@ definePageMeta({
 
 const p2pStore = useP2PStore()
 const walletStore = useWalletStore()
+const musig2 = useMuSig2()
 const { Bitcore } = useBitcore()
 const toast = useToast()
 const router = useRouter()
@@ -36,7 +38,7 @@ const presenceEnabled = ref(p2pStore.isAdvertisingPresence)
 const presenceNickname = ref('')
 
 // MuSig2 Signer Configuration
-const signerEnabled = ref(p2pStore.isAdvertisingSigner)
+const signerEnabled = ref(musig2.isAdvertisingSigner.value)
 const signerNickname = ref('')
 const signerDescription = ref('')
 const signerFee = ref<number | undefined>(undefined)
@@ -93,15 +95,7 @@ const transactionTypeOptions = [
 // We access it via the store's internal state for signing purposes
 const walletPublicKey = computed(() => {
   if (!walletStore.address || !Bitcore) return null
-  try {
-    // Access the internal HD private key from the wallet store
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hdPrivkey = (walletStore as any)._hdPrivkey
-    if (!hdPrivkey) return null
-    return hdPrivkey.publicKey.toString()
-  } catch {
-    return null
-  }
+  return walletStore.getPublicKeyHex()
 })
 
 // Validation for signer
@@ -174,7 +168,7 @@ const publishSigner = async () => {
   publishing.value = true
 
   try {
-    await p2pStore.advertiseSigner({
+    await musig2.advertiseSigner({
       publicKeyHex: walletPublicKey.value,
       transactionTypes: selectedTransactionTypes.value as string[],
       amountRange:
@@ -214,7 +208,7 @@ const withdrawSigner = async () => {
   publishing.value = true
 
   try {
-    await p2pStore.withdrawSignerAdvertisement()
+    await musig2.withdrawSigner()
     signerEnabled.value = false
     toast.add({
       title: 'Signer Withdrawn',
@@ -234,7 +228,51 @@ const withdrawSigner = async () => {
   }
 }
 
-// Initialize P2P if needed
+// Initialize MuSig2 when P2P becomes ready
+const initMuSig2 = async () => {
+  if (p2pStore.initialized && !musig2.isInitialized.value && !musig2.isInitializing.value) {
+    try {
+      console.log('[Advertise] Initializing MuSig2...')
+      await musig2.initialize()
+      console.log('[Advertise] MuSig2 initialized')
+    } catch {
+      // Error handled by composable
+    }
+  }
+}
+
+// Sync UI state with composable state
+const syncState = () => {
+  presenceEnabled.value = p2pStore.isAdvertisingPresence
+  signerEnabled.value = musig2.isAdvertisingSigner.value
+
+  // Load existing signer config if available
+  if (musig2.mySignerConfig.value) {
+    const config = musig2.mySignerConfig.value
+    signerNickname.value = config.nickname || ''
+    signerDescription.value = config.description || ''
+    signerFee.value = config.fee
+    signerMinAmount.value = config.amountRange?.min
+    signerMaxAmount.value = config.amountRange?.max
+    selectedTransactionTypes.value = [...config.transactionTypes] as TransactionTypeValue[]
+  }
+}
+
+// Watch for P2P initialization to trigger MuSig2 init
+watch(() => p2pStore.initialized, (isInitialized) => {
+  if (isInitialized) {
+    initMuSig2().then(syncState)
+  }
+})
+
+// Watch for MuSig2 initialization to sync state
+watch(() => musig2.isInitialized.value, (isInitialized) => {
+  if (isInitialized) {
+    syncState()
+  }
+})
+
+// Initialize P2P and MuSig2 if needed
 onMounted(async () => {
   if (!p2pStore.initialized) {
     try {
@@ -244,20 +282,11 @@ onMounted(async () => {
     }
   }
 
-  // Sync state with store
-  presenceEnabled.value = p2pStore.isAdvertisingPresence
-  signerEnabled.value = p2pStore.isAdvertisingSigner
+  // Initialize MuSig2 after P2P is ready
+  await initMuSig2()
 
-  // Load existing signer config if available
-  if (p2pStore.mySignerConfig) {
-    const config = p2pStore.mySignerConfig
-    signerNickname.value = config.nickname || ''
-    signerDescription.value = config.description || ''
-    signerFee.value = config.fee
-    signerMinAmount.value = config.amountRange?.min
-    signerMaxAmount.value = config.amountRange?.max
-    selectedTransactionTypes.value = [...config.transactionTypes] as TransactionTypeValue[]
-  }
+  // Sync state
+  syncState()
 })
 </script>
 
@@ -396,7 +425,7 @@ onMounted(async () => {
     </UCard>
 
     <!-- Current Status -->
-    <UCard v-if="p2pStore.mySignerConfig || p2pStore.myPresenceConfig">
+    <UCard v-if="musig2.mySignerConfig.value || p2pStore.myPresenceConfig">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-radio" class="w-5 h-5" />
@@ -420,13 +449,13 @@ onMounted(async () => {
         </div>
 
         <!-- Signer -->
-        <div v-if="p2pStore.mySignerConfig" class="py-3 flex items-center justify-between">
+        <div v-if="musig2.mySignerConfig.value" class="py-3 flex items-center justify-between">
           <div class="flex items-center gap-3">
             <UIcon name="i-lucide-pen-tool" class="w-4 h-4 text-success-500" />
             <div>
               <p class="font-medium">MuSig2 Signer</p>
               <p class="text-xs text-muted">
-                {{ p2pStore.mySignerConfig.transactionTypes.join(', ') }}
+                {{ musig2.mySignerConfig.value.transactionTypes.join(', ') }}
               </p>
             </div>
           </div>

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import {
   useP2PStore,
-  type UISignerAdvertisement,
   type P2PActivityEvent,
   P2PConnectionState,
 } from '~/stores/p2p'
 import { useContactsStore } from '~/stores/contacts'
 import { useWalletStore } from '~/stores/wallet'
-import SigningRequestModal from '~/components/p2p/SigningRequestModal.vue'
+import { useMuSig2, type UISignerAdvertisement } from '~/composables/useMuSig2'
+import SigningRequestModal, { type SigningRequest } from '~/components/p2p/SigningRequestModal.vue'
 
 // Transaction type constants (matching SDK's TransactionType enum values)
 const TransactionType = {
@@ -26,6 +26,7 @@ definePageMeta({
 const p2pStore = useP2PStore()
 const contactsStore = useContactsStore()
 const walletStore = useWalletStore()
+const musig2 = useMuSig2()
 const toast = useToast()
 
 // ============================================================================
@@ -47,18 +48,18 @@ const selectedSigner = ref<UISignerAdvertisement | null>(null)
 // Quick stats for the dashboard
 const quickStats = computed(() => [
   { label: 'Connected Peers', value: p2pStore.peerCount, mono: true },
-  { label: 'Available Signers', value: p2pStore.signerCount, mono: true },
+  { label: 'Available Signers', value: musig2.signerCount.value, mono: true },
   { label: 'Online Wallets', value: p2pStore.onlinePeerCount, mono: true },
   { label: 'DHT Size', value: p2pStore.routingTableSize, mono: true },
 ])
 
 // Filtered signers based on search and transaction type
 const filteredSigners = computed(() => {
-  let signers = p2pStore.discoveredSigners
+  let signers = [...musig2.discoveredSigners.value]
 
   // Filter by transaction type
   if (selectedTxTypeFilter.value !== 'all') {
-    signers = signers.filter((s) =>
+    signers = signers.filter((s: UISignerAdvertisement) =>
       s.transactionTypes.includes(selectedTxTypeFilter.value),
     )
   }
@@ -67,7 +68,7 @@ const filteredSigners = computed(() => {
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase()
     signers = signers.filter(
-      (s) =>
+      (s: UISignerAdvertisement) =>
         s.nickname?.toLowerCase().includes(query) ||
         s.peerId.toLowerCase().includes(query) ||
         s.transactionTypes.some((t: string) => t.toLowerCase().includes(query)),
@@ -75,7 +76,7 @@ const filteredSigners = computed(() => {
   }
 
   // Sort by reputation (highest first)
-  return signers.sort((a, b) => b.reputation - a.reputation)
+  return signers.sort((a: UISignerAdvertisement, b: UISignerAdvertisement) => b.reputation - a.reputation)
 })
 
 // Transaction type filter options
@@ -229,10 +230,10 @@ const getActivityIcon = (type: P2PActivityEvent['type']) => {
       return 'i-lucide-user-plus'
     case 'peer_left':
       return 'i-lucide-user-minus'
-    case 'signer_available':
-      return 'i-lucide-pen-tool'
-    case 'signer_unavailable':
-      return 'i-lucide-pen-tool'
+    case 'info':
+      return 'i-lucide-info'
+    case 'error':
+      return 'i-lucide-alert-circle'
     default:
       return 'i-lucide-activity'
   }
@@ -242,10 +243,10 @@ const getActivityIcon = (type: P2PActivityEvent['type']) => {
 const getActivityColor = (type: P2PActivityEvent['type']) => {
   switch (type) {
     case 'peer_joined':
-    case 'signer_available':
+    case 'info':
       return 'text-success-500'
     case 'peer_left':
-    case 'signer_unavailable':
+    case 'error':
       return 'text-error-500'
     default:
       return 'text-muted'
@@ -282,6 +283,66 @@ const copyToClipboard = async (text: string) => {
   }
 }
 
+// State for refresh button
+const refreshing = ref(false)
+
+// Initialize MuSig2 when P2P becomes ready
+const initMuSig2 = async () => {
+  if (p2pStore.initialized && !musig2.isInitialized.value && !musig2.isInitializing.value) {
+    try {
+      console.log('[P2P Page] Initializing MuSig2...')
+      await musig2.initialize()
+      console.log('[P2P Page] MuSig2 initialized, signers:', musig2.signerCount.value)
+
+      // Query DHT for existing signers after initialization
+      await refreshSigners()
+    } catch (err) {
+      console.error('[P2P Page] MuSig2 initialization failed:', err)
+    }
+  }
+}
+
+// Refresh signers from DHT
+const refreshSigners = async () => {
+  if (!musig2.isInitialized.value || refreshing.value) return
+
+  refreshing.value = true
+  try {
+    console.log('[P2P Page] Refreshing signers from DHT...')
+    await musig2.discoverSigners()
+    /* toast.add({
+      title: 'Signers Refreshed',
+      description: `Found ${musig2.signerCount.value} signers`,
+      color: 'success',
+      icon: 'i-lucide-refresh-cw',
+    }) */
+  } catch (err) {
+    console.error('[P2P Page] Failed to refresh signers:', err)
+    toast.add({
+      title: 'Refresh Failed',
+      description: err instanceof Error ? err.message : 'Failed to refresh signers',
+      color: 'error',
+    })
+  } finally {
+    refreshing.value = false
+  }
+}
+
+// Watch for P2P initialization to trigger MuSig2 init
+watch(() => p2pStore.initialized, (isInitialized) => {
+  if (isInitialized) {
+    initMuSig2()
+  }
+})
+
+// Watch for DHT ready to query for existing signers
+watch(() => p2pStore.dhtReady, (isDHTReady) => {
+  if (isDHTReady && musig2.isInitialized.value) {
+    // Small delay to let DHT routing table populate
+    setTimeout(() => refreshSigners(), 2000)
+  }
+})
+
 // Initialize on mount
 onMounted(async () => {
   // Initialize contacts store
@@ -295,6 +356,9 @@ onMounted(async () => {
       // Error handled by store
     }
   }
+
+  // Initialize MuSig2 after P2P is ready
+  await initMuSig2()
 })
 </script>
 
@@ -400,7 +464,14 @@ onMounted(async () => {
                 </UBadge>
               </div>
 
-              <USelectMenu v-model="selectedTxTypeFilter" :items="txTypeFilterOptions" value-key="value" class="w-32" />
+              <div class="flex items-center gap-2">
+                <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-refresh-cw" :loading="refreshing"
+                  @click="refreshSigners">
+                  Refresh
+                </UButton>
+                <USelectMenu v-model="selectedTxTypeFilter" :items="txTypeFilterOptions" value-key="value"
+                  class="w-32" />
+              </div>
             </div>
           </template>
 
@@ -602,8 +673,8 @@ onMounted(async () => {
             </div>
             <div class="flex items-center justify-between">
               <span class="text-sm">MuSig2 Signer</span>
-              <UBadge :color="p2pStore.isAdvertisingSigner ? 'success' : 'neutral'" variant="subtle" size="md">
-                {{ p2pStore.isAdvertisingSigner ? 'Active' : 'Inactive' }}
+              <UBadge :color="musig2.isAdvertisingSigner.value ? 'success' : 'neutral'" variant="subtle" size="md">
+                {{ musig2.isAdvertisingSigner.value ? 'Active' : 'Inactive' }}
               </UBadge>
             </div>
             <div class="flex items-center justify-between">
@@ -632,8 +703,8 @@ onMounted(async () => {
               <span class="font-mono">{{ p2pStore.routingTableSize }}</span>
             </div>
             <div class="flex items-center justify-between">
-              <span class="text-muted">Subscriptions</span>
-              <span class="font-mono">{{ p2pStore.activeSubscriptions.size }}</span>
+              <span class="text-muted">Signers Found</span>
+              <span class="font-mono">{{ musig2.signerCount.value }}</span>
             </div>
           </div>
         </UCard>
@@ -641,7 +712,7 @@ onMounted(async () => {
     </div>
 
     <!-- Offline State -->
-    <UCard v-if="!p2pStore.isOnline && !connecting" class="text-center py-8">
+    <!-- <UCard v-if="!p2pStore.isOnline && !connecting" class="text-center py-8">
       <UIcon name="i-lucide-wifi-off" class="w-12 h-12 text-muted mx-auto mb-4" />
       <h2 class="text-xl font-semibold mb-2">Not Connected</h2>
       <p class="text-muted mb-4">
@@ -650,7 +721,7 @@ onMounted(async () => {
       <UButton color="primary" icon="i-lucide-wifi" @click="connect">
         Connect Now
       </UButton>
-    </UCard>
+    </UCard> -->
 
     <!-- Signing Request Modal -->
     <SigningRequestModal v-if="selectedSigner" v-model:open="showSigningModal" :signer="selectedSigner"

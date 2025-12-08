@@ -4,13 +4,13 @@
  *
  * Displays the progress of an active MuSig2 signing session.
  * Shows the current step, participants, and allows cancellation.
- * Integrates with the P2P store for session management.
+ * Integrates with the MuSig2 composable for session management.
  */
 import {
-  useP2PStore,
+  useMuSig2,
   SigningSessionPhase,
   type UISigningSession,
-} from '~/stores/p2p'
+} from '~/composables/useMuSig2'
 
 const props = defineProps<{
   session: UISigningSession
@@ -22,7 +22,7 @@ const emit = defineEmits<{
   viewTransaction: [txid: string]
 }>()
 
-const p2pStore = useP2PStore()
+const musig2 = useMuSig2()
 const toast = useToast()
 
 // ============================================================================

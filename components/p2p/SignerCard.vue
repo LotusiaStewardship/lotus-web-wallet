@@ -5,7 +5,7 @@
  * Displays a MuSig2 signer advertisement card.
  * Updated to use the new UI-friendly types.
  */
-import type { UISignerAdvertisement } from '~/stores/p2p'
+import type { UISignerAdvertisement } from '~/composables/useMuSig2'
 
 const props = defineProps<{
   signer: UISignerAdvertisement

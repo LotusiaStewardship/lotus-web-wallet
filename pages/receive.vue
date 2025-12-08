@@ -137,10 +137,6 @@ const fingerprint = computed(() => formatFingerprint(walletStore.address))
           <UButton v-if="canShare" color="neutral" variant="outline" icon="i-lucide-share-2" @click="shareAddress">
             Share
           </UButton>
-          <UButton color="neutral" variant="outline" icon="i-lucide-search"
-            :to="`/explorer/address/${walletStore.address}`">
-            View in Explorer
-          </UButton>
         </div>
       </div>
     </UCard>
