@@ -55,13 +55,16 @@ export interface P2PActivityEvent {
 
 /**
  * P2P Connection State
+ * Re-exported from SDK for convenience, with additional UI-specific states
  */
 export enum P2PConnectionState {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
   CONNECTED = 'connected',
+  DHT_INITIALIZING = 'dht_initializing',
   DHT_READY = 'dht_ready',
   FULLY_OPERATIONAL = 'fully_operational',
+  RECONNECTING = 'reconnecting',
   ERROR = 'error',
 }
 
@@ -212,11 +215,15 @@ export const useP2PStore = defineStore('p2p', {
         case P2PConnectionState.CONNECTING:
           return 'Connecting to network...'
         case P2PConnectionState.CONNECTED:
-          return 'Connected, initializing DHT...'
+          return 'Connected, waiting for peers...'
+        case P2PConnectionState.DHT_INITIALIZING:
+          return 'Initializing DHT...'
         case P2PConnectionState.DHT_READY:
           return `DHT ready (${state.routingTableSize} peers in routing table)`
         case P2PConnectionState.FULLY_OPERATIONAL:
           return `Online with ${state.connectedPeers.length} peers`
+        case P2PConnectionState.RECONNECTING:
+          return 'Reconnecting...'
         case P2PConnectionState.ERROR:
           return state.error || 'Connection error'
         default:
@@ -228,6 +235,7 @@ export const useP2PStore = defineStore('p2p', {
       state.connectionState === P2PConnectionState.FULLY_OPERATIONAL,
 
     isDHTReady: (state): boolean =>
+      state.connectionState === P2PConnectionState.DHT_INITIALIZING ||
       state.connectionState === P2PConnectionState.DHT_READY ||
       state.connectionState === P2PConnectionState.FULLY_OPERATIONAL,
 
@@ -349,6 +357,44 @@ export const useP2PStore = defineStore('p2p', {
       const coordinator = sdk.coordinator
       if (!coordinator) return
 
+      // Listen for SDK's connection state changes (new in SDK v2.1)
+      coordinator.on('connection:state-changed', data => {
+        console.log(
+          `[P2P] Connection state changed: ${data.previousState} → ${data.currentState}`,
+        )
+
+        // Map SDK state to our state enum
+        const stateMap: Record<string, P2PConnectionState> = {
+          disconnected: P2PConnectionState.DISCONNECTED,
+          connecting: P2PConnectionState.CONNECTING,
+          connected: P2PConnectionState.CONNECTED,
+          dht_initializing: P2PConnectionState.DHT_INITIALIZING,
+          dht_ready: P2PConnectionState.DHT_READY,
+          fully_operational: P2PConnectionState.FULLY_OPERATIONAL,
+          reconnecting: P2PConnectionState.RECONNECTING,
+          error: P2PConnectionState.ERROR,
+        }
+
+        const newState =
+          stateMap[data.currentState] || P2PConnectionState.DISCONNECTED
+        this.connectionState = newState
+
+        if (data.error) {
+          this.error = data.error
+        }
+
+        // Update DHT ready flag based on state
+        this.dhtReady =
+          newState === P2PConnectionState.DHT_INITIALIZING ||
+          newState === P2PConnectionState.DHT_READY ||
+          newState === P2PConnectionState.FULLY_OPERATIONAL
+
+        // Update connected flag
+        this.connected =
+          newState !== P2PConnectionState.DISCONNECTED &&
+          newState !== P2PConnectionState.ERROR
+      })
+
       coordinator.on('peer:connect', (peer: { peerId: string }) => {
         const peerInfo: UIPeerInfo = {
           peerId: peer.peerId,
@@ -364,8 +410,6 @@ export const useP2PStore = defineStore('p2p', {
             message: `Peer connected: ${peer.peerId.slice(0, 12)}...`,
           })
         }
-
-        this._updateConnectionState()
       })
 
       coordinator.on('peer:disconnect', (peer: { peerId: string }) => {
@@ -377,20 +421,9 @@ export const useP2PStore = defineStore('p2p', {
           peerId: peer.peerId,
           message: `Peer disconnected: ${peer.peerId.slice(0, 12)}...`,
         })
-        this._updateConnectionState()
       })
 
-      coordinator.on('dht:ready', () => {
-        this.dhtReady = true
-        this._updateConnectionState()
-      })
-
-      coordinator.on('dht:unready', () => {
-        this.dhtReady = false
-        this._updateConnectionState()
-      })
-
-      coordinator.on('error', (error: Error) => {
+      coordinator.on('error', error => {
         console.error('[P2P] Error:', error)
         this._addActivityEvent({
           type: 'error',
@@ -408,9 +441,10 @@ export const useP2PStore = defineStore('p2p', {
       if (connectionStateMonitorId) {
         clearInterval(connectionStateMonitorId)
       }
+      // Monitor stats updates (state is handled by SDK events)
       connectionStateMonitorId = setInterval(() => {
         this._updateConnectionState()
-      }, 5000)
+      }, 10000) // Less frequent since state is event-driven
     },
 
     _stopConnectionStateMonitor() {
@@ -427,21 +461,12 @@ export const useP2PStore = defineStore('p2p', {
         return
       }
 
-      const stats = coordinator.getStats()
+      // Update stats from coordinator
       const dhtStats = coordinator.getDHTStats()
-
       this.routingTableSize = dhtStats.routingTableSize
-      this.dhtReady = dhtStats.isReady
 
-      if (stats.peers.connected === 0) {
-        this.connectionState = P2PConnectionState.CONNECTED
-      } else if (!dhtStats.isReady) {
-        this.connectionState = P2PConnectionState.CONNECTED
-      } else if (dhtStats.routingTableSize < 3) {
-        this.connectionState = P2PConnectionState.DHT_READY
-      } else {
-        this.connectionState = P2PConnectionState.FULLY_OPERATIONAL
-      }
+      // Connection state is now managed by SDK's connection:state-changed events
+      // This method is kept for manual stat updates only
     },
 
     // ========================================================================
