@@ -1,317 +1,301 @@
 <script setup lang="ts">
-import { useWalletStore, type AddressType } from '~/stores/wallet'
-import { useP2PStore } from '~/stores/p2p'
-import { useMuSig2 } from '~/composables/useMuSig2'
-import { useAddressFormat } from '~/composables/useUtils'
-
-// Settings item types
-interface SettingsItem {
-  label: string
-  icon: string
-  to?: string
-  href?: string
-  external?: boolean
-  action?: () => void
-  description?: string
-}
-
-interface SettingsSection {
-  title: string
-  icon: string
-  items: SettingsItem[]
-}
+/**
+ * Settings Page
+ *
+ * Phase 6: Added dismissed prompts management section.
+ * Main settings hub with links to various settings sections.
+ */
+import { useWalletStore } from '~/stores/wallet'
+import {
+  getDismissedPromptsWithInfo,
+  resetDismissedPrompt,
+  resetAllDismissedPrompts,
+  type DismissedPromptInfo,
+} from '~/composables/useDismissible'
 
 definePageMeta({
   title: 'Settings',
 })
 
 const walletStore = useWalletStore()
-const p2pStore = useP2PStore()
-const musig2 = useMuSig2()
-const toast = useToast()
 const colorMode = useColorMode()
-const { formatFingerprint, getAddressTypeLabel } = useAddressFormat()
+const toast = useToast()
+const router = useRouter()
 
-// Address display toggle
-const displayAddress = computed(() => walletStore.address)
-const fingerprint = computed(() => formatFingerprint(walletStore.address))
+// Reset wallet confirmation
+const showResetConfirm = ref(false)
+const resetConfirmText = ref('')
 
-// Address type info
-const addressTypeInfo = computed(() => getAddressTypeLabel(walletStore.address))
+// Dismissed prompts management
+const dismissedPrompts = ref<DismissedPromptInfo[]>([])
 
-// Address type options for the switcher
-const addressTypeOptions = [
-  { value: 'p2tr' as AddressType, label: 'Modern (Taproot)', description: 'Enhanced privacy and features' },
-  { value: 'p2pkh' as AddressType, label: 'Classic', description: 'Traditional address format' },
-]
+onMounted(() => {
+  refreshDismissedPrompts()
+})
 
-// Handle address type change
-const handleAddressTypeChange = async (newType: AddressType) => {
-  if (newType === walletStore.addressType) return
+function refreshDismissedPrompts() {
+  dismissedPrompts.value = getDismissedPromptsWithInfo()
+}
+
+function handleResetPrompt(key: string) {
+  resetDismissedPrompt(key)
+  refreshDismissedPrompts()
+  toast.add({
+    title: 'Prompt Reset',
+    description: 'This prompt will show again next time.',
+    color: 'success',
+  })
+}
+
+function handleResetAllPrompts() {
+  resetAllDismissedPrompts()
+  refreshDismissedPrompts()
+  toast.add({
+    title: 'All Prompts Reset',
+    description: 'All dismissed prompts will show again.',
+    color: 'success',
+  })
+}
+
+async function resetWallet() {
+  if (resetConfirmText.value.toLowerCase() !== 'reset') return
 
   try {
-    await walletStore.switchAddressType(newType)
+    // Clear local storage
+    localStorage.removeItem('lotus-wallet-state')
+    localStorage.removeItem('lotus-contacts')
+    localStorage.removeItem('lotus-onboarding')
+
     toast.add({
-      title: 'Address Type Changed',
-      description: `Switched to ${newType === 'p2tr' ? 'Modern (Taproot)' : 'Classic'} address`,
+      title: 'Wallet Reset',
+      description: 'All data has been cleared. Reloading...',
       color: 'success',
-      icon: 'i-lucide-check',
     })
-  } catch (err) {
+
+    // Reload the page to reinitialize
+    setTimeout(() => {
+      window.location.reload()
+    }, 1500)
+  } catch (error) {
     toast.add({
-      title: 'Failed to Switch',
-      description: 'Could not change address type',
+      title: 'Reset Failed',
+      description: 'Failed to reset wallet',
       color: 'error',
-      icon: 'i-lucide-x',
     })
   }
 }
 
-// Settings sections - organized by logical grouping
-const settingsSections: SettingsSection[] = [
+const settingsSections = [
   {
-    title: 'Wallet',
-    icon: 'i-lucide-wallet',
-    items: [
-      { label: 'Backup Seed Phrase', icon: 'i-lucide-key', to: '/settings/backup' },
-      { label: 'Restore Wallet', icon: 'i-lucide-upload', to: '/settings/restore' },
-    ],
-  },
-  {
-    title: 'Network',
-    icon: 'i-lucide-network',
-    items: [
-      { label: 'Blockchain Network', icon: 'i-lucide-globe', to: '/settings/network', description: 'Switch networks, view connection status' },
-      { label: 'P2P Configuration', icon: 'i-lucide-radio', to: '/settings/p2p', description: 'DHT, GossipSub, NAT traversal' },
-      { label: 'Advertise Services', icon: 'i-lucide-megaphone', to: '/settings/advertise', description: 'Become a signer, set presence' },
-    ],
-  },
-  {
-    title: 'Appearance',
-    icon: 'i-lucide-palette',
+    title: 'General',
     items: [
       {
-        label: colorMode.value === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode',
-        icon: colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon',
-        action: () => colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark',
+        label: 'Network',
+        description: 'Switch between mainnet and testnet',
+        icon: 'i-lucide-network',
+        to: '/settings/network',
+      },
+      {
+        label: 'Notifications',
+        description: 'Configure alerts and browser notifications',
+        icon: 'i-lucide-bell',
+        to: '/settings/notifications',
+      },
+      {
+        label: 'Appearance',
+        description: 'Theme and display preferences',
+        icon: 'i-lucide-palette',
+        action: 'theme',
       },
     ],
   },
   {
-    title: 'About',
-    icon: 'i-lucide-info',
+    title: 'Security',
     items: [
-      { label: 'Documentation', icon: 'i-lucide-book-open', href: 'https://lotusia.org/docs', external: true },
-      { label: 'GitHub', icon: 'i-lucide-github', href: 'https://github.com/LotusiaStewardship', external: true },
+      {
+        label: 'Backup',
+        description: 'View and verify your seed phrase',
+        icon: 'i-lucide-shield',
+        to: '/settings/backup',
+      },
+      {
+        label: 'Restore',
+        description: 'Restore wallet from seed phrase',
+        icon: 'i-lucide-upload',
+        to: '/settings/restore',
+      },
+      {
+        label: 'Security',
+        description: 'PIN, auto-lock, and privacy settings',
+        icon: 'i-lucide-lock',
+        to: '/settings/security',
+      },
+    ],
+  },
+  {
+    title: 'Advanced',
+    items: [
+      {
+        label: 'Advertise',
+        description: 'Become a signer for multi-signature transactions',
+        icon: 'i-lucide-megaphone',
+        to: '/settings/advertise',
+      },
+      {
+        label: 'P2P Configuration',
+        description: 'Advanced peer-to-peer network settings',
+        icon: 'i-lucide-radio',
+        to: '/settings/p2p',
+      },
+      {
+        label: 'About',
+        description: 'Version info and links',
+        icon: 'i-lucide-info',
+        to: '/settings/about',
+      },
     ],
   },
 ]
 
-// Show seed phrase modal
-const showSeedPhrase = ref(false)
-const seedPhraseVisible = ref(false)
-
-const toggleSeedPhrase = () => {
-  seedPhraseVisible.value = !seedPhraseVisible.value
-}
-
-// Copy seed phrase
-const copySeedPhrase = async () => {
-  try {
-    await navigator.clipboard.writeText(walletStore.seedPhrase)
-    toast.add({
-      title: 'Copied',
-      description: 'Seed phrase copied to clipboard',
-      color: 'success',
-      icon: 'i-lucide-check',
-    })
-  } catch (err) {
-    toast.add({
-      title: 'Copy Failed',
-      color: 'error',
-      icon: 'i-lucide-x',
-    })
-  }
-}
-
-// Copy address to clipboard
-const copyAddress = async () => {
-  try {
-    await navigator.clipboard.writeText(walletStore.address)
-    toast.add({
-      title: 'Address Copied',
-      description: 'Full address copied to clipboard',
-      color: 'success',
-      icon: 'i-lucide-check',
-    })
-  } catch (err) {
-    toast.add({
-      title: 'Copy Failed',
-      color: 'error',
-      icon: 'i-lucide-x',
-    })
-  }
+function toggleTheme() {
+  colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
 }
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Header -->
-    <div>
-      <h1 class="text-2xl font-bold">Settings</h1>
-      <p class="text-muted">Manage your wallet and preferences</p>
+  <div class="space-y-4">
+    <div v-for="section in settingsSections" :key="section.title">
+      <h3 class="text-xs font-semibold text-muted uppercase tracking-wider mb-2 px-1">
+        {{ section.title }}
+      </h3>
+
+      <UiAppCard :no-padding="true">
+        <div class="divide-y divide-gray-100 dark:divide-gray-800">
+          <template v-for="item in section.items" :key="item.label">
+            <!-- Link item -->
+            <NuxtLink v-if="item.to" :to="item.to"
+              class="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+              <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <UIcon :name="item.icon" class="w-5 h-5 text-primary" />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-sm">{{ item.label }}</div>
+                <div class="text-xs text-muted truncate">{{ item.description }}</div>
+              </div>
+              <UIcon name="i-lucide-chevron-right" class="w-4 h-4 text-muted shrink-0" />
+            </NuxtLink>
+
+            <!-- Theme toggle -->
+            <div v-else-if="item.action === 'theme'" class="flex items-center gap-3 p-3">
+              <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <UIcon :name="item.icon" class="w-5 h-5 text-primary" />
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="font-medium text-sm">{{ item.label }}</div>
+                <div class="text-xs text-muted truncate">{{ item.description }}</div>
+              </div>
+              <UButton :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'" color="neutral"
+                variant="soft" size="sm" @click="toggleTheme">
+                {{ colorMode.value === 'dark' ? 'Light' : 'Dark' }}
+              </UButton>
+            </div>
+          </template>
+        </div>
+      </UiAppCard>
     </div>
 
-    <!-- Wallet Info Card -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-wallet" class="w-5 h-5" />
-          <span class="font-semibold">Wallet Information</span>
-        </div>
-      </template>
-
-      <div class="space-y-4">
-        <div>
-          <div class="flex items-center gap-2">
-            <code class="text-sm bg-muted/50 px-2 py-1 rounded flex-1 truncate cursor-pointer">
-        {{ displayAddress }}
-      </code>
-            <UButton color="neutral" variant="ghost" size="xs" icon="i-lucide-copy" @click="copyAddress" />
-          </div>
-          <div class="flex items-center gap-1.5 mt-1.5">
-            <span class="text-xs text-muted">ID:</span>
-            <UBadge color="neutral" variant="subtle" size="md" class="font-mono">
-              {{ fingerprint }}
-            </UBadge>
-            <!-- Address type badge -->
-            <UTooltip :text="addressTypeInfo.full">
-              <UBadge :color="addressTypeInfo.color as any" variant="subtle" size="md" class="gap-1">
-                <UIcon :name="addressTypeInfo.icon" class="w-3 h-3" />
-                {{ addressTypeInfo.short }}
-              </UBadge>
-            </UTooltip>
-          </div>
-        </div>
-
-        <!-- Address Type Selector -->
-        <div>
-          <p class="text-sm text-muted mb-2">Address Type</p>
-          <div class="flex gap-2">
-            <UButton v-for="option in addressTypeOptions" :key="option.value"
-              :color="walletStore.addressType === option.value ? 'primary' : 'neutral'"
-              :variant="walletStore.addressType === option.value ? 'solid' : 'outline'" size="sm"
-              :disabled="walletStore.loading" @click="handleAddressTypeChange(option.value)">
-              <UIcon :name="option.value === 'p2tr' ? 'i-lucide-shield-check' : 'i-lucide-key'" class="w-4 h-4 mr-1" />
-              {{ option.label }}
-            </UButton>
-          </div>
-          <p class="text-xs text-muted mt-1.5">
-            {{ walletStore.addressType === 'p2tr'
-              ? 'Modern addresses offer enhanced privacy and advanced scripting capabilities.'
-              : 'Classic addresses use the traditional format compatible with all wallets.'
-            }}
+    <!-- Dismissed Prompts Section -->
+    <div v-if="dismissedPrompts.length > 0">
+      <h3 class="text-xs font-semibold text-muted uppercase tracking-wider mb-2 px-1">
+        Dismissed Prompts
+      </h3>
+      <UiAppCard :no-padding="true">
+        <div class="p-3 border-b border-gray-100 dark:border-gray-800">
+          <p class="text-sm text-muted">
+            You've dismissed some helpful prompts. Re-enable them here if you'd like to see them again.
           </p>
         </div>
-
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <p class="text-sm text-muted mb-1">Balance</p>
-            <p class="font-mono font-semibold">{{ walletStore.formattedBalance }} XPI</p>
-          </div>
-          <div>
-            <p class="text-sm text-muted mb-1">UTXOs</p>
-            <p class="font-mono font-semibold">{{ walletStore.utxoCount }}</p>
-          </div>
-        </div>
-
-        <div>
-          <p class="text-sm text-muted mb-1">Network Status</p>
-          <div class="flex items-center gap-2">
-            <UBadge :color="walletStore.connected ? 'success' : 'error'" variant="subtle">
-              {{ walletStore.connected ? 'Connected' : 'Disconnected' }}
-            </UBadge>
-            <span class="text-sm text-muted">Block {{ walletStore.tipHeight.toLocaleString() }}</span>
-          </div>
-        </div>
-      </div>
-    </UCard>
-
-    <!-- Settings Sections -->
-    <UCard v-for="section in settingsSections" :key="section.title">
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon :name="section.icon" class="w-5 h-5" />
-          <span class="font-semibold">{{ section.title }}</span>
-        </div>
-      </template>
-
-      <div class="divide-y divide-default -my-2">
-        <template v-for="item in section.items" :key="item.label">
-          <!-- Link item -->
-          <NuxtLink v-if="item.to" :to="item.to"
-            class="flex items-center justify-between py-3 hover:bg-muted/50 -mx-4 px-4 transition-colors">
-            <div class="flex items-center gap-3">
-              <UIcon :name="item.icon" class="w-5 h-5 text-muted" />
-              <div>
-                <span>{{ item.label }}</span>
-                <p v-if="item.description" class="text-xs text-muted">{{ item.description }}</p>
+        <div class="divide-y divide-gray-100 dark:divide-gray-800">
+          <div v-for="prompt in dismissedPrompts" :key="prompt.key" class="flex items-center gap-3 p-3">
+            <div class="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center shrink-0">
+              <UIcon name="i-lucide-message-circle" class="w-5 h-5 text-info" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-sm">{{ prompt.label }}</div>
+              <div v-if="prompt.description" class="text-xs text-muted truncate">
+                {{ prompt.description }}
               </div>
             </div>
-            <UIcon name="i-lucide-chevron-right" class="w-5 h-5 text-muted" />
-          </NuxtLink>
+            <UButton color="neutral" variant="soft" size="xs" @click="handleResetPrompt(prompt.key)">
+              Show again
+            </UButton>
+          </div>
+        </div>
+        <div class="p-3 border-t border-gray-100 dark:border-gray-800">
+          <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-refresh-cw" @click="handleResetAllPrompts">
+            Reset all prompts
+          </UButton>
+        </div>
+      </UiAppCard>
+    </div>
 
-          <!-- External link -->
-          <a v-else-if="item.href" :href="item.href" target="_blank"
-            class="flex items-center justify-between py-3 hover:bg-muted/50 -mx-4 px-4 transition-colors">
-            <div class="flex items-center gap-3">
-              <UIcon :name="item.icon" class="w-5 h-5 text-muted" />
-              <span>{{ item.label }}</span>
+    <!-- Danger Zone -->
+    <div>
+      <h3 class="text-xs font-semibold text-red-500 uppercase tracking-wider mb-2 px-1">
+        Danger Zone
+      </h3>
+      <UiAppCard :no-padding="true">
+        <div class="flex items-center gap-3 p-3">
+          <div class="w-10 h-10 rounded-xl bg-red-100 dark:bg-red-900/30 flex items-center justify-center shrink-0">
+            <UIcon name="i-lucide-trash-2" class="w-5 h-5 text-red-500" />
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-sm">Reset Wallet</div>
+            <div class="text-xs text-muted">Delete all data and start fresh</div>
+          </div>
+          <UButton color="error" variant="soft" size="sm" @click="showResetConfirm = true">
+            Reset
+          </UButton>
+        </div>
+      </UiAppCard>
+    </div>
+
+    <!-- Reset Confirmation Modal -->
+    <UModal v-model:open="showResetConfirm">
+      <template #content>
+        <div class="p-6">
+          <div class="text-center mb-4">
+            <div
+              class="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
+              <UIcon name="i-lucide-alert-triangle" class="w-8 h-8 text-red-500" />
             </div>
-            <UIcon name="i-lucide-external-link" class="w-5 h-5 text-muted" />
-          </a>
+            <h3 class="text-lg font-semibold text-red-600">Reset Wallet?</h3>
+            <p class="text-sm text-muted mt-2">
+              This will permanently delete your wallet data. Make sure you have backed up your seed phrase!
+            </p>
+          </div>
 
-          <!-- Action item -->
-          <button v-else-if="item.action"
-            class="flex items-center justify-between py-3 hover:bg-muted/50 -mx-4 px-4 transition-colors w-full text-left"
-            @click="item.action">
-            <div class="flex items-center gap-3">
-              <UIcon :name="item.icon" class="w-5 h-5 text-muted" />
-              <span>{{ item.label }}</span>
-            </div>
-          </button>
-        </template>
-      </div>
-    </UCard>
+          <UAlert color="error" icon="i-lucide-alert-circle" class="mb-4">
+            <template #description>
+              Without your seed phrase, you will lose access to your funds forever.
+            </template>
+          </UAlert>
 
-    <!-- P2P Status -->
-    <UCard v-if="p2pStore.initialized">
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-radio" class="w-5 h-5" />
-          <span class="font-semibold">P2P Network</span>
+          <UFormField label="Type 'reset' to confirm">
+            <UInput v-model="resetConfirmText" placeholder="reset" />
+          </UFormField>
+
+          <div class="flex gap-3 mt-4">
+            <UButton color="neutral" variant="outline" class="flex-1" @click="showResetConfirm = false">
+              Cancel
+            </UButton>
+            <UButton color="error" class="flex-1" :disabled="resetConfirmText.toLowerCase() !== 'reset'"
+              @click="resetWallet">
+              Reset Wallet
+            </UButton>
+          </div>
         </div>
       </template>
-
-      <div class="space-y-3">
-        <div>
-          <p class="text-sm text-muted mb-1">Peer ID</p>
-          <code class="text-xs bg-muted/50 px-2 py-1 rounded block truncate">
-        {{ p2pStore.peerId }}
-      </code>
-        </div>
-        <div class="grid grid-cols-3 gap-4">
-          <StatsCard :value="p2pStore.peerCount" label="Connected Peers" />
-          <StatsCard :value="p2pStore.dhtReady ? 'Ready' : 'Syncing'" label="DHT Status" />
-          <StatsCard :value="`${musig2.signerCount.value}`" label="Signers discovered" />
-        </div>
-      </div>
-    </UCard>
-
-    <!-- Version Info -->
-    <div class="text-center text-sm text-muted py-4">
-      <p>Lotus Web Wallet v0.1.0</p>
-      <p class="text-xs">Built with Nuxt UI Pro</p>
-    </div>
+    </UModal>
   </div>
 </template>

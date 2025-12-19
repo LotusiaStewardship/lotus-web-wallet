@@ -5,12 +5,18 @@
  * Displays the progress of an active MuSig2 signing session.
  * Shows the current step, participants, and allows cancellation.
  * Integrates with the MuSig2 composable for session management.
+ *
+ * Phase 9.8.1 Enhancements:
+ * - Real-time session state updates via watcher
+ * - Auto-refresh for active sessions
+ * - Toast notifications on phase changes
  */
 import {
   useMuSig2,
   SigningSessionPhase,
   type UISigningSession,
 } from '~/composables/useMuSig2'
+import { useMuSig2Store } from '~/stores/musig2'
 
 const props = defineProps<{
   session: UISigningSession
@@ -23,7 +29,13 @@ const emit = defineEmits<{
 }>()
 
 const musig2 = useMuSig2()
+const musig2Store = useMuSig2Store()
 const toast = useToast()
+
+/**
+ * Phase 9.8.1: Auto-refresh interval for active sessions
+ */
+const refreshInterval = ref<ReturnType<typeof setInterval> | null>(null)
 
 // ============================================================================
 // State
@@ -185,6 +197,90 @@ const currentStep = computed(() => {
   }
 })
 const totalSteps = 3
+
+// ============================================================================
+// Phase 9.8.1: Real-time Updates
+// ============================================================================
+
+/**
+ * Phase 9.8.1: Watch for session phase changes
+ * Show toast notifications when phase changes
+ */
+watch(
+  () => props.session.phase,
+  (newPhase, oldPhase) => {
+    if (newPhase !== oldPhase) {
+      console.log(`[Session ${props.session.id}] Phase: ${oldPhase} -> ${newPhase}`)
+
+      if (newPhase === SigningSessionPhase.COMPLETE) {
+        toast.add({
+          title: 'Signing Complete',
+          description: 'Transaction signed successfully',
+          color: 'success',
+          icon: 'i-lucide-check-circle',
+        })
+      } else if (newPhase === SigningSessionPhase.NONCE_EXCHANGE) {
+        toast.add({
+          title: 'Nonce Exchange Started',
+          description: 'All participants joined, exchanging nonces',
+          color: 'info',
+          icon: 'i-lucide-refresh-cw',
+        })
+      } else if (newPhase === SigningSessionPhase.SIGNATURE_EXCHANGE) {
+        toast.add({
+          title: 'Signature Exchange Started',
+          description: 'Collecting partial signatures',
+          color: 'info',
+          icon: 'i-lucide-pen-tool',
+        })
+      } else if (newPhase === SigningSessionPhase.ERROR) {
+        toast.add({
+          title: 'Session Error',
+          description: props.session.error || 'An error occurred',
+          color: 'error',
+          icon: 'i-lucide-x-circle',
+        })
+      }
+    }
+  }
+)
+
+/**
+ * Phase 9.8.1: Start auto-refresh for active sessions
+ */
+onMounted(() => {
+  if (isActive.value) {
+    console.log(`[Session ${props.session.id}] Starting auto-refresh`)
+    refreshInterval.value = setInterval(() => {
+      // Trigger store sync to get latest session state
+      musig2Store._syncSessionsFromService()
+    }, 2000)
+  }
+})
+
+/**
+ * Phase 9.8.1: Cleanup on unmount
+ */
+onUnmounted(() => {
+  if (refreshInterval.value) {
+    clearInterval(refreshInterval.value)
+    refreshInterval.value = null
+  }
+})
+
+/**
+ * Phase 9.8.1: Start/stop refresh based on active state
+ */
+watch(isActive, (active) => {
+  if (active && !refreshInterval.value) {
+    refreshInterval.value = setInterval(() => {
+      musig2Store._syncSessionsFromService()
+    }, 2000)
+  } else if (!active && refreshInterval.value) {
+    clearInterval(refreshInterval.value)
+    refreshInterval.value = null
+  }
+})
 </script>
 
 <template>

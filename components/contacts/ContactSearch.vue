@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useContactsStore, type Contact, getContactAddress, hasAddressForNetwork } from '~/stores/contacts'
 import { useNetworkStore, NETWORK_CONFIGS } from '~/stores/network'
-import { useAddressFormat } from '~/composables/useUtils'
+import { useAddress } from '~/composables/useAddress'
 
 const props = defineProps<{
   modelValue: string
@@ -17,7 +17,7 @@ const emit = defineEmits<{
 
 const contactsStore = useContactsStore()
 const networkStore = useNetworkStore()
-const { truncateAddress, getNetworkName } = useAddressFormat()
+const { truncateAddress, getNetworkName } = useAddress()
 
 // Get the address prefix for the current network
 const addressPlaceholder = computed(() => {
@@ -137,7 +137,7 @@ const getAvatarColor = (name: string) => {
       enter-to-class="transform scale-100 opacity-100" leave-active-class="transition duration-75 ease-in"
       leave-from-class="transform scale-100 opacity-100" leave-to-class="transform scale-95 opacity-0">
       <div v-if="showDropdown && searchResults.length > 0"
-        class="absolute z-50 w-full mt-1 bg-white dark:bg-gray-900 rounded-lg shadow-lg border border-default overflow-hidden">
+        class="absolute z-50 w-full mt-1 bg-background rounded-lg shadow-lg border border-default overflow-hidden">
         <div class="py-1">
           <button v-for="contact in searchResults" :key="contact.id"
             class="w-full px-3 py-2 flex items-center gap-3 hover:bg-muted/50 transition-colors text-left"

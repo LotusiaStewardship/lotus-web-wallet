@@ -3,7 +3,11 @@
  * Display XPI amount with proper formatting
  * Shows integer and fractional parts separately for visual clarity
  */
-const { toXPI, toSats } = useLotusUnits()
+const { satsToXPI, xpiToSats } = useAmount()
+
+// Alias for backward compatibility
+const toXPI = (sats: string | number) => parseFloat(satsToXPI(BigInt(sats)))
+const toSats = (xpi: number) => Number(xpiToSats(xpi))
 
 const props = defineProps<{
   sats: string | number

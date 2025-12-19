@@ -156,8 +156,8 @@ export interface AddressHistoryResponse {
   }
 }
 
-// Transaction type classification
-export type TransactionType =
+// Transaction type classification for wallet history
+export type WalletTransactionType =
   | 'give'
   | 'receive'
   | 'rank'
@@ -168,7 +168,7 @@ export type TransactionType =
 
 export interface ParsedTransaction {
   txid: string
-  type: TransactionType
+  type: WalletTransactionType
   timestamp: number
   confirmations: number
   blockHeight: number
@@ -347,7 +347,7 @@ export const useExplorerApi = () => {
   /**
    * Get display info for a transaction type
    */
-  const getTransactionTypeInfo = (type: TransactionType) => {
+  const getTransactionTypeInfo = (type: WalletTransactionType) => {
     switch (type) {
       case 'give':
         return {

@@ -1,181 +1,213 @@
 <script setup lang="ts">
+/**
+ * Restore Wallet Page
+ *
+ * Restore wallet from seed phrase.
+ */
 import { useWalletStore } from '~/stores/wallet'
+import { useOnboardingStore } from '~/stores/onboarding'
+import { useSeedPhrase } from '~/composables/useSeedPhrase'
 
 definePageMeta({
-  title: 'Restore Wallet',
+  title: 'Restore',
 })
 
 const walletStore = useWalletStore()
-const toast = useToast()
+const onboardingStore = useOnboardingStore()
 const router = useRouter()
+const { success, error: showError } = useNotifications()
+
+// Seed phrase input with validation
+const { input: seedPhrase, words, wordCount, isValid: isValidSeedPhrase } = useSeedPhrase()
 
 // Form state
-const seedPhrase = ref('')
-const confirmed = ref(false)
-const restoring = ref(false)
+const step = ref<'warning' | 'input' | 'confirm' | 'success'>('warning')
+const confirmText = ref('')
+const isRestoring = ref(false)
+const errorMessage = ref('')
 
-// Validation
-const wordCount = computed(() => {
-  if (!seedPhrase.value.trim()) return 0
-  return seedPhrase.value.trim().split(/\s+/).length
+// Check if wallet exists
+const hasExistingWallet = computed(() => {
+  return walletStore.initialized && walletStore.address
 })
 
-const isValidWordCount = computed(() => {
-  return wordCount.value === 12 || wordCount.value === 24
-})
+// Proceed from warning
+function proceedFromWarning() {
+  step.value = 'input'
+}
 
-const isValidSeedPhrase = computed(() => {
-  if (!walletStore.initialized) return null // SDK not loaded yet
-  if (!isValidWordCount.value) return false
-  return walletStore.isValidSeedPhrase(seedPhrase.value.trim())
-})
+// Validate and proceed to confirm
+function validateAndProceed() {
+  errorMessage.value = ''
 
-const canRestore = computed(() => {
-  return isValidSeedPhrase.value === true && confirmed.value && !restoring.value
-})
+  if (!isValidSeedPhrase.value) {
+    errorMessage.value = 'Invalid seed phrase. Please check your words and try again.'
+    return
+  }
+
+  step.value = 'confirm'
+}
 
 // Restore wallet
-const restoreWallet = async () => {
-  if (!canRestore.value) return
+async function restoreWallet() {
+  if (confirmText.value.toLowerCase() !== 'restore') return
 
-  restoring.value = true
+  isRestoring.value = true
+  errorMessage.value = ''
 
   try {
-    await walletStore.restoreWallet(seedPhrase.value.trim())
+    await walletStore.restoreWallet(words.value.join(' '))
 
-    toast.add({
-      title: 'Wallet Restored',
-      description: 'Your wallet has been successfully restored',
-      color: 'success',
-      icon: 'i-lucide-check-circle',
-    })
+    // Mark backup as complete since they already have the phrase
+    onboardingStore.markBackupComplete()
 
-    // Navigate to home
-    router.push('/')
-  } catch (err) {
-    toast.add({
-      title: 'Restore Failed',
-      description: err instanceof Error ? err.message : 'Failed to restore wallet',
-      color: 'error',
-      icon: 'i-lucide-x-circle',
-    })
+    step.value = 'success'
+
+    success('Wallet Restored', 'Your wallet has been successfully restored')
+  } catch (err: any) {
+    errorMessage.value = err.message || 'Failed to restore wallet. Please check your seed phrase.'
+    showError('Restore Failed', errorMessage.value)
   } finally {
-    restoring.value = false
+    isRestoring.value = false
   }
 }
 
-// Clear form
-const clearForm = () => {
-  seedPhrase.value = ''
-  confirmed.value = false
+// Go to wallet
+function goToWallet() {
+  router.push('/')
 }
 </script>
 
 <template>
-  <div class="max-w-xl mx-auto space-y-6">
-    <!-- Header -->
-    <div>
-      <SettingsBackButton />
-      <h1 class="text-2xl font-bold">Restore Wallet</h1>
-      <p class="text-muted">Enter your seed phrase to restore an existing wallet</p>
-    </div>
+  <div class="space-y-4">
 
-    <!-- Warning -->
-    <UAlert color="error" variant="subtle" icon="i-lucide-alert-triangle">
-      <template #title>Warning: This will replace your current wallet</template>
-      <template #description>
-        Make sure you have backed up your current wallet's seed phrase before restoring.
-        This action cannot be undone.
-      </template>
-    </UAlert>
+    <!-- Step 1: Warning -->
+    <template v-if="step === 'warning'">
+      <UiAppCard>
+        <div class="text-center py-4">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-warning/10 flex items-center justify-center">
+            <UIcon name="i-lucide-alert-triangle" class="w-8 h-8 text-warning" />
+          </div>
 
-    <!-- Restore Form -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-upload" class="w-5 h-5" />
-          <span class="font-semibold">Enter Seed Phrase</span>
-        </div>
-      </template>
+          <h3 class="text-lg font-semibold mb-2">Before You Continue</h3>
 
-      <div class="space-y-4">
-        <!-- Seed Phrase Input -->
-        <UFormField label="Seed Phrase" required>
-          <UTextarea v-model="seedPhrase" placeholder="Enter your 12 or 24 word seed phrase..." :rows="4"
-            class="font-mono" :color="seedPhrase && isValidSeedPhrase === false ? 'error' : undefined" />
-          <template #hint>
-            <div class="flex justify-between">
-              <span :class="{ 'text-error-500': seedPhrase && !isValidWordCount }">
-                {{ wordCount }} / {{ wordCount > 12 ? 24 : 12 }} words
-              </span>
-              <span v-if="isValidSeedPhrase === null && seedPhrase && isValidWordCount" class="text-muted">
-                Validating...
-              </span>
-              <span v-else-if="seedPhrase && isValidWordCount && isValidSeedPhrase === false" class="text-error-500">
-                Invalid seed phrase
-              </span>
-              <span v-else-if="isValidSeedPhrase === true" class="text-success-500">
-                Valid seed phrase
-              </span>
+          <div class="text-sm text-muted space-y-3 text-left max-w-md mx-auto">
+            <p v-if="hasExistingWallet" class="text-warning font-medium">
+              You already have a wallet. Restoring will replace your current
+              wallet. Make sure you have backed up your current seed phrase!
+            </p>
+            <div class="flex justify-center py-4">
+              <UButton color="warning" @click="navigateTo('/settings/backup')">
+                Go to Backup
+              </UButton>
             </div>
-          </template>
-        </UFormField>
 
-        <!-- Confirmation Checkbox -->
-        <div class="flex items-start gap-3 p-4 bg-muted/50 rounded-lg">
-          <UCheckbox v-model="confirmed" :disabled="isValidSeedPhrase !== true" />
-          <div class="text-sm">
-            <p class="font-medium">I understand that:</p>
-            <ul class="list-disc list-inside text-muted mt-1 space-y-1">
-              <li>My current wallet will be replaced</li>
-              <li>I have backed up my current seed phrase</li>
-              <li>This action cannot be undone</li>
-            </ul>
+            <p>
+              You will need your 12 or 24 word seed phrase to restore your
+              wallet.
+            </p>
+
+            <p>
+              <strong>Never share your seed phrase with anyone.</strong>
+              Anyone with your seed phrase can spend your Lotus.
+            </p>
+
+            <p>
+              Make sure you are in a private location where no one can see your
+              screen.
+            </p>
           </div>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="flex gap-2">
-          <UButton block color="primary" :loading="restoring" :disabled="!canRestore" icon="i-lucide-upload"
-            @click="restoreWallet">
-            {{ restoring ? 'Restoring...' : 'Restore Wallet' }}
+        <div class="flex gap-3 mt-4 justify-center">
+          <!-- Go back in the historical navigation-->
+          <UButton color="neutral" variant="outline" @click="router.go(-1)">
+            Cancel
           </UButton>
-          <UButton color="neutral" variant="outline" icon="i-lucide-x" @click="clearForm">
-            Clear
+          <UButton color="primary" @click="proceedFromWarning">
+            I Understand, Continue
           </UButton>
         </div>
-      </div>
-    </UCard>
+      </UiAppCard>
+    </template>
 
-    <!-- Help -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-help-circle" class="w-5 h-5" />
-          <span class="font-semibold">Need Help?</span>
-        </div>
-      </template>
+    <!-- Step 2: Input Seed Phrase -->
+    <template v-else-if="step === 'input'">
+      <UiAppCard title="Enter Seed Phrase" icon="i-lucide-key">
+        <p class="text-sm text-muted mb-4">
+          Enter your 12 or 24 word seed phrase, separated by spaces.
+        </p>
 
-      <div class="space-y-3 text-sm">
-        <div class="flex gap-3">
-          <UIcon name="i-lucide-info" class="w-5 h-5 text-muted flex-shrink-0" />
-          <p class="text-muted">
-            Your seed phrase is a series of 12 or 24 words that was shown when you first created your wallet.
-          </p>
-        </div>
-        <div class="flex gap-3">
-          <UIcon name="i-lucide-info" class="w-5 h-5 text-muted flex-shrink-0" />
-          <p class="text-muted">
-            Enter the words in the exact order they were given, separated by spaces.
-          </p>
-        </div>
-        <div class="flex gap-3">
-          <UIcon name="i-lucide-info" class="w-5 h-5 text-muted flex-shrink-0" />
-          <p class="text-muted">
-            If you don't have your seed phrase, you cannot restore your wallet. There is no other way to recover it.
-          </p>
-        </div>
+        <SettingsSeedPhraseInput placeholder="Paste your backup seed phrase here" v-model="seedPhrase"
+          :word-count="wordCount" :is-valid="isValidSeedPhrase" :error="errorMessage" />
+      </UiAppCard>
+
+      <div class="flex gap-3 justify-center">
+        <UButton color="neutral" variant="outline" @click="step = 'warning'">
+          Back
+        </UButton>
+        <UButton color="primary" :disabled="!isValidSeedPhrase" @click="validateAndProceed">
+          Continue
+        </UButton>
       </div>
-    </UCard>
+    </template>
+
+    <!-- Step 3: Confirm -->
+    <template v-else-if="step === 'confirm'">
+      <UiAppCard>
+        <div class="text-center py-4">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-error/10 flex items-center justify-center">
+            <UIcon name="i-lucide-alert-triangle" class="w-8 h-8 text-error" />
+          </div>
+
+          <h3 class="text-lg font-semibold text-error mb-2">Confirm Restore</h3>
+
+          <p class="text-sm text-muted mb-4">
+            This will replace your current wallet with the restored wallet. This
+            action cannot be undone.
+          </p>
+
+          <UFormField label="Type 'restore' to confirm">
+            <UInput v-model="confirmText" placeholder="restore" class="text-center" />
+          </UFormField>
+
+          <UAlert v-if="errorMessage" color="error" icon="i-lucide-alert-circle" class="mt-4">
+            <template #description>{{ errorMessage }}</template>
+          </UAlert>
+        </div>
+
+        <div class="flex gap-3 mt-4 justify-center">
+          <UButton color="neutral" variant="outline" class="flex-1" @click="step = 'input'">
+            Back
+          </UButton>
+          <UButton color="error" class="flex-1" :disabled="confirmText.toLowerCase() !== 'restore'"
+            :loading="isRestoring" @click="restoreWallet">
+            Restore Wallet
+          </UButton>
+        </div>
+      </UiAppCard>
+    </template>
+
+    <!-- Step 4: Success -->
+    <template v-else-if="step === 'success'">
+      <UiAppCard>
+        <div class="text-center py-8">
+          <div class="w-20 h-20 mx-auto mb-4 rounded-full bg-success/10 flex items-center justify-center">
+            <UIcon name="i-lucide-check-circle" class="w-10 h-10 text-success" />
+          </div>
+
+          <h3 class="text-xl font-semibold mb-2">Wallet Restored!</h3>
+
+          <p class="text-sm text-muted mb-6">
+            Your wallet has been successfully restored. Your balance and
+            transaction history will sync automatically.
+          </p>
+
+          <UButton color="primary" size="lg" @click="goToWallet">
+            Go to Wallet
+          </UButton>
+        </div>
+      </UiAppCard>
+    </template>
   </div>
 </template>

@@ -1,132 +1,179 @@
 <script setup lang="ts">
+/**
+ * Backup Settings Page
+ *
+ * View and verify seed phrase backup.
+ */
 import { useWalletStore } from '~/stores/wallet'
+import { useOnboardingStore } from '~/stores/onboarding'
 
 definePageMeta({
-  title: 'Backup Wallet',
+  title: 'Backup',
 })
 
 const walletStore = useWalletStore()
-const toast = useToast()
+const onboardingStore = useOnboardingStore()
+const { success } = useNotifications()
 
-// Visibility state
-const seedPhraseVisible = ref(false)
-const confirmed = ref(false)
+// State
+const showSeedPhrase = ref(false)
+const verificationMode = ref(false)
+const verificationIndices = ref<number[]>([])
+const verificationInputs = ref<string[]>(['', '', ''])
 
-// Toggle visibility
-const toggleVisibility = () => {
-  seedPhraseVisible.value = !seedPhraseVisible.value
+// Get seed phrase words
+const seedWords = computed(() => {
+  const mnemonic = walletStore.getMnemonic?.()
+  return mnemonic ? mnemonic.split(' ') : []
+})
+
+// Toggle seed phrase visibility
+function toggleSeedPhrase() {
+  showSeedPhrase.value = !showSeedPhrase.value
 }
 
-// Copy seed phrase
-const copySeedPhrase = async () => {
-  try {
-    await navigator.clipboard.writeText(walletStore.seedPhrase)
-    toast.add({
-      title: 'Copied',
-      description: 'Seed phrase copied to clipboard. Store it safely!',
-      color: 'success',
-      icon: 'i-lucide-check',
-    })
-  } catch (err) {
-    toast.add({
-      title: 'Copy Failed',
-      color: 'error',
-      icon: 'i-lucide-x',
-    })
+// Start verification
+function startVerification() {
+  // Pick 3 random indices
+  const indices: number[] = []
+  while (indices.length < 3) {
+    const idx = Math.floor(Math.random() * 12)
+    if (!indices.includes(idx)) indices.push(idx)
+  }
+  verificationIndices.value = indices.sort((a, b) => a - b)
+  verificationInputs.value = ['', '', '']
+  verificationMode.value = true
+}
+
+// Verify backup
+function verifyBackup() {
+  const allCorrect = verificationIndices.value.every((wordIndex, i) => {
+    const input = verificationInputs.value[i].trim().toLowerCase()
+    const expected = seedWords.value[wordIndex]?.toLowerCase()
+    return input === expected
+  })
+
+  if (allCorrect) {
+    onboardingStore.markBackupComplete()
+    success('Backup Verified!', 'Your wallet backup has been confirmed')
+    verificationMode.value = false
+  } else {
+    // Show error
   }
 }
 
-// Split seed phrase into words
-const seedWords = computed(() => {
-  if (!walletStore.seedPhrase) return []
-  return walletStore.seedPhrase.split(' ')
-})
+// Cancel verification
+function cancelVerification() {
+  verificationMode.value = false
+  verificationInputs.value = ['', '', '']
+}
 </script>
 
 <template>
-  <div class="max-w-xl mx-auto space-y-6">
-    <!-- Header -->
-    <div>
-      <SettingsBackButton />
-      <h1 class="text-2xl font-bold">Backup Seed Phrase</h1>
-      <p class="text-muted">Your seed phrase is the only way to recover your wallet</p>
-    </div>
+  <div class="space-y-4">
+    <!-- Backup Status -->
+    <UiAppCard>
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
+          :class="onboardingStore.backupComplete ? 'bg-green-100 dark:bg-green-900/30' : 'bg-yellow-100 dark:bg-yellow-900/30'">
+          <UIcon :name="onboardingStore.backupComplete ? 'i-lucide-shield-check' : 'i-lucide-shield-alert'"
+            class="w-6 h-6" :class="onboardingStore.backupComplete ? 'text-green-600' : 'text-yellow-600'" />
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold">
+            {{ onboardingStore.backupComplete ? 'Backup Verified' : 'Backup Not Verified' }}
+          </div>
+          <div class="text-sm text-muted">
+            {{ onboardingStore.backupComplete
+              ? 'Your seed phrase has been verified'
+              : 'Verify your backup to secure your wallet'
+            }}
+          </div>
+        </div>
+      </div>
+    </UiAppCard>
 
-    <!-- Warning -->
-    <UAlert color="warning" variant="subtle" icon="i-lucide-alert-triangle">
-      <template #title>Important Security Information</template>
-      <template #description>
-        <ul class="list-disc list-inside space-y-1 mt-2">
-          <li>Never share your seed phrase with anyone</li>
-          <li>Write it down on paper and store it safely</li>
-          <li>Anyone with your seed phrase can access your funds</li>
-          <li>Lotusia support will never ask for your seed phrase</li>
-        </ul>
-      </template>
-    </UAlert>
+    <!-- Seed Phrase Card (when not in verification mode) -->
+    <UiAppCard v-if="!verificationMode" title="Seed Phrase" icon="i-lucide-key">
+      <UAlert color="warning" icon="i-lucide-alert-triangle" class="mb-4">
+        <template #description>
+          Never share your seed phrase. Anyone with these words can access your funds.
+        </template>
+      </UAlert>
 
-    <!-- Confirmation -->
-    <UCard v-if="!confirmed">
-      <div class="text-center py-4">
-        <UIcon name="i-lucide-shield-alert" class="w-16 h-16 mx-auto mb-4 text-warning-500" />
-        <h3 class="text-lg font-semibold mb-2">Are you in a private location?</h3>
-        <p class="text-muted mb-6">
-          Make sure no one can see your screen before revealing your seed phrase.
-        </p>
-        <UButton color="warning" icon="i-lucide-eye" @click="confirmed = true">
-          I understand, show my seed phrase
+      <!-- Hidden state -->
+      <div v-if="!showSeedPhrase" class="text-center py-6">
+        <UIcon name="i-lucide-eye-off" class="w-12 h-12 mx-auto mb-3 text-muted" />
+        <p class="text-muted mb-4">Your seed phrase is hidden for security</p>
+        <UButton color="primary" @click="toggleSeedPhrase">
+          Reveal Seed Phrase
         </UButton>
       </div>
-    </UCard>
 
-    <!-- Seed Phrase Display -->
-    <UCard v-else>
-      <template #header>
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <UIcon name="i-lucide-key" class="w-5 h-5" />
-            <span class="font-semibold">Your Seed Phrase</span>
+      <!-- Visible state -->
+      <div v-else>
+        <div class="grid grid-cols-3 gap-2 mb-4">
+          <div v-for="(word, index) in seedWords" :key="index"
+            class="flex items-center gap-2 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+            <span class="text-xs text-muted w-5">{{ index + 1 }}.</span>
+            <span class="font-mono font-medium text-sm">{{ word }}</span>
           </div>
-          <UButton color="neutral" variant="ghost" size="sm"
-            :icon="seedPhraseVisible ? 'i-lucide-eye-off' : 'i-lucide-eye'" @click="toggleVisibility">
-            {{ seedPhraseVisible ? 'Hide' : 'Show' }}
+        </div>
+
+        <div class="flex gap-3">
+          <UButton color="neutral" variant="outline" @click="toggleSeedPhrase">
+            Hide
+          </UButton>
+          <UButton v-if="!onboardingStore.backupComplete" color="primary" @click="startVerification">
+            Verify Backup
           </UButton>
         </div>
-      </template>
+      </div>
+    </UiAppCard>
 
-      <div v-if="seedPhraseVisible" class="space-y-4">
-        <!-- Word Grid -->
-        <div class="grid grid-cols-3 gap-2">
-          <div v-for="(word, index) in seedWords" :key="index" class="bg-muted/50 rounded-lg p-3 text-center">
-            <span class="text-xs text-muted block mb-1">{{ index + 1 }}</span>
-            <span class="font-mono font-medium">{{ word }}</span>
-          </div>
-        </div>
+    <!-- Verification Mode -->
+    <UiAppCard v-else title="Verify Your Backup" icon="i-lucide-check-circle">
+      <p class="text-muted mb-4">
+        Enter the following words from your seed phrase to confirm you've saved it.
+      </p>
 
-        <!-- Copy Button -->
-        <UButton block color="neutral" variant="outline" icon="i-lucide-copy" @click="copySeedPhrase">
-          Copy to Clipboard
+      <div class="space-y-3 mb-4">
+        <UFormField v-for="(wordIndex, i) in verificationIndices" :key="i" :label="`Word #${wordIndex + 1}`">
+          <UInput v-model="verificationInputs[i]" placeholder="Enter word" autocomplete="off" autocapitalize="off"
+            spellcheck="false" />
+        </UFormField>
+      </div>
+
+      <div class="flex gap-3">
+        <UButton color="neutral" variant="outline" @click="cancelVerification">
+          Cancel
+        </UButton>
+        <UButton color="primary" :disabled="!verificationInputs.every(v => v.trim())" @click="verifyBackup">
+          Verify
         </UButton>
       </div>
+    </UiAppCard>
 
-      <div v-else class="text-center py-8">
-        <UIcon name="i-lucide-eye-off" class="w-12 h-12 mx-auto mb-4 text-muted opacity-50" />
-        <p class="text-muted">Click "Show" to reveal your seed phrase</p>
-      </div>
-    </UCard>
-
-    <!-- Verification Reminder -->
-    <UCard v-if="confirmed">
-      <div class="flex gap-4">
-        <UIcon name="i-lucide-check-circle" class="w-6 h-6 text-success-500 flex-shrink-0 mt-0.5" />
-        <div>
-          <h4 class="font-semibold mb-1">Verify Your Backup</h4>
-          <p class="text-sm text-muted">
-            After writing down your seed phrase, verify it by restoring your wallet on another device
-            or using the restore function to ensure you've recorded it correctly.
-          </p>
-        </div>
-      </div>
-    </UCard>
+    <!-- Tips -->
+    <UiAppCard title="Backup Tips" icon="i-lucide-lightbulb">
+      <ul class="space-y-2 text-sm text-muted">
+        <li class="flex items-start gap-2">
+          <UIcon name="i-lucide-check" class="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+          <span>Write down your seed phrase on paper</span>
+        </li>
+        <li class="flex items-start gap-2">
+          <UIcon name="i-lucide-check" class="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+          <span>Store it in a safe, secure location</span>
+        </li>
+        <li class="flex items-start gap-2">
+          <UIcon name="i-lucide-check" class="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+          <span>Never store it digitally or take screenshots</span>
+        </li>
+        <li class="flex items-start gap-2">
+          <UIcon name="i-lucide-check" class="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
+          <span>Consider using a metal backup for fire/water protection</span>
+        </li>
+      </ul>
+    </UiAppCard>
   </div>
 </template>

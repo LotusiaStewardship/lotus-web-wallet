@@ -1,238 +1,259 @@
 <script setup lang="ts">
-import type { NavigationMenuItem } from '@nuxt/ui'
 import { useWalletStore } from '~/stores/wallet'
-import { useP2PStore } from '~/stores/p2p'
 import { useNetworkStore } from '~/stores/network'
+import { useMuSig2Store } from '~/stores/musig2'
+import type { NavItem } from '~/components/layout/MobileBottomNav.vue'
 
 const walletStore = useWalletStore()
-const p2pStore = useP2PStore()
 const networkStore = useNetworkStore()
+const musig2Store = useMuSig2Store()
 const route = useRoute()
-const colorMode = useColorMode()
 
-// Initialize network store on mount
+// Command palette state
+const commandPaletteOpen = ref(false)
+
+// Keyboard shortcuts help modal
+const keyboardShortcutsOpen = ref(false)
+
+// Mobile detection - use useMediaQuery for SSR-safe detection
+const isMobile = ref(true) // Default to mobile for SSR
+
+// Sidebar open state (for mobile slideover) - start closed on mobile
+const sidebarOpen = ref(false)
+
 onMounted(() => {
   networkStore.initialize()
+  checkMobile()
+  window.addEventListener('resize', checkMobile)
 })
 
-// Navigation items for sidebar
-const navigationItems = computed<NavigationMenuItem[][]>(() => [
-  [
-    {
-      label: 'Wallet',
-      icon: 'i-lucide-wallet',
-      to: '/',
-      active: route.path === '/',
-    },
-    {
-      label: 'P2P',
-      icon: 'i-lucide-globe',
-      to: '/p2p',
-      active: route.path === '/p2p' || route.path === '/discover',
-    },
-    {
-      label: 'Send',
-      icon: 'i-lucide-send',
-      to: '/send',
-      active: route.path === '/send',
-    },
-    {
-      label: 'Receive',
-      icon: 'i-lucide-qr-code',
-      to: '/receive',
-      active: route.path === '/receive',
-    },
-    {
-      label: 'History',
-      icon: 'i-lucide-history',
-      to: '/history',
-      active: route.path === '/history',
-    },
-    {
-      label: 'Contacts',
-      icon: 'i-lucide-users',
-      to: '/contacts',
-      active: route.path === '/contacts',
-    },
-  ],
-  [
-    {
-      label: 'Explorer',
-      icon: 'i-lucide-blocks',
-      to: '/explorer',
-      active: route.path.startsWith('/explorer'),
-    },
-    {
-      label: 'Social',
-      icon: 'i-lucide-thumbs-up',
-      to: '/social',
-      active: route.path.startsWith('/social'),
-    },
-  ],
-  [
-    {
-      label: 'Settings',
-      icon: 'i-lucide-settings',
-      to: '/settings',
-      active: route.path.startsWith('/settings'),
-    },
-  ],
-])
+onUnmounted(() => {
+  window.removeEventListener('resize', checkMobile)
+})
 
-// Compute network settings URL with current page as return path
-const networkSettingsUrl = computed(() => {
-  // Only add from param for non-settings pages
-  if (route.path.startsWith('/settings')) {
-    return '/settings/network'
+function checkMobile() {
+  const wasMobile = isMobile.value
+  isMobile.value = window.innerWidth < 768
+  // Close sidebar when switching to mobile, open when switching to desktop
+  if (isMobile.value !== wasMobile) {
+    sidebarOpen.value = !isMobile.value
   }
-  return `/settings/network?from=${route.path}`
+}
+
+// Keyboard shortcut for command palette (Cmd+K)
+onKeyStroke('k', (e) => {
+  if (e.metaKey || e.ctrlKey) {
+    e.preventDefault()
+    commandPaletteOpen.value = true
+  }
 })
 
-// User menu items
-const userMenuItems = computed(() => [
-  [{
-    label: 'Network',
-    icon: 'i-lucide-network',
-    to: networkSettingsUrl.value,
-  }],
-  [{
-    label: colorMode.value === 'dark' ? 'Light Mode' : 'Dark Mode',
-    icon: colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon',
-    click: () => {
-      colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
-    },
-  }],
+// Keyboard shortcuts for navigation
+onKeyStroke('s', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
+    e.preventDefault()
+    navigateTo('/transact/send')
+  }
+})
+
+onKeyStroke('r', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
+    e.preventDefault()
+    navigateTo('/transact/receive')
+  }
+})
+
+onKeyStroke('h', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
+    e.preventDefault()
+    navigateTo('/transact/history')
+  }
+})
+
+// Keyboard shortcut for help (Cmd+/)
+onKeyStroke('/', (e) => {
+  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
+    e.preventDefault()
+    keyboardShortcutsOpen.value = true
+  }
+})
+
+function isInputFocused(): boolean {
+  const active = document.activeElement
+  return active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA'
+}
+
+// Simplified navigation items (5 groups instead of 9)
+const navigationItems = computed<NavItem[]>(() => [
+  {
+    label: 'Home',
+    icon: 'i-lucide-home',
+    to: '/',
+    active: route.path === '/',
+  },
+  {
+    label: 'Transact',
+    icon: 'i-lucide-arrow-left-right',
+    to: '/transact',
+    active: route.path.startsWith('/transact') ||
+      route.path === '/send' ||
+      route.path === '/receive' ||
+      route.path === '/history',
+  },
+  {
+    label: 'People',
+    icon: 'i-lucide-users',
+    to: '/people',
+    active: route.path.startsWith('/people') ||
+      route.path === '/contacts' ||
+      route.path === '/p2p',
+    badge: musig2Store.pendingSessions.length || undefined,
+  },
+  {
+    label: 'Explore',
+    icon: 'i-lucide-compass',
+    to: '/explore',
+    active: route.path.startsWith('/explore') ||
+      route.path.startsWith('/explorer') ||
+      route.path.startsWith('/social'),
+  },
+  {
+    label: 'Settings',
+    icon: 'i-lucide-settings',
+    to: '/settings',
+    active: route.path.startsWith('/settings'),
+  },
 ])
+
+// Breadcrumb items based on route
+const breadcrumbItems = computed(() => {
+  const items: { label: string; to?: string }[] = []
+  const pathParts = route.path.split('/').filter(Boolean)
+
+  // Build breadcrumb from path
+  let currentPath = ''
+  for (const part of pathParts) {
+    currentPath += `/${part}`
+    items.push({
+      label: formatBreadcrumbLabel(part),
+      to: currentPath,
+    })
+  }
+
+  // If empty, show Home
+  if (items.length === 0) {
+    items.push({ label: 'Home' })
+  }
+
+  return items
+})
+
+function formatBreadcrumbLabel(part: string): string {
+  // Handle dynamic routes like [txid] or [address]
+  if (part.startsWith('[')) {
+    const paramName = part.slice(1, -1)
+    return (route.params[paramName] as string)?.slice(0, 12) + '...' || part
+  }
+  // Capitalize and format
+  return part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' ')
+}
 
 // Connection status
 const connectionStatus = computed(() => {
-  // SDK not ready yet - still loading
-  if (!walletStore.sdkReady) return 'loading'
-  // SDK ready but not connected yet - connecting in background
-  if (!walletStore.connected && !walletStore.initialized) return 'connecting'
-  // Initialized but disconnected - network issue
-  if (!walletStore.connected) return 'disconnected'
-  return 'connected'
-})
-
-const statusColor = computed(() => {
-  switch (connectionStatus.value) {
-    case 'connected': return 'success' as const
-    case 'disconnected': return 'error' as const
-    default: return 'warning' as const
-  }
+  if (!walletStore.sdkReady) return 'loading' as const
+  if (!walletStore.connected && !walletStore.initialized) return 'connecting' as const
+  if (!walletStore.connected) return 'disconnected' as const
+  return 'connected' as const
 })
 </script>
 
 <template>
-  <UDashboardGroup>
-    <!-- Sidebar -->
-    <UDashboardSidebar collapsible>
-      <template #header="{ collapsed }">
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-flower-2" class="w-8 h-8 text-primary shrink-0" />
-          <span v-if="!collapsed" class="font-bold text-lg">Lotus Wallet</span>
-        </div>
-      </template>
+  <div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <!-- Accessibility: Skip to main content link -->
+    <CommonSkipLinks />
 
-      <template #default="{ collapsed }">
-        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[0]" orientation="vertical" />
-        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[1]" orientation="vertical" class="mt-4" />
-        <UNavigationMenu :collapsed="collapsed" :items="navigationItems[2]" orientation="vertical" class="mt-auto" />
-      </template>
+    <UDashboardGroup>
+      <!-- Desktop Sidebar (slideover on mobile, but we use our own bottom nav) -->
+      <UDashboardSidebar v-model:open="sidebarOpen" collapsible :toggle="isMobile ? false : undefined"
+        class="hidden md:flex">
+        <template #header="{ collapsed }">
+          <NuxtLink to="/" class="flex items-center gap-2">
+            <UIcon name="i-lucide-flower-2" class="w-8 h-8 text-primary shrink-0" />
+            <span v-if="!collapsed" class="font-bold text-lg">Lotus Wallet</span>
+          </NuxtLink>
+        </template>
 
-      <template #footer="{ collapsed }">
-        <div class="p-2 space-y-2">
-          <!-- Connection Status -->
-          <UBadge :color="statusColor" variant="subtle" size="sm" class="w-full justify-center">
-            <template #leading>
-              <span class="relative flex h-2 w-2">
-                <span v-if="connectionStatus === 'connected'"
-                  class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                <span class="relative inline-flex rounded-full h-2 w-2" :class="{
-                  'bg-green-500': connectionStatus === 'connected',
-                  'bg-red-500': connectionStatus === 'disconnected',
-                  'bg-yellow-500': connectionStatus === 'connecting' || connectionStatus === 'loading',
-                }" />
-              </span>
-            </template>
-            <span v-if="!collapsed">
-              {{ connectionStatus === 'connected' ? 'Online' : connectionStatus === 'disconnected' ? 'Offline' :
-                connectionStatus === 'connecting' ? 'Connecting...' : 'Loading...' }}
-            </span>
-          </UBadge>
+        <template #default="{ collapsed }">
+          <UNavigationMenu :collapsed="collapsed" :items="navigationItems" orientation="vertical" />
+        </template>
 
-          <!-- Balance Preview -->
-          <div v-if="!collapsed" class="text-center pt-2 border-t border-gray-200 dark:border-gray-800">
-            <div class="text-xs text-gray-500">Balance</div>
-            <div class="font-mono font-semibold text-sm">
-              {{ walletStore.formattedBalance }} XPI
+        <template #footer="{ collapsed }">
+          <LayoutSidebarFooter :collapsed="collapsed ?? false" :connection-status="connectionStatus" />
+        </template>
+      </UDashboardSidebar>
+
+      <!-- Main Content -->
+      <UDashboardPanel grow>
+        <!-- Mobile Header (simplified - no hamburger, just title + actions) -->
+        <header v-if="isMobile"
+          class="md:hidden sticky top-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+          <div class="flex items-center justify-between h-14 px-4">
+            <!-- Left: Page title only -->
+            <span class="font-semibold truncate">{{ breadcrumbItems[breadcrumbItems.length - 1]?.label || 'Lotus'
+              }}</span>
+
+            <!-- Right: Search + Notifications -->
+            <div class="flex items-center gap-1">
+              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-search"
+                @click="commandPaletteOpen = true" />
+              <LayoutNotificationCenter />
+            </div>
+          </div>
+        </header>
+
+        <!-- Desktop Header (full) -->
+        <UDashboardNavbar v-else class="hidden md:flex">
+          <template #leading>
+            <UBreadcrumb :items="breadcrumbItems" />
+          </template>
+          <template #trailing>
+            <LayoutNavbarActions :connection-status="connectionStatus"
+              @open-command-palette="commandPaletteOpen = true" />
+          </template>
+        </UDashboardNavbar>
+
+        <div class="flex-1 overflow-auto">
+          <!-- Network Banner (non-production networks) -->
+          <LayoutNetworkBanner v-if="!networkStore.isProduction" />
+
+          <!-- Main Content Area with max-width constraint -->
+          <div id="main-content" class="p-4 md:p-6 pb-24 md:pb-6">
+            <div class="max-w-3xl mx-auto">
+              <!-- SDK Loading State -->
+              <div v-if="walletStore.loading && !walletStore.sdkReady"
+                class="flex flex-col items-center justify-center min-h-[50vh] gap-4">
+                <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
+                <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading wallet...' }}</p>
+              </div>
+
+              <!-- Page Content -->
+              <slot v-else />
             </div>
           </div>
         </div>
-      </template>
-    </UDashboardSidebar>
+      </UDashboardPanel>
 
-    <!-- Main Content -->
-    <UDashboardPanel grow>
-      <UDashboardNavbar>
-        <template #leading>
-          <UBreadcrumb :items="[{ label: (route.meta.title as string) || 'Wallet' }]" />
-        </template>
+      <!-- Command Palette -->
+      <LayoutCommandPalette v-model:open="commandPaletteOpen" />
 
-        <template #trailing>
-          <div class="flex items-center gap-2">
-            <!-- Network indicator - clickable button to network settings -->
-            <UTooltip
-              :text="connectionStatus === 'connecting' ? 'Connecting to network...' : `${networkStore.displayName} - Click to change network`">
-              <UButton :color="networkStore.isProduction ? 'neutral' : networkStore.color"
-                :variant="networkStore.isProduction ? 'ghost' : 'soft'" size="sm" :to="networkSettingsUrl"
-                class="gap-1.5">
-                <UIcon v-if="connectionStatus === 'connecting'" name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
-                <UIcon v-else :name="walletStore.connected ? 'i-lucide-wifi' : 'i-lucide-wifi-off'" class="w-4 h-4" />
-                <UBadge v-if="!networkStore.isProduction" :color="networkStore.color" variant="solid" size="xs">
-                  {{ networkStore.displayName }}
-                </UBadge>
-              </UButton>
-            </UTooltip>
+      <!-- Keyboard Shortcuts Help Modal -->
+      <CommonKeyboardShortcutsModal v-model:open="keyboardShortcutsOpen" />
+    </UDashboardGroup>
 
-            <!-- Color mode toggle -->
-            <UButton color="neutral" variant="ghost" size="sm"
-              :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-              @click="colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'" />
+    <!-- Mobile Bottom Navigation - Outside UDashboardGroup for proper positioning -->
+    <LayoutMobileBottomNav v-if="isMobile" :items="navigationItems" />
 
-            <!-- User menu -->
-            <UDropdownMenu :items="userMenuItems">
-              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-user-circle" />
-            </UDropdownMenu>
-          </div>
-        </template>
-      </UDashboardNavbar>
-
-      <div class="flex-1 overflow-auto">
-        <!-- Testnet/Regtest Banner -->
-        <div v-if="!networkStore.isProduction" :class="[
-          'px-4 py-2 text-center text-sm font-medium',
-          networkStore.isTestnet ? 'bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-300' : '',
-          /* networkStore.isRegtest ? 'bg-info-100 dark:bg-info-900/30 text-info-700 dark:text-info-300' : '' */
-        ]">
-          <UIcon name="i-lucide-alert-triangle" class="w-4 h-4 inline mr-1" />
-          You are on {{ networkStore.displayName }}. Coins have no real value.
-          <NuxtLink :to="networkSettingsUrl" class="underline ml-1">Switch network</NuxtLink>
-        </div>
-
-        <div class="p-6">
-          <!-- SDK Loading State (only shown during initial SDK load, not network connection) -->
-          <div v-if="walletStore.loading && !walletStore.sdkReady"
-            class="flex flex-col items-center justify-center h-full gap-4">
-            <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
-            <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading...' }}</p>
-          </div>
-
-          <!-- Main Content (shown once SDK is ready, network connects in background) -->
-          <slot v-else />
-        </div>
-      </div>
-    </UDashboardPanel>
-  </UDashboardGroup>
+    <!-- Offline Indicator -->
+    <CommonOfflineIndicator />
+  </div>
 </template>

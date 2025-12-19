@@ -77,16 +77,3 @@ export default defineNuxtPlugin(async () => {
     },
   }
 })
-
-// Type augmentation for Nuxt
-declare module '#app' {
-  interface NuxtApp {
-    $bitcore: typeof BitcoreTypes
-  }
-}
-
-declare module 'vue' {
-  interface ComponentCustomProperties {
-    $bitcore: typeof BitcoreTypes
-  }
-}

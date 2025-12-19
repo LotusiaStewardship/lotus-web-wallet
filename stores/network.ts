@@ -3,6 +3,7 @@
  * Manages network configuration and selection (mainnet, testnet, regtest)
  */
 import { defineStore } from 'pinia'
+import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
 
 // Network types
 //export type NetworkType = 'livenet' | 'testnet' | 'regtest'
@@ -67,9 +68,6 @@ export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
     isProduction: false,
   }, */
 }
-
-// Storage key
-const STORAGE_KEY = 'lotus-wallet-network'
 
 // State interface
 export interface NetworkState {
@@ -166,42 +164,25 @@ export const useNetworkStore = defineStore('network', {
 
   actions: {
     /**
-     * Initialize the network store from localStorage
+     * Initialize the network store from storage service
      */
     initialize() {
       if (this.initialized) return
 
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY)
-        if (saved) {
-          const parsed = JSON.parse(saved)
-          if (
-            parsed.network &&
-            NETWORK_CONFIGS[parsed.network as NetworkType]
-          ) {
-            this.currentNetwork = parsed.network as NetworkType
-          }
-        }
-        this.initialized = true
-      } catch (error) {
-        console.error('Failed to load network preference:', error)
-        this.currentNetwork = 'livenet'
-        this.initialized = true
+      const saved = getItem<{ network: NetworkType }>(STORAGE_KEYS.NETWORK, {
+        network: 'livenet',
+      })
+      if (saved.network && NETWORK_CONFIGS[saved.network]) {
+        this.currentNetwork = saved.network
       }
+      this.initialized = true
     },
 
     /**
-     * Save network preference to localStorage
+     * Save network preference to storage service
      */
     savePreference() {
-      try {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ network: this.currentNetwork }),
-        )
-      } catch (error) {
-        console.error('Failed to save network preference:', error)
-      }
+      setItem(STORAGE_KEYS.NETWORK, { network: this.currentNetwork })
     },
 
     /**

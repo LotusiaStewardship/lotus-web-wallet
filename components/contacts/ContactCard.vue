@@ -1,8 +1,18 @@
 <script setup lang="ts">
+/**
+ * ContactCard Component
+ *
+ * Phase 4: Migrated to use useContactContext facade composable.
+ * Phase 6: Enhanced with relationship indicators and shared wallet integration.
+ * Shows MuSig2 badge, online status, shared wallets, and activity stats.
+ */
 import type { Contact } from '~/stores/contacts'
 import { getContactAddress } from '~/stores/contacts'
 import { useNetworkStore } from '~/stores/network'
-import { useAddressFormat } from '~/composables/useUtils'
+import { useContactContext } from '~/composables/useContactContext'
+import { useAddress } from '~/composables/useAddress'
+import { useAmount } from '~/composables/useAmount'
+import { useTime } from '~/composables/useTime'
 
 const props = defineProps<{
   contact: Contact
@@ -21,7 +31,33 @@ const emit = defineEmits<{
 }>()
 
 const networkStore = useNetworkStore()
-const { truncateAddress, getNetworkName } = useAddressFormat()
+const { truncateAddress, getNetworkName } = useAddress()
+const { formatXPI } = useAmount()
+const { timeAgo } = useTime()
+
+// Use facade composable for unified contact data
+const contactId = computed(() => props.contact.id)
+const {
+  identity,
+  onlineStatus,
+  sharedWallets,
+  canMuSig2: isMuSig2Ready,
+} = useContactContext(contactId)
+
+// Phase 6: Removed isOnline/isRecent - now using OnlineStatusBadge component directly
+
+// Activity stats
+const stats = computed(() => ({
+  transactions: props.contact.transactionCount || 0,
+  sent: props.contact.totalSent || 0n,
+  received: props.contact.totalReceived || 0n,
+}))
+
+// Last activity display
+const lastActivity = computed(() => {
+  if (!props.contact.lastTransactionAt) return null
+  return timeAgo(props.contact.lastTransactionAt)
+})
 
 // Get the address for the current network (or fall back to legacy address)
 const currentNetworkAddress = computed(() =>
@@ -107,13 +143,19 @@ const handleClick = () => {
   ]" @click="handleClick">
     <!-- Main content row -->
     <div class="flex items-center gap-3">
-      <!-- Avatar -->
-      <div :class="[
-        'flex items-center justify-center rounded-full font-semibold text-white shrink-0',
-        compact ? 'w-10 h-10 text-sm' : 'w-12 h-12',
-        `bg-${avatarColor}-500`
-      ]">
-        {{ initials }}
+      <!-- Avatar with online indicator -->
+      <div class="relative shrink-0">
+        <div :class="[
+          'flex items-center justify-center rounded-full font-semibold text-white',
+          compact ? 'w-10 h-10 text-sm' : 'w-12 h-12',
+          `bg-${avatarColor}-500`
+        ]">
+          {{ initials }}
+        </div>
+        <!-- Phase 6: Online status indicator using OnlineStatusBadge -->
+        <div v-if="contact.peerId || contact.identityId" class="absolute -bottom-1 -right-1">
+          <CommonOnlineStatusBadge :status="onlineStatus" size="xs" />
+        </div>
       </div>
 
       <!-- Info -->
@@ -123,11 +165,17 @@ const handleClick = () => {
           <h3 :class="['font-semibold truncate', compact ? 'text-sm' : '']">
             {{ contact.name }}
           </h3>
+          <UBadge v-if="isMuSig2Ready" color="secondary" variant="subtle" size="xs" title="MuSig2 capable">
+            <UIcon name="i-lucide-shield" class="w-3 h-3 mr-0.5" />
+            <span class="hidden sm:inline">MuSig2</span>
+          </UBadge>
+          <UBadge v-if="sharedWallets.length" color="info" variant="subtle" size="xs"
+            :title="`${sharedWallets.length} shared wallet(s)`">
+            <UIcon name="i-lucide-users" class="w-3 h-3 mr-0.5" />
+            {{ sharedWallets.length }}
+          </UBadge>
           <UBadge v-if="contact.serviceType" :color="avatarColor" variant="subtle" size="xs">
             {{ contact.serviceType }}
-          </UBadge>
-          <UBadge v-if="contact.peerId" color="success" variant="subtle" size="xs">
-            P2P
           </UBadge>
           <UBadge v-if="networkMismatch" :color="networkBadgeColor" variant="subtle" size="xs">
             {{ networkDisplayName }}
@@ -154,6 +202,46 @@ const handleClick = () => {
     <p v-if="!compact && contact.notes" class="text-sm text-muted mt-3 line-clamp-2">
       {{ contact.notes }}
     </p>
+
+    <!-- Activity Stats (only in full mode with activity) -->
+    <div v-if="!compact && !selectable && (stats.transactions > 0 || sharedWallets.length > 0)"
+      class="mt-3 pt-3 border-t border-default">
+      <!-- Transaction Stats -->
+      <div v-if="stats.transactions > 0" class="grid grid-cols-3 gap-2 text-center text-sm mb-3">
+        <div>
+          <p class="font-semibold">{{ stats.transactions }}</p>
+          <p class="text-xs text-muted">Transactions</p>
+        </div>
+        <div>
+          <p class="font-semibold text-error">{{ formatXPI(stats.sent.toString(), { showUnit: false }) }}</p>
+          <p class="text-xs text-muted">Sent</p>
+        </div>
+        <div>
+          <p class="font-semibold text-success">{{ formatXPI(stats.received.toString(), { showUnit: false }) }}</p>
+          <p class="text-xs text-muted">Received</p>
+        </div>
+      </div>
+
+      <!-- Shared Wallets -->
+      <div v-if="sharedWallets.length" class="space-y-1">
+        <p class="text-xs text-muted">Shared Wallets</p>
+        <div class="flex flex-wrap gap-1">
+          <UBadge v-for="wallet in sharedWallets.slice(0, 3)" :key="wallet.id" color="neutral" variant="subtle"
+            size="xs" class="cursor-pointer hover:bg-muted"
+            @click.stop="navigateTo(`/people/shared-wallets/${wallet.id}`)">
+            {{ wallet.name }}
+          </UBadge>
+          <UBadge v-if="sharedWallets.length > 3" color="neutral" variant="subtle" size="xs">
+            +{{ sharedWallets.length - 3 }} more
+          </UBadge>
+        </div>
+      </div>
+
+      <!-- Last Activity -->
+      <p v-if="lastActivity" class="text-xs text-muted mt-2">
+        Last transaction: {{ lastActivity }}
+      </p>
+    </div>
 
     <!-- Action buttons footer (visible on mobile, hover on desktop) -->
     <div v-if="!selectable && !compact"

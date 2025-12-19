@@ -7,8 +7,20 @@ const props = defineProps<{
   tipHeight?: number
 }>()
 
-const { truncateTxid, formatTimestamp } = useExplorerFormat()
-const { formatXPI } = useLotusUnits()
+const { formatXPI } = useAmount()
+const { formatDateTime } = useTime()
+
+// Utility functions
+function truncateTxid(txid: string): string {
+  if (!txid || txid.length < 16) return txid
+  return `${txid.slice(0, 8)}...${txid.slice(-8)}`
+}
+
+function formatTimestamp(timestamp: number | string | undefined): string {
+  if (!timestamp) return 'Pending'
+  const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp
+  return formatDateTime(ts)
+}
 </script>
 
 <template>
@@ -18,8 +30,9 @@ const { formatXPI } = useLotusUnits()
     </div>
 
     <table v-else class="w-full text-sm">
+      <!-- Phase 6: Semantic color classes -->
       <thead>
-        <tr class="border-b border-gray-200 dark:border-gray-800">
+        <tr class="border-b border-default">
           <th class="text-left py-3 px-4 font-medium text-muted">Transaction ID</th>
           <th class="text-left py-3 px-4 font-medium text-muted">Time</th>
           <th class="text-center py-3 px-4 font-medium text-muted">Inputs</th>
@@ -28,8 +41,7 @@ const { formatXPI } = useLotusUnits()
         </tr>
       </thead>
       <tbody>
-        <tr v-for="tx in txs" :key="tx.txid"
-          class="border-b border-gray-100 dark:border-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-800/30">
+        <tr v-for="tx in txs" :key="tx.txid" class="border-b border-default/50 hover:bg-muted/30">
           <td class="py-3 px-4">
             <NuxtLink :to="`/explorer/tx/${tx.txid}`" class="font-mono text-primary hover:underline">
               {{ truncateTxid(tx.txid) }}

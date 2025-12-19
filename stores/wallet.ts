@@ -9,28 +9,65 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
 import { useNetworkStore, type NetworkType } from './network'
+import { useNotificationStore } from './notifications'
 import {
   getBitcore,
   ensureBitcore,
   isBitcoreLoaded,
 } from '~/plugins/bitcore.client'
+import { getRawItem, setRawItem, STORAGE_KEYS } from '~/utils/storage'
+import {
+  initializeChronik,
+  connectWebSocket,
+  disconnectWebSocket,
+  fetchBlockchainInfo,
+  fetchUtxos,
+  fetchTransactionHistory as serviceFetchHistory,
+  fetchTransaction,
+  fetchBlock,
+  broadcastTransaction,
+  isChronikInitialized,
+  subscribeToMultipleScripts,
+  type ChronikScriptType,
+  type ChronikSubscription,
+} from '~/plugins/02.chronik.client'
 import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
-import type {
-  ChronikClient as ChronikClientType,
-  ScriptEndpoint,
-} from 'chronik-client'
+import { USE_CRYPTO_WORKER } from '~/utils/constants'
 
-// Chronik client (loaded dynamically)
-let ChronikClient: typeof ChronikClientType
-let chronikLoaded = false
+// =========================================================================
+// Transaction Building API Types (Phase 1: Encapsulation Fix)
+// =========================================================================
 
-const loadChronik = async () => {
-  if (!chronikLoaded) {
-    const chronikModule = await import('chronik-client')
-    ChronikClient = chronikModule.ChronikClient
-    chronikLoaded = true
-  }
-  return ChronikClient
+/**
+ * Context needed to build a transaction without exposing internal private properties.
+ * This is the public API for transaction building.
+ */
+export interface WalletTransactionBuildContext {
+  script: InstanceType<typeof BitcoreTypes.Script>
+  addressType: 'p2pkh' | 'p2tr'
+  changeAddress: string
+  internalPubKey?: InstanceType<typeof BitcoreTypes.PublicKey>
+  merkleRoot?: Buffer
+}
+import {
+  AccountPurpose,
+  DEFAULT_ACCOUNTS,
+  buildDerivationPath,
+  type AccountState,
+  type DerivedAddress,
+} from '~/types/accounts'
+
+// Duplicate notification prevention
+const recentNotifications = new Set<string>()
+const NOTIFICATION_DEDUP_WINDOW = 60_000 // 1 minute
+
+function shouldNotify(txid: string): boolean {
+  if (recentNotifications.has(txid)) return false
+
+  recentNotifications.add(txid)
+  setTimeout(() => recentNotifications.delete(txid), NOTIFICATION_DEDUP_WINDOW)
+
+  return true
 }
 
 /**
@@ -63,7 +100,8 @@ const getBuildPayToTaproot = () => getBitcoreSDK().buildPayToTaproot
 const BIP44_PURPOSE = 44
 const BIP44_COINTYPE = 10605
 const LOTUS_DECIMALS = 6
-const MAX_TX_SIZE = 100_000
+const MAX_TX_SIZE = 100_000 // bytes
+const MAX_TX_OUTPUTS = 100
 const DUST_THRESHOLD = 546n
 
 // Types
@@ -91,78 +129,30 @@ export interface TransactionHistoryItem {
 // Note: ParsedTransaction type is available from ~/composables/useExplorerApi
 
 /**
- * Recipient for draft transaction
- */
-export interface DraftRecipient {
-  /** Unique ID for UI tracking */
-  id: string
-  /** Recipient address (Lotus format) */
-  address: string
-  /** Amount in satoshis */
-  amountSats: bigint
-  /** Whether this is a "send max" recipient (gets remaining balance after fees) */
-  sendMax: boolean
-}
-
-/**
- * OP_RETURN data configuration
- */
-export interface DraftOpReturn {
-  /** Raw data to include */
-  data: string
-  /** Encoding of the data */
-  encoding: 'utf8' | 'hex'
-}
-
-/**
- * Locktime configuration
- */
-export interface DraftLocktime {
-  /** Type of locktime */
-  type: 'block' | 'time'
-  /** Value (block height or unix timestamp) */
-  value: number
-}
-
-/**
- * Draft transaction state - managed by wallet store
- * This represents the transaction being built in the UI
- */
-export interface DraftTransactionState {
-  /** Whether the draft transaction has been initialized */
-  initialized: boolean
-  /** Recipients list */
-  recipients: DraftRecipient[]
-  /** Fee rate in sat/byte */
-  feeRate: number
-  /** Selected UTXOs for coin control (empty = auto-select all) */
-  selectedUtxos: string[]
-  /** OP_RETURN data (optional) */
-  opReturn: DraftOpReturn | null
-  /** Locktime (optional) */
-  locktime: DraftLocktime | null
-  /** Computed: estimated fee in satoshis */
-  estimatedFee: number
-  /** Computed: total input amount in satoshis (available balance) */
-  inputAmount: bigint
-  /** Computed: total output amount (excluding change) in satoshis */
-  outputAmount: bigint
-  /** Computed: change amount in satoshis */
-  changeAmount: bigint
-  /** Computed: max sendable for a single recipient (no change output) */
-  maxSendable: bigint
-  /** Computed: whether the transaction is valid and ready to send */
-  isValid: boolean
-  /** Computed: validation error message if not valid */
-  validationError: string | null
-}
-
-/**
  * Address type for wallet generation
  * - 'p2pkh': Pay-to-Public-Key-Hash (legacy, smaller addresses)
  * - 'p2tr': Pay-to-Taproot (modern, enhanced privacy and script capabilities)
  */
 export type AddressType = 'p2pkh' | 'p2tr'
+
+/**
+ * Runtime key data for an account (not persisted)
+ */
+export interface RuntimeKeyData {
+  privateKey: any
+  publicKey: any
+  script: any
+  internalPubKey?: any
+  merkleRoot?: Buffer
+}
+
+/**
+ * Per-account UTXO and balance state
+ */
+export interface AccountUtxoState {
+  utxos: Map<string, UtxoData>
+  balance: WalletBalance
+}
 
 export interface WalletState {
   initialized: boolean
@@ -171,12 +161,8 @@ export interface WalletState {
   loading: boolean
   loadingMessage: string
   seedPhrase: string
-  address: string
   /** The type of address currently in use */
   addressType: AddressType
-  scriptPayload: string
-  balance: WalletBalance
-  utxos: Map<string, UtxoData>
   tipHeight: number
   tipHash: string
   connected: boolean
@@ -184,28 +170,23 @@ export interface WalletState {
   /** Parsed transactions from Explorer API (richer data) */
   parsedTransactions: any[] // ParsedTransaction[] - using any to avoid circular import
   historyLoading: boolean
-  /** Draft transaction state for the send UI */
-  draftTx: DraftTransactionState
-}
 
-/**
- * Create initial draft transaction state
- */
-const createInitialDraftTx = (): DraftTransactionState => ({
-  initialized: false,
-  recipients: [],
-  feeRate: 1,
-  selectedUtxos: [],
-  opReturn: null,
-  locktime: null,
-  estimatedFee: 0,
-  inputAmount: 0n,
-  outputAmount: 0n,
-  changeAmount: 0n,
-  maxSendable: 0n,
-  isValid: false,
-  validationError: null,
-})
+  // Multi-account state
+  /** Account states keyed by AccountPurpose */
+  accounts: Map<AccountPurpose, AccountState>
+  /** Per-account UTXO and balance state */
+  accountUtxos: Map<AccountPurpose, AccountUtxoState>
+
+  // Legacy compatibility (derived from PRIMARY account)
+  /** @deprecated Use getAddress(AccountPurpose.PRIMARY) instead */
+  address: string
+  /** @deprecated Use accounts.get(PRIMARY).primaryAddress.scriptPayload instead */
+  scriptPayload: string
+  /** @deprecated Use getAccountBalance(AccountPurpose.PRIMARY) instead */
+  balance: WalletBalance
+  /** @deprecated Use accountUtxos.get(PRIMARY).utxos instead */
+  utxos: Map<string, UtxoData>
+}
 
 // Utility functions
 export const toLotusUnits = (sats: string | number) => Number(sats) / 1_000_000
@@ -227,18 +208,23 @@ export const useWalletStore = defineStore('wallet', {
     loading: false,
     loadingMessage: '',
     seedPhrase: '',
-    address: '',
     addressType: 'p2tr', // Default to Taproot addresses
-    scriptPayload: '',
-    balance: { total: '0', spendable: '0' },
-    utxos: new Map(),
     tipHeight: 0,
     tipHash: '',
     connected: false,
     transactionHistory: [],
     parsedTransactions: [],
     historyLoading: false,
-    draftTx: createInitialDraftTx(),
+
+    // Multi-account state
+    accounts: new Map(),
+    accountUtxos: new Map(),
+
+    // Legacy compatibility fields (derived from PRIMARY account)
+    address: '',
+    scriptPayload: '',
+    balance: { total: '0', spendable: '0' },
+    utxos: new Map(),
   }),
 
   getters: {
@@ -274,14 +260,36 @@ export const useWalletStore = defineStore('wallet', {
         return result
       }
     },
+
+    /**
+     * Get transactions involving a specific contact address
+     * Returns transactions where the contact's address appears in inputs or outputs
+     */
+    getTransactionsWithContact: state => {
+      return (contactAddress: string): TransactionHistoryItem[] => {
+        if (!contactAddress) return []
+        const lowerAddress = contactAddress.toLowerCase()
+        return state.transactionHistory.filter(
+          tx => tx.address.toLowerCase() === lowerAddress,
+        )
+      }
+    },
+
+    /**
+     * Get recent transactions (last N)
+     */
+    recentTransactions: state => {
+      return state.transactionHistory.slice(0, 10)
+    },
   },
 
   actions: {
     // Private state for runtime objects (not serializable)
-    _chronik: null as any,
-    _ws: null as any,
-    _scriptEndpoint: null as ScriptEndpoint | null,
     _hdPrivkey: null as any,
+    /** Runtime key data per account (not persisted) */
+    _accountKeys: new Map() as Map<AccountPurpose, RuntimeKeyData>,
+
+    // Legacy compatibility (derived from PRIMARY account)
     _signingKey: null as any,
     _script: null as any,
     /** Internal public key for Taproot key-path spending (before tweaking)
@@ -308,13 +316,10 @@ export const useWalletStore = defineStore('wallet', {
         // Ensure Bitcore SDK is loaded (should already be loaded by plugin)
         await ensureBitcore()
 
-        // Load Chronik client
-        await loadChronik()
-
         this.loadingMessage = 'Initializing wallet...'
 
-        // Check for existing wallet in localStorage
-        const savedState = localStorage.getItem('lotus-wallet-state')
+        // Check for existing wallet in storage
+        const savedState = getRawItem(STORAGE_KEYS.WALLET_STATE)
 
         if (savedState) {
           await this.loadWallet(JSON.parse(savedState))
@@ -352,9 +357,19 @@ export const useWalletStore = defineStore('wallet', {
     async createNewWallet() {
       this.loadingMessage = 'Generating new wallet...'
 
-      const Mnemonic = getMnemonic()
-      const mnemonic = new Mnemonic()
-      await this.buildWalletFromMnemonic(mnemonic.toString())
+      let mnemonic: string
+
+      if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
+        // Use crypto worker for mnemonic generation (non-blocking)
+        const { generateMnemonic } = useCryptoWorker()
+        mnemonic = await generateMnemonic()
+      } else {
+        // Fallback to main thread
+        const Mnemonic = getMnemonic()
+        mnemonic = new Mnemonic().toString()
+      }
+
+      await this.buildWalletFromMnemonic(mnemonic)
       await this.saveWalletState()
     },
 
@@ -362,8 +377,17 @@ export const useWalletStore = defineStore('wallet', {
      * Restore wallet from seed phrase
      */
     async restoreWallet(seedPhrase: string) {
-      const Mnemonic = getMnemonic()
-      if (!Mnemonic.isValid(seedPhrase)) {
+      // Validate mnemonic
+      let isValid: boolean
+      if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
+        const { validateMnemonic } = useCryptoWorker()
+        isValid = await validateMnemonic(seedPhrase)
+      } else {
+        const Mnemonic = getMnemonic()
+        isValid = Mnemonic.isValid(seedPhrase)
+      }
+
+      if (!isValid) {
         throw new Error('Invalid seed phrase')
       }
 
@@ -379,17 +403,8 @@ export const useWalletStore = defineStore('wallet', {
         await this.buildWalletFromMnemonic(seedPhrase)
         await this.saveWalletState()
 
-        // Reconnect Chronik with new address
-        if (this._ws) {
-          // Unsubscribe from old address if websocket exists
-          try {
-            this._ws.close()
-          } catch {
-            // Ignore close errors
-          }
-        }
-
-        // Re-initialize Chronik with new address
+        // Disconnect and reconnect Chronik with new address
+        disconnectWebSocket()
         await this.initializeChronik()
       } finally {
         this.loading = false
@@ -424,16 +439,8 @@ export const useWalletStore = defineStore('wallet', {
         await this.buildWalletFromMnemonic(this.seedPhrase)
         await this.saveWalletState()
 
-        // Reconnect Chronik with new address
-        if (this._ws) {
-          try {
-            this._ws.close()
-          } catch {
-            // Ignore close errors
-          }
-        }
-
-        // Re-initialize Chronik with new address
+        // Disconnect and reconnect Chronik with new address
+        disconnectWebSocket()
         await this.initializeChronik()
       } finally {
         this.loading = false
@@ -445,57 +452,203 @@ export const useWalletStore = defineStore('wallet', {
      * Build wallet state from mnemonic
      * Uses the current network from the network store for address encoding
      * Supports both P2PKH and P2TR (Taproot) address types
+     * Derives keys for all enabled accounts (PRIMARY, MUSIG2, etc.)
+     *
+     * When USE_CRYPTO_WORKER is enabled, key derivation is offloaded to a
+     * Web Worker to prevent UI blocking during the CPU-intensive operation.
      */
     async buildWalletFromMnemonic(seedPhrase: string) {
       const networkStore = useNetworkStore()
-      const Networks = getNetworks()
-      const Mnemonic = getMnemonic()
-      const HDPrivateKey = getHDPrivateKey()
-      const Address = getAddress()
-      const Script = getScript()
-      const network = Networks.get(networkStore.currentNetwork)
 
-      const mnemonic = new Mnemonic(seedPhrase)
-      const hdPrivkey = HDPrivateKey.fromSeed(mnemonic.toSeed())
-      const signingKey = hdPrivkey
-        .deriveChild(BIP44_PURPOSE, true)
-        .deriveChild(BIP44_COINTYPE, true)
-        .deriveChild(0, true)
-        .deriveChild(0)
-        .deriveChild(0).privateKey
+      // Initialize multi-account state
+      this.accounts = new Map()
+      this.accountUtxos = new Map()
+      this._accountKeys = new Map()
 
-      let address: any
-      let script: any
+      // Derive keys for each enabled account
+      for (const config of DEFAULT_ACCOUNTS) {
+        if (!config.enabled) continue
 
-      if (this.addressType === 'p2tr') {
-        // Taproot (P2TR) address generation
-        // For key-path-only Taproot, use empty merkle root (all zeros)
-        const internalPubKey = signingKey.publicKey
-        const merkleRoot = Buffer.alloc(32)
-        const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
-        address = Address.fromTaprootCommitment(commitment, network)
-        script = getBuildPayToTaproot()(commitment)
-        // For Taproot, store the internal public key (before tweaking)
-        // This is needed for proper key-path spending
-        this._internalPubKey = markRaw(signingKey.publicKey)
-        this._merkleRoot = merkleRoot
-      } else {
-        // Legacy P2PKH address
-        address = signingKey.toAddress(network)
-        script = Script.fromAddress(address)
+        const accountState = await this._deriveAccountKeys(
+          seedPhrase,
+          config.purpose,
+          networkStore.currentNetwork,
+        )
+
+        this.accounts.set(config.purpose, accountState)
+        this.accountUtxos.set(config.purpose, {
+          utxos: new Map(),
+          balance: { total: '0', spendable: '0' },
+        })
       }
 
-      // Store runtime objects (markRaw prevents Vue reactivity which breaks elliptic curve operations)
-      this._hdPrivkey = markRaw(hdPrivkey)
-      this._signingKey = markRaw(signingKey)
-      this._script = markRaw(script)
+      // Update legacy compatibility fields from PRIMARY account
+      const primaryAccount = this.accounts.get(AccountPurpose.PRIMARY)
+      const primaryKeys = this._accountKeys.get(AccountPurpose.PRIMARY)
 
-      // Update state - encode address for current network
+      if (primaryAccount?.primaryAddress && primaryKeys) {
+        this.address = primaryAccount.primaryAddress.address
+        this.scriptPayload = primaryAccount.primaryAddress.scriptPayload
+
+        // Legacy runtime objects
+        this._signingKey = primaryKeys.privateKey
+        this._script = primaryKeys.script
+        this._internalPubKey = primaryKeys.internalPubKey
+        this._merkleRoot = primaryKeys.merkleRoot
+      }
+
       this.seedPhrase = seedPhrase
-      this.address = address.toXAddress(network)
-      this.scriptPayload = script.getData().toString('hex')
       this.utxos = new Map()
       this.balance = { total: '0', spendable: '0' }
+    },
+
+    /**
+     * Derive keys for a specific account
+     * @internal
+     */
+    async _deriveAccountKeys(
+      seedPhrase: string,
+      accountPurpose: AccountPurpose,
+      networkName: string,
+    ): Promise<AccountState> {
+      const accountIndex = accountPurpose
+      const addressIndex = 0
+      const isChange = false
+      const derivationPath = buildDerivationPath(
+        accountIndex,
+        isChange,
+        addressIndex,
+      )
+
+      if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
+        // Use crypto worker for key derivation (non-blocking)
+        const { deriveKeys } = useCryptoWorker()
+        const result = await deriveKeys(
+          seedPhrase,
+          this.addressType,
+          networkName,
+          accountIndex,
+          addressIndex,
+          isChange,
+        )
+
+        // Reconstruct runtime objects from worker results
+        const PrivateKey = getPrivateKey()
+        const Script = getScript()
+        const Address = getAddress()
+        const Networks = getNetworks()
+        const network = Networks.get(networkName)
+
+        const signingKey = new PrivateKey(result.privateKeyHex)
+        let script: any
+        let internalPubKey: any
+        let merkleRoot: Buffer | undefined
+
+        if (this.addressType === 'p2tr' && result.internalPubKeyHex) {
+          const PublicKey = getBitcoreSDK().PublicKey
+          internalPubKey = new PublicKey(result.internalPubKeyHex)
+          merkleRoot = result.merkleRootHex
+            ? Buffer.from(result.merkleRootHex, 'hex')
+            : Buffer.alloc(32)
+          const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
+          script = getBuildPayToTaproot()(commitment)
+        } else {
+          const address = Address.fromString(result.address)
+          script = Script.fromAddress(address)
+        }
+
+        // Store runtime key data for this account
+        this._accountKeys.set(accountPurpose, {
+          privateKey: markRaw(signingKey),
+          publicKey: markRaw(signingKey.publicKey),
+          script: markRaw(script),
+          internalPubKey: internalPubKey ? markRaw(internalPubKey) : undefined,
+          merkleRoot,
+        })
+
+        const derivedAddress: DerivedAddress = {
+          index: addressIndex,
+          isChange,
+          path: derivationPath,
+          address: result.address,
+          scriptPayload: result.scriptPayload,
+          publicKeyHex: result.publicKeyHex,
+        }
+
+        return {
+          purpose: accountPurpose,
+          enabled: true,
+          primaryAddress: derivedAddress,
+          addresses: [derivedAddress],
+          lastUsedIndex: 0,
+        }
+      } else {
+        // Fallback to main thread derivation
+        const Networks = getNetworks()
+        const Mnemonic = getMnemonic()
+        const HDPrivateKey = getHDPrivateKey()
+        const Address = getAddress()
+        const Script = getScript()
+        const network = Networks.get(networkName)
+
+        const mnemonic = new Mnemonic(seedPhrase)
+        const hdPrivkey = HDPrivateKey.fromSeed(mnemonic.toSeed())
+        const change = isChange ? 1 : 0
+        const signingKey = hdPrivkey
+          .deriveChild(BIP44_PURPOSE, true)
+          .deriveChild(BIP44_COINTYPE, true)
+          .deriveChild(accountIndex, true)
+          .deriveChild(change)
+          .deriveChild(addressIndex).privateKey
+
+        let address: any
+        let script: any
+        let internalPubKey: any
+        let merkleRoot: Buffer | undefined
+
+        if (this.addressType === 'p2tr') {
+          internalPubKey = signingKey.publicKey
+          merkleRoot = Buffer.alloc(32)
+          const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
+          address = Address.fromTaprootCommitment(commitment, network)
+          script = getBuildPayToTaproot()(commitment)
+        } else {
+          address = signingKey.toAddress(network)
+          script = Script.fromAddress(address)
+        }
+
+        // Store HD private key for potential future derivations
+        this._hdPrivkey = markRaw(hdPrivkey)
+
+        // Store runtime key data for this account
+        this._accountKeys.set(accountPurpose, {
+          privateKey: markRaw(signingKey),
+          publicKey: markRaw(signingKey.publicKey),
+          script: markRaw(script),
+          internalPubKey: internalPubKey ? markRaw(internalPubKey) : undefined,
+          merkleRoot,
+        })
+
+        const addressStr = address.toXAddress(network)
+        const scriptPayload = script.getData().toString('hex')
+
+        const derivedAddress: DerivedAddress = {
+          index: addressIndex,
+          isChange,
+          path: derivationPath,
+          address: addressStr,
+          scriptPayload,
+          publicKeyHex: signingKey.publicKey.toString(),
+        }
+
+        return {
+          purpose: accountPurpose,
+          enabled: true,
+          primaryAddress: derivedAddress,
+          addresses: [derivedAddress],
+          lastUsedIndex: 0,
+        }
+      }
     },
 
     /**
@@ -529,7 +682,7 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
-     * Save wallet state to localStorage
+     * Save wallet state to storage service
      */
     async saveWalletState() {
       const state = {
@@ -542,37 +695,51 @@ export const useWalletStore = defineStore('wallet', {
         tipHeight: this.tipHeight,
         tipHash: this.tipHash,
       }
-      localStorage.setItem('lotus-wallet-state', JSON.stringify(state))
+      setRawItem(STORAGE_KEYS.WALLET_STATE, JSON.stringify(state))
     },
 
     /**
      * Get the Chronik script type for the current address type
      * Chronik uses 'p2tr-commitment' for key-path-only Taproot (no state)
      */
-    getChronikScriptType(): 'p2pkh' | 'p2tr-commitment' {
+    getChronikScriptType(): ChronikScriptType {
       return this.addressType === 'p2tr' ? 'p2tr-commitment' : 'p2pkh'
     },
 
     /**
      * Initialize Chronik client and WebSocket
-     * Uses the Chronik URL from the network store
+     * Uses the Chronik service for all blockchain interactions
      */
     async initializeChronik() {
       this.loadingMessage = 'Connecting to network...'
 
       const networkStore = useNetworkStore()
-      const chronikUrl = networkStore.chronikUrl
       const scriptType = this.getChronikScriptType()
 
-      this._chronik = markRaw(new ChronikClient(chronikUrl))
-      this._scriptEndpoint = markRaw(
-        this._chronik.script(scriptType, this.scriptPayload),
-      )
+      // Initialize Chronik service with callbacks for real-time events
+      await initializeChronik({
+        network: networkStore.config,
+        scriptPayload: this.scriptPayload,
+        scriptType,
+        onTransaction: txid => this.handleAddedToMempool(txid),
+        onConnectionChange: connected => {
+          this.connected = connected
+          if (connected) {
+            // Refresh UTXOs on reconnect
+            this.refreshUtxos().catch(console.error)
+          }
+        },
+        onBlock: (_height, hash) => this.handleBlockConnected(hash),
+        onConfirmed: txid => this.handleConfirmed(txid),
+        onRemovedFromMempool: txid => this.handleRemovedFromMempool(txid),
+      })
 
       // Fetch blockchain info
-      const blockchainInfo = await this._chronik.blockchainInfo()
-      this.tipHeight = blockchainInfo.tipHeight
-      this.tipHash = blockchainInfo.tipHash
+      const blockchainInfo = await fetchBlockchainInfo()
+      if (blockchainInfo) {
+        this.tipHeight = blockchainInfo.tipHeight
+        this.tipHash = blockchainInfo.tipHash
+      }
 
       // Reset and fetch UTXOs
       await this.refreshUtxos()
@@ -580,62 +747,180 @@ export const useWalletStore = defineStore('wallet', {
       // Fetch transaction history
       await this.fetchTransactionHistory()
 
-      // Setup WebSocket
-      this._ws = this._chronik.ws({
-        autoReconnect: true,
-        onConnect: () => {
-          console.log('Chronik WebSocket connected')
-          this.connected = true
-        },
-        onMessage: (msg: any) => this.handleWsMessage(msg),
-        onError: (e: any) => {
-          console.error('Chronik WebSocket error:', e)
-          this.connected = false
-        },
-        onEnd: () => {
-          console.log('Chronik WebSocket disconnected')
-          this.connected = false
-        },
-        onReconnect: async () => {
-          console.log('Chronik WebSocket reconnected')
-          this.connected = true
-          await this.refreshUtxos()
-        },
-      })
+      // Connect WebSocket for real-time updates
+      await connectWebSocket()
 
-      await this._ws.waitForOpen()
-      this._ws.subscribe(scriptType, this.scriptPayload)
+      // Subscribe to all account addresses for multi-account support
+      await this.subscribeToAllAccounts()
+
+      // Initialize background monitoring via service worker
+      this.initializeBackgroundMonitoring()
 
       // Handle mobile browser tab visibility changes
       // Mobile browsers aggressively suspend background tabs, causing stale state
       if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible' && this._scriptEndpoint) {
-            // Refresh UTXOs when tab becomes visible to ensure fresh state
-            this.refreshUtxos().catch(console.error)
+          if (document.visibilityState === 'visible') {
+            if (isChronikInitialized()) {
+              // Refresh UTXOs when tab becomes visible to ensure fresh state
+              this.refreshUtxos().catch(console.error)
+            }
+            // Sync with service worker state
+            this.syncWithServiceWorker()
+          } else {
+            // Tab going to background - notify SW for adaptive polling
+            this.notifyTabBackgrounded()
           }
         })
       }
     },
 
     /**
-     * Handle WebSocket messages
+     * Subscribe to all account addresses for real-time updates
+     * Used for multi-account support (PRIMARY, MUSIG2, etc.)
      */
-    async handleWsMessage(msg: any) {
-      switch (msg.type) {
-        case 'AddedToMempool':
-          await this.handleAddedToMempool(msg.txid)
-          break
-        case 'RemovedFromMempool':
-          await this.handleRemovedFromMempool(msg.txid)
-          break
-        case 'Confirmed':
-          await this.handleConfirmed(msg.txid)
-          break
-        case 'BlockConnected':
-          await this.handleBlockConnected(msg.blockHash)
-          break
+    async subscribeToAllAccounts(): Promise<void> {
+      const scriptType = this.getChronikScriptType()
+      const subscriptions: ChronikSubscription[] = []
+
+      for (const [purpose, account] of this.accounts) {
+        if (account.primaryAddress) {
+          subscriptions.push({
+            scriptType,
+            scriptPayload: account.primaryAddress.scriptPayload,
+            accountId: AccountPurpose[purpose],
+          })
+        }
       }
+
+      if (subscriptions.length > 0) {
+        await subscribeToMultipleScripts(subscriptions)
+        console.log(
+          `[Wallet] Subscribed to ${subscriptions.length} account addresses`,
+        )
+      }
+    },
+
+    /**
+     * Initialize background monitoring via service worker
+     * Starts SW polling as fallback when WebSocket is suspended
+     */
+    initializeBackgroundMonitoring() {
+      if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return
+      }
+
+      const networkStore = useNetworkStore()
+
+      navigator.serviceWorker.ready.then(registration => {
+        if (!registration.active) return
+
+        // Initialize UTXO cache in SW
+        const utxoIds = [...this.utxos.keys()]
+        registration.active.postMessage({
+          type: 'INIT_UTXO_CACHE',
+          payload: {
+            scriptPayload: this.scriptPayload,
+            utxoIds,
+          },
+        })
+
+        // Start monitoring
+        registration.active.postMessage({
+          type: 'START_MONITORING',
+          payload: {
+            chronikUrl: networkStore.config.chronikUrl,
+            pollingInterval: 60_000, // 1 minute default
+            addresses: [this.address],
+            scriptType: this.getChronikScriptType(),
+            scriptPayload: this.scriptPayload,
+          },
+        })
+      })
+    },
+
+    /**
+     * Sync state with service worker when tab becomes visible
+     */
+    syncWithServiceWorker() {
+      if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return
+      }
+
+      // Refresh balance from SW-detected changes will happen via message handler
+      // Just ensure SW has latest UTXO state
+      navigator.serviceWorker.ready.then(registration => {
+        if (!registration.active) return
+
+        const utxoIds = [...this.utxos.keys()]
+        registration.active.postMessage({
+          type: 'INIT_UTXO_CACHE',
+          payload: {
+            scriptPayload: this.scriptPayload,
+            utxoIds,
+          },
+        })
+      })
+    },
+
+    /**
+     * Notify service worker that tab is going to background
+     * Triggers adaptive polling increase
+     */
+    notifyTabBackgrounded() {
+      if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return
+      }
+
+      navigator.serviceWorker.ready.then(registration => {
+        if (!registration.active) return
+
+        registration.active.postMessage({
+          type: 'TAB_BACKGROUNDED',
+        })
+      })
+    },
+
+    /**
+     * Handle transaction detected by service worker background polling
+     * Called when SW detects a new transaction while tab was backgrounded
+     */
+    async handleBackgroundTransaction(payload: {
+      txid: string
+      amount: string
+      isIncoming: boolean
+    }) {
+      // Refresh UTXOs to get the latest state
+      await this.refreshUtxos()
+
+      // Notification is triggered by the SW, but we can also trigger here
+      // if the SW didn't (e.g., tab became visible before SW notification)
+      if (shouldNotify(payload.txid)) {
+        const notificationStore = useNotificationStore()
+        notificationStore.addTransactionNotification(
+          payload.txid,
+          toXPI(payload.amount),
+          !payload.isIncoming,
+        )
+      }
+    },
+
+    /**
+     * Notify SW of pending transaction (increases polling frequency)
+     */
+    notifyPendingTransaction(hasPending: boolean) {
+      if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+        return
+      }
+
+      navigator.serviceWorker.ready.then(registration => {
+        if (!registration.active) return
+
+        registration.active.postMessage({
+          type: 'SET_PENDING_TRANSACTIONS',
+          payload: { hasPending },
+        })
+      })
     },
 
     /**
@@ -643,17 +928,22 @@ export const useWalletStore = defineStore('wallet', {
      * Detects both new outputs (receives) and spent inputs (sends)
      */
     async handleAddedToMempool(txid: string) {
-      if (!this._chronik || !this._script) return
+      if (!isChronikInitialized() || !this._script) return
 
-      const tx = await this._chronik.tx(txid)
+      const tx = await fetchTransaction(txid)
+      if (!tx) return
+
       const scriptHex = this._script.toHex()
       let changed = false
+      let inputAmount = 0n
+      let outputAmount = 0n
 
       // Check for spent inputs (UTXOs being consumed by this transaction)
       for (const input of tx.inputs) {
         if (input.outputScript === scriptHex) {
           const outpoint = `${input.prevOut.txid}_${input.prevOut.outIdx}`
           if (this.utxos.has(outpoint)) {
+            inputAmount += BigInt(input.value || '0')
             this.utxos.delete(outpoint)
             changed = true
           }
@@ -666,6 +956,7 @@ export const useWalletStore = defineStore('wallet', {
         if (output.outputScript === scriptHex) {
           const outpoint = `${txid}_${i}`
           if (!this.utxos.has(outpoint)) {
+            outputAmount += BigInt(output.value || '0')
             this.utxos.set(outpoint, {
               value: output.value,
               height: -1,
@@ -679,6 +970,21 @@ export const useWalletStore = defineStore('wallet', {
       if (changed) {
         this.recalculateBalance()
         await this.saveWalletState()
+
+        // Trigger notification for this transaction
+        if (shouldNotify(txid)) {
+          const notificationStore = useNotificationStore()
+          const isSend = inputAmount > outputAmount
+          const netAmount = isSend
+            ? (inputAmount - outputAmount).toString()
+            : (outputAmount - inputAmount).toString()
+
+          notificationStore.addTransactionNotification(
+            txid,
+            toXPI(netAmount),
+            isSend,
+          )
+        }
       }
     },
 
@@ -703,9 +1009,11 @@ export const useWalletStore = defineStore('wallet', {
      * Handle transaction confirmed
      */
     async handleConfirmed(txid: string) {
-      if (!this._chronik) return
+      if (!isChronikInitialized()) return
 
-      const tx = await this._chronik.tx(txid)
+      const tx = await fetchTransaction(txid)
+      if (!tx) return
+
       let changed = false
 
       for (const [outpoint, utxo] of this.utxos) {
@@ -725,9 +1033,9 @@ export const useWalletStore = defineStore('wallet', {
      * Handle new block connected
      */
     async handleBlockConnected(blockHash: string) {
-      if (!this._chronik) return
+      if (!isChronikInitialized()) return
 
-      const block = await this._chronik.block(blockHash)
+      const block = (await fetchBlock(blockHash)) as any
       this.tipHeight = block.blockInfo.height
       this.tipHash = blockHash
 
@@ -736,49 +1044,40 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
-     * Refresh UTXOs from Chronik
+     * Refresh UTXOs from Chronik service
      */
     async refreshUtxos() {
-      if (!this._scriptEndpoint) return
+      if (!isChronikInitialized()) return
 
       this.utxos.clear()
 
-      const result = await this._scriptEndpoint.utxos()
-      if (result.length > 0) {
-        const [{ utxos }] = result
-        for (const utxo of utxos) {
-          const outpoint = `${utxo.outpoint.txid}_${utxo.outpoint.outIdx}`
-          this.utxos.set(outpoint, {
-            value: utxo.value,
-            height: utxo.blockHeight,
-            isCoinbase: utxo.isCoinbase,
-          })
-        }
+      const utxos = await fetchUtxos()
+      for (const utxo of utxos) {
+        const outpoint = `${utxo.outpoint.txid}_${utxo.outpoint.outIdx}`
+        this.utxos.set(outpoint, {
+          value: utxo.value,
+          height: utxo.blockHeight,
+          isCoinbase: utxo.isCoinbase,
+        })
       }
 
       this.recalculateBalance()
       await this.saveWalletState()
-
-      // If draft transaction is initialized, recalculate to update inputAmount
-      // This fixes the race condition where send page loads before UTXOs
-      if (this.draftTx.initialized) {
-        this._recalculateDraftMetadata()
-      }
     },
 
     /**
-     * Fetch transaction history from Chronik
+     * Fetch transaction history from Chronik service
      */
     async fetchTransactionHistory(pageSize: number = 25, page: number = 0) {
-      if (!this._scriptEndpoint || !this._script) return
+      if (!isChronikInitialized() || !this._script) return
 
       this.historyLoading = true
       try {
-        const result = await this._scriptEndpoint.history(page, pageSize)
+        const { txs } = await serviceFetchHistory(page, pageSize)
         const scriptHex = this._script.toHex()
         const history: TransactionHistoryItem[] = []
 
-        for (const tx of result.txs) {
+        for (const tx of txs) {
           // Calculate net amount for this address
           let inputAmount = 0n
           let outputAmount = 0n
@@ -849,7 +1148,7 @@ export const useWalletStore = defineStore('wallet', {
         this.transactionHistory = history
 
         // Also fetch parsed transactions from Explorer API
-        await this.fetchParsedTransactions(result.txs.map((tx: any) => tx.txid))
+        await this.fetchParsedTransactions(txs.map((tx: any) => tx.txid))
       } finally {
         this.historyLoading = false
       }
@@ -919,650 +1218,6 @@ export const useWalletStore = defineStore('wallet', {
       }
     },
 
-    // =========================================================================
-    // Draft Transaction Management
-    // These methods manage draft transaction metadata. The actual Transaction
-    // object is built fresh at send time from _buildTransaction().
-    // =========================================================================
-
-    /**
-     * Initialize the draft transaction with available balance
-     * This should be called when entering the send page to ensure
-     * balance is displayed before any recipients are added
-     */
-    initializeDraftTransaction() {
-      this.draftTx = createInitialDraftTx()
-
-      // Calculate available input amount from UTXOs
-      const availableUtxos = this._getAvailableUtxos()
-      const inputAmount = availableUtxos.reduce(
-        (sum, [_, utxo]) => sum + BigInt(utxo.value),
-        0n,
-      )
-      this.draftTx.inputAmount = inputAmount
-
-      // Add a default empty recipient
-      this.draftTx.recipients = [
-        {
-          id: crypto.randomUUID(),
-          address: '',
-          amountSats: 0n,
-          sendMax: false,
-        },
-      ]
-
-      this.draftTx.initialized = true
-
-      // Note: maxSendable will be calculated by _recalculateDraftMetadata
-      // when the user enables sendMax for a recipient
-    },
-
-    // =========================================================================
-    // Recipient Management
-    // These methods manage recipients directly in the store
-    // =========================================================================
-
-    /**
-     * Add a new empty recipient to the draft transaction
-     * @returns The ID of the new recipient
-     */
-    addDraftRecipient(): string {
-      const id = crypto.randomUUID()
-      this.draftTx.recipients.push({
-        id,
-        address: '',
-        amountSats: 0n,
-        sendMax: false,
-      })
-      this._recalculateDraftMetadata()
-      return id
-    },
-
-    /**
-     * Remove a recipient from the draft transaction
-     * @param id - The recipient ID to remove
-     */
-    removeDraftRecipient(id: string) {
-      const index = this.draftTx.recipients.findIndex(r => r.id === id)
-      if (index !== -1 && this.draftTx.recipients.length > 1) {
-        this.draftTx.recipients.splice(index, 1)
-        this._recalculateDraftMetadata()
-      }
-    },
-
-    /**
-     * Update a recipient's address
-     * @param id - The recipient ID
-     * @param address - The new address
-     */
-    updateDraftRecipientAddress(id: string, address: string) {
-      const recipient = this.draftTx.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.address = address
-        this._recalculateDraftMetadata()
-      }
-    },
-
-    /**
-     * Update a recipient's amount
-     * @param id - The recipient ID
-     * @param amountSats - The new amount in satoshis
-     */
-    updateDraftRecipientAmount(id: string, amountSats: bigint) {
-      const recipient = this.draftTx.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.amountSats = amountSats
-        recipient.sendMax = false // Clear sendMax when setting explicit amount
-        this._recalculateDraftMetadata()
-      }
-    },
-
-    /**
-     * Set a recipient to send max (remaining balance after fees)
-     * Only one recipient can have sendMax at a time
-     * @param id - The recipient ID
-     * @param sendMax - Whether to enable sendMax
-     */
-    setDraftRecipientSendMax(id: string, sendMax: boolean) {
-      // Clear sendMax from all other recipients
-      for (const recipient of this.draftTx.recipients) {
-        if (recipient.id !== id) {
-          recipient.sendMax = false
-        }
-      }
-      // Set sendMax for the target recipient
-      const recipient = this.draftTx.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.sendMax = sendMax
-        if (sendMax) {
-          recipient.amountSats = 0n // Clear explicit amount when sendMax is enabled
-        }
-        this._recalculateDraftMetadata()
-      }
-    },
-
-    /**
-     * Clear a recipient (reset address and amount)
-     * @param id - The recipient ID
-     */
-    clearDraftRecipient(id: string) {
-      const recipient = this.draftTx.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.address = ''
-        recipient.amountSats = 0n
-        recipient.sendMax = false
-        this._recalculateDraftMetadata()
-      }
-    },
-
-    /**
-     * Get a recipient by ID
-     * @param id - The recipient ID
-     */
-    getDraftRecipient(id: string): DraftRecipient | undefined {
-      return this.draftTx.recipients.find(r => r.id === id)
-    },
-
-    /**
-     * Get available UTXOs for the draft transaction
-     * Respects coin control selection if enabled
-     */
-    _getAvailableUtxos(): Array<[string, UtxoData]> {
-      const selectedUtxos = this.draftTx.selectedUtxos
-
-      if (selectedUtxos.length > 0) {
-        // Coin control: use only selected UTXOs
-        return selectedUtxos
-          .map(outpoint => {
-            const utxo = this.utxos.get(outpoint)
-            return utxo ? ([outpoint, utxo] as [string, UtxoData]) : null
-          })
-          .filter((entry): entry is [string, UtxoData] => entry !== null)
-      }
-
-      // Auto-select: all spendable UTXOs (excluding immature coinbase)
-      return Array.from(this.utxos.entries()).filter(([_, utxo]) => {
-        if (utxo.isCoinbase) {
-          const confirmations =
-            utxo.height > 0 ? this.tipHeight - utxo.height + 1 : 0
-          return confirmations >= 100
-        }
-        return true
-      })
-    },
-
-    /**
-     * Parse OP_RETURN data from draft state.
-     * Returns null if no OP_RETURN or if data is invalid.
-     * Sets validation error on draftTx if invalid.
-     */
-    _parseOpReturnData(): Buffer | null {
-      if (!this.draftTx.opReturn?.data) return null
-
-      if (this.draftTx.opReturn.encoding === 'hex') {
-        if (!/^[0-9a-fA-F]*$/.test(this.draftTx.opReturn.data)) {
-          this.draftTx.isValid = false
-          this.draftTx.validationError = 'Invalid hex data for OP_RETURN'
-          return null
-        }
-        if (this.draftTx.opReturn.data.length % 2 !== 0) {
-          this.draftTx.isValid = false
-          this.draftTx.validationError = 'Hex data must have even length'
-          return null
-        }
-        const buffer = Buffer.from(this.draftTx.opReturn.data, 'hex')
-        if (buffer.length > 220) {
-          this.draftTx.isValid = false
-          this.draftTx.validationError = 'OP_RETURN data exceeds 220 bytes'
-          return null
-        }
-        return buffer
-      }
-
-      const buffer = Buffer.from(this.draftTx.opReturn.data, 'utf8')
-      if (buffer.length > 220) {
-        this.draftTx.isValid = false
-        this.draftTx.validationError = 'OP_RETURN data exceeds 220 bytes'
-        return null
-      }
-      return buffer
-    },
-
-    /**
-     * Add inputs to a transaction with proper Taproot metadata if applicable.
-     */
-    _addInputsToTransaction(
-      tx: InstanceType<typeof BitcoreTypes.Transaction>,
-      utxos: Array<[string, UtxoData]>,
-    ) {
-      for (const [outpoint, utxo] of utxos) {
-        const [txid, outIdx] = outpoint.split('_')
-        const utxoData: BitcoreTypes.UnspentOutputData = {
-          txid,
-          outputIndex: Number(outIdx),
-          script: this._script,
-          satoshis: Number(utxo.value),
-        }
-        if (this.addressType === 'p2tr') {
-          utxoData.internalPubKey = this._internalPubKey
-          utxoData.merkleRoot = this._merkleRoot
-          // ADD THIS LOGGING:
-          console.log('Adding Taproot input:', {
-            outpoint,
-            internalPubKey: this._internalPubKey?.toString?.() || 'undefined',
-            merkleRoot: this._merkleRoot?.toString?.('hex') || 'undefined',
-          })
-        }
-        tx.from(utxoData)
-      }
-    },
-
-    /**
-     * Calculate the fee for a sendMax transaction (no change output).
-     * This builds a complete transaction with the full input amount as output
-     * to get an accurate fee estimate, then returns the fee.
-     */
-    _calculateSendMaxFee(
-      availableUtxos: Array<[string, UtxoData]>,
-      sendMaxAddress: string,
-      regularOutputTotal: bigint,
-      regularRecipients: DraftRecipient[],
-    ): number {
-      const Address = getAddress()
-      const Transaction = getTransaction()
-
-      const inputAmount = availableUtxos.reduce(
-        (sum, [_, utxo]) => sum + BigInt(utxo.value),
-        0n,
-      )
-      const feeRate = Math.max(1, Math.floor(this.draftTx.feeRate))
-
-      // Build transaction to get accurate fee
-      const tx = new Transaction()
-      // IMPORTANT: the change and fee must ALWAYS be set first, otherwise
-      // the fee calculation will be incorrect
-      tx.feePerByte(feeRate)
-      tx.change(this.address)
-
-      this._addInputsToTransaction(tx, availableUtxos)
-
-      // Add regular recipient outputs
-      for (const recipient of regularRecipients) {
-        if (
-          recipient.address &&
-          Address.isValid(recipient.address) &&
-          recipient.amountSats > 0n
-        ) {
-          tx.to(recipient.address, Number(recipient.amountSats))
-        }
-      }
-
-      // Add the sendMax output with remaining amount (input - regular outputs)
-      // We use a placeholder that will be close to the final amount
-      const preliminaryMax = inputAmount - regularOutputTotal
-      if (preliminaryMax > DUST_THRESHOLD) {
-        tx.to(sendMaxAddress, Number(preliminaryMax))
-      }
-
-      // Add OP_RETURN if present
-      const opReturnBuffer = this._parseOpReturnData()
-      if (opReturnBuffer) {
-        tx.addData(opReturnBuffer)
-      }
-
-      return tx.getFee()
-    },
-
-    /**
-     * Build a Transaction object from current draft state.
-     * This is the single source of truth for transaction construction.
-     *
-     * @returns Transaction object or null if prerequisites not met
-     */
-    _buildTransaction(): InstanceType<typeof BitcoreTypes.Transaction> | null {
-      if (!this._script || !isBitcoreLoaded()) return null
-
-      const Address = getAddress()
-      const Transaction = getTransaction()
-
-      const availableUtxos = this._getAvailableUtxos()
-      if (availableUtxos.length === 0) return null
-
-      const feeRate = Math.max(1, Math.floor(this.draftTx.feeRate))
-      const sendMaxRecipient = this.draftTx.recipients.find(r => r.sendMax)
-      const regularRecipients = this.draftTx.recipients.filter(r => !r.sendMax)
-
-      const tx = new Transaction()
-      tx.feePerByte(feeRate)
-      tx.change(this.address)
-
-      this._addInputsToTransaction(tx, availableUtxos)
-
-      // Add regular recipient outputs
-      for (const recipient of regularRecipients) {
-        if (
-          recipient.address &&
-          Address.isValid(recipient.address) &&
-          recipient.amountSats > 0n
-        ) {
-          tx.to(recipient.address, Number(recipient.amountSats))
-        }
-      }
-
-      // Add sendMax output with calculated amount
-      if (
-        sendMaxRecipient?.address &&
-        Address.isValid(sendMaxRecipient.address)
-      ) {
-        if (this.draftTx.maxSendable > 0n) {
-          tx.to(sendMaxRecipient.address, Number(this.draftTx.maxSendable))
-        }
-      }
-
-      // Add OP_RETURN if present and valid
-      const opReturnBuffer = this._parseOpReturnData()
-      if (this.draftTx.opReturn?.data && !opReturnBuffer) {
-        // OP_RETURN was requested but invalid - _parseOpReturnData set the error
-        return null
-      }
-      if (opReturnBuffer) {
-        tx.addData(opReturnBuffer)
-      }
-
-      return tx
-    },
-
-    /**
-     * Recalculate draft transaction metadata from current state.
-     * This updates computed values (fees, maxSendable, validation) without
-     * storing a cached Transaction object.
-     *
-     * Called whenever recipients, amounts, fee rate, or UTXOs change.
-     * Also called automatically when UTXOs are refreshed to keep inputAmount in sync.
-     */
-    _recalculateDraftMetadata() {
-      // Reset validation state
-      this.draftTx.isValid = false
-      this.draftTx.validationError = null
-
-      // Validate prerequisites - show loading state instead of error during init
-      if (!this._script || !isBitcoreLoaded()) {
-        this.draftTx.validationError = 'Loading wallet...'
-        return
-      }
-
-      const Address = getAddress()
-      const availableUtxos = this._getAvailableUtxos()
-
-      // ALWAYS recalculate input amount from current UTXOs
-      // This fixes the race condition where initializeDraftTransaction() runs
-      // before UTXOs are loaded from Chronik
-      const inputAmount = availableUtxos.reduce(
-        (sum, [_, utxo]) => sum + BigInt(utxo.value),
-        0n,
-      )
-      this.draftTx.inputAmount = inputAmount
-
-      // Handle case where no UTXOs are available
-      if (availableUtxos.length === 0) {
-        // Only show error if wallet is fully initialized (not still loading)
-        if (this.initialized) {
-          this.draftTx.validationError = 'No spendable UTXOs available'
-        } else {
-          this.draftTx.validationError = 'Loading balance...'
-        }
-        this.draftTx.maxSendable = 0n
-        this.draftTx.outputAmount = 0n
-        this.draftTx.estimatedFee = 0
-        this.draftTx.changeAmount = 0n
-        return
-      }
-
-      // Categorize recipients
-      const sendMaxRecipient = this.draftTx.recipients.find(r => r.sendMax)
-      const regularRecipients = this.draftTx.recipients.filter(r => !r.sendMax)
-
-      // Validate addresses and calculate regular output total
-      const networkStore = useNetworkStore()
-      const currentNetwork = networkStore.currentNetwork
-
-      let regularOutputTotal = 0n
-      let hasInvalidAddress = false
-      let hasNetworkMismatch = false
-      let invalidAddressError = ''
-
-      for (const recipient of regularRecipients) {
-        if (!recipient.address) continue
-        if (!Address.isValid(recipient.address)) {
-          hasInvalidAddress = true
-          invalidAddressError = `Invalid address: ${recipient.address}`
-          continue
-        }
-        if (!Address.isValid(recipient.address, currentNetwork)) {
-          hasNetworkMismatch = true
-          invalidAddressError = `Address is for wrong network: ${recipient.address}`
-          continue
-        }
-        if (recipient.amountSats > 0n) {
-          regularOutputTotal += recipient.amountSats
-        }
-      }
-
-      // Validate sendMax recipient address
-      if (sendMaxRecipient?.address) {
-        if (!Address.isValid(sendMaxRecipient.address)) {
-          hasInvalidAddress = true
-          invalidAddressError = `Invalid address: ${sendMaxRecipient.address}`
-        } else if (!Address.isValid(sendMaxRecipient.address, currentNetwork)) {
-          hasNetworkMismatch = true
-          invalidAddressError = `Address is for wrong network: ${sendMaxRecipient.address}`
-        }
-      }
-
-      // Calculate fees and amounts based on whether sendMax is enabled
-      if (sendMaxRecipient) {
-        // For sendMax: calculate fee for transaction WITHOUT change output
-        const sendMaxAddress =
-          sendMaxRecipient.address && Address.isValid(sendMaxRecipient.address)
-            ? sendMaxRecipient.address
-            : this.address
-
-        const sendMaxFee = this._calculateSendMaxFee(
-          availableUtxos,
-          sendMaxAddress,
-          regularOutputTotal,
-          regularRecipients,
-        )
-
-        // maxSendable = input - regularOutputs - fee (no change)
-        const maxSendableRaw =
-          inputAmount - regularOutputTotal - BigInt(sendMaxFee)
-        this.draftTx.maxSendable =
-          maxSendableRaw > DUST_THRESHOLD ? maxSendableRaw : 0n
-        this.draftTx.outputAmount =
-          regularOutputTotal + this.draftTx.maxSendable
-        this.draftTx.changeAmount = 0n
-        this.draftTx.estimatedFee = sendMaxFee
-      } else {
-        // For regular transactions: build with change output
-        const tx = this._buildTransaction()
-        if (!tx) {
-          if (!this.draftTx.validationError) {
-            this.draftTx.validationError = 'Failed to build transaction'
-          }
-          return
-        }
-
-        const estimatedFee = tx.getFee()
-        this.draftTx.maxSendable = 0n // Not applicable for non-sendMax
-        this.draftTx.outputAmount = regularOutputTotal
-        const totalSpent = regularOutputTotal + BigInt(estimatedFee)
-        this.draftTx.changeAmount =
-          inputAmount > totalSpent ? inputAmount - totalSpent : 0n
-        this.draftTx.estimatedFee = estimatedFee
-      }
-
-      // Validation
-      if (hasInvalidAddress || hasNetworkMismatch) {
-        this.draftTx.validationError = invalidAddressError
-      } else if (this.draftTx.recipients.length === 0) {
-        this.draftTx.validationError = 'No recipients specified'
-      } else if (regularOutputTotal === 0n && !sendMaxRecipient) {
-        this.draftTx.validationError = 'No amount specified'
-      } else if (sendMaxRecipient && this.draftTx.maxSendable === 0n) {
-        this.draftTx.validationError =
-          'Insufficient balance for this transaction'
-      } else if (
-        !sendMaxRecipient &&
-        inputAmount < regularOutputTotal + BigInt(this.draftTx.estimatedFee)
-      ) {
-        this.draftTx.validationError =
-          'Insufficient balance for this transaction'
-      } else if (sendMaxRecipient && !sendMaxRecipient.address) {
-        this.draftTx.validationError = 'Enter recipient address'
-      } else if (
-        regularRecipients.some(
-          r => r.address && Address.isValid(r.address) && r.amountSats === 0n,
-        )
-      ) {
-        this.draftTx.validationError = 'Enter amount for all recipients'
-      } else {
-        const allHaveAddresses = this.draftTx.recipients.every(
-          r => r.address && Address.isValid(r.address),
-        )
-        if (!allHaveAddresses) {
-          this.draftTx.validationError = 'Enter address for all recipients'
-        } else {
-          this.draftTx.isValid = true
-        }
-      }
-    },
-
-    /**
-     * Set fee rate for the draft transaction
-     */
-    setDraftFeeRate(feeRate: number) {
-      this.draftTx.feeRate = Math.max(1, Math.floor(feeRate))
-      this._recalculateDraftMetadata()
-    },
-
-    /**
-     * Set selected UTXOs for coin control
-     */
-    setDraftSelectedUtxos(utxos: string[]) {
-      this.draftTx.selectedUtxos = utxos
-      this._recalculateDraftMetadata()
-    },
-
-    /**
-     * Set OP_RETURN data for the draft transaction
-     */
-    setDraftOpReturn(opReturn: DraftOpReturn | null) {
-      this.draftTx.opReturn = opReturn
-      this._recalculateDraftMetadata()
-    },
-
-    /**
-     * Set locktime for the draft transaction
-     */
-    setDraftLocktime(locktime: DraftLocktime | null) {
-      this.draftTx.locktime = locktime
-      this._recalculateDraftMetadata()
-    },
-
-    /**
-     * Sign and broadcast the draft transaction.
-     * Builds a fresh transaction from current state to ensure consistency.
-     * @returns Transaction ID
-     */
-    async sendDraftTransaction(): Promise<string> {
-      if (!this._chronik || !this._signingKey) {
-        throw new Error('Wallet not initialized')
-      }
-
-      if (!this.draftTx.isValid) {
-        throw new Error(
-          this.draftTx.validationError || 'Transaction is not valid',
-        )
-      }
-
-      // Build fresh transaction from current state
-      const tx = this._buildTransaction()
-      if (!tx) {
-        throw new Error('Failed to build transaction')
-      }
-
-      // Apply locktime if set
-      if (this.draftTx.locktime) {
-        if (this.draftTx.locktime.type === 'block') {
-          if (this.draftTx.locktime.value >= 500000000) {
-            throw new Error('Block height locktime must be less than 500000000')
-          }
-          tx.lockUntilBlockHeight(this.draftTx.locktime.value)
-        } else {
-          if (this.draftTx.locktime.value < 500000000) {
-            throw new Error('Unix timestamp locktime must be >= 500000000')
-          }
-          tx.lockUntilDate(new Date(this.draftTx.locktime.value * 1000))
-        }
-      }
-
-      // Capture transaction details before signing for history update
-      const totalOutputAmount = this.draftTx.outputAmount
-      const primaryRecipient = this.draftTx.recipients.find(
-        r => r.address && r.address !== this.address,
-      )
-
-      // Sign the transaction
-      // For Taproot (P2TR), use Schnorr signatures with SIGHASH_LOTUS
-      // For P2PKH, use standard ECDSA signatures
-      if (this.addressType === 'p2tr') {
-        tx.signSchnorr(this._signingKey)
-      } else {
-        tx.sign(this._signingKey)
-      }
-
-      console.log(
-        'Transaction built:',
-        tx.toJSON(),
-        tx.toBuffer().toString('hex'),
-      )
-      console.log('Verifying transaction details...')
-      const verified = tx.verify()
-      console.log('Transaction verified:', verified)
-      // Broadcast
-      const result = await this._chronik.broadcastTx(tx.toBuffer())
-
-      // Remove spent UTXOs
-      for (const input of tx.inputs) {
-        const outpoint = `${input.prevTxId.toString('hex')}_${
-          input.outputIndex
-        }`
-        this.utxos.delete(outpoint)
-      }
-
-      // Add transaction to history immediately for better UX
-      // This will be updated when the WebSocket confirms the transaction
-      const newHistoryItem: TransactionHistoryItem = {
-        txid: result.txid,
-        timestamp: Math.floor(Date.now() / 1000).toString(),
-        blockHeight: -1, // Unconfirmed
-        isSend: true,
-        amount: totalOutputAmount.toString(),
-        address: primaryRecipient?.address || '',
-        confirmations: 0,
-      }
-      this.transactionHistory.unshift(newHistoryItem)
-
-      this.recalculateBalance()
-      await this.saveWalletState()
-
-      // Reset draft transaction
-      this.initializeDraftTransaction()
-
-      return result.txid
-    },
-
     /**
      * Sign a message with the wallet's private key
      */
@@ -1603,34 +1258,111 @@ export const useWalletStore = defineStore('wallet', {
     },
 
     /**
-     * Get the signing private key (hex encoded)
-     * Used for MuSig2 signing sessions
-     * Returns null if wallet is not initialized
+     * Get the private key (hex encoded) for a specific account
+     * @param accountPurpose - Account to get key for (defaults to PRIMARY)
+     * @returns Private key hex or null if not available
      */
-    getPrivateKeyHex(): string | null {
-      if (!this._signingKey) return null
-      return this._signingKey.toString()
+    getPrivateKeyHex(
+      accountPurpose: AccountPurpose = AccountPurpose.PRIMARY,
+    ): string | null {
+      const keyData = this._accountKeys.get(accountPurpose)
+      if (!keyData?.privateKey) return null
+      return keyData.privateKey.toString()
     },
 
     /**
-     * Get the signing public key (hex encoded)
-     * Used for MuSig2 signer advertisement
-     * Returns null if wallet is not initialized
+     * Get the public key (hex encoded) for a specific account
+     * @param accountPurpose - Account to get key for (defaults to PRIMARY)
+     * @returns Public key hex or null if not available
      */
-    getPublicKeyHex(): string | null {
-      if (!this._signingKey) return null
-      return this._signingKey.publicKey.toString()
+    getPublicKeyHex(
+      accountPurpose: AccountPurpose = AccountPurpose.PRIMARY,
+    ): string | null {
+      const keyData = this._accountKeys.get(accountPurpose)
+      if (!keyData?.publicKey) return null
+      return keyData.publicKey.toString()
+    },
+
+    /**
+     * Get the address for a specific account
+     * @param accountPurpose - Account to get address for (defaults to PRIMARY)
+     * @returns Address string or null if not available
+     */
+    getAccountAddress(
+      accountPurpose: AccountPurpose = AccountPurpose.PRIMARY,
+    ): string | null {
+      const account = this.accounts.get(accountPurpose)
+      return account?.primaryAddress?.address ?? null
+    },
+
+    /**
+     * Get the script payload for a specific account
+     * @param accountPurpose - Account to get script for (defaults to PRIMARY)
+     * @returns Script payload hex or null if not available
+     */
+    getAccountScriptPayload(
+      accountPurpose: AccountPurpose = AccountPurpose.PRIMARY,
+    ): string | null {
+      const account = this.accounts.get(accountPurpose)
+      return account?.primaryAddress?.scriptPayload ?? null
+    },
+
+    /**
+     * Get the account state for a specific purpose
+     * @param accountPurpose - Account purpose to retrieve
+     * @returns AccountState or undefined if not found
+     */
+    getAccount(accountPurpose: AccountPurpose): AccountState | undefined {
+      return this.accounts.get(accountPurpose)
+    },
+
+    /**
+     * Get the runtime key data for a specific account
+     * @param accountPurpose - Account purpose to retrieve
+     * @returns RuntimeKeyData or undefined if not found
+     */
+    getAccountKeyData(
+      accountPurpose: AccountPurpose,
+    ): RuntimeKeyData | undefined {
+      return this._accountKeys.get(accountPurpose)
+    },
+
+    /**
+     * Get the balance for a specific account
+     * @param accountPurpose - Account to get balance for (defaults to PRIMARY)
+     * @returns WalletBalance for the account
+     */
+    getAccountBalance(
+      accountPurpose: AccountPurpose = AccountPurpose.PRIMARY,
+    ): WalletBalance {
+      const utxoState = this.accountUtxos.get(accountPurpose)
+      return utxoState?.balance ?? { total: '0', spendable: '0' }
+    },
+
+    /**
+     * Get the total balance across all accounts
+     * @returns Combined WalletBalance
+     */
+    getTotalBalance(): WalletBalance {
+      let total = 0n
+      let spendable = 0n
+
+      for (const utxoState of this.accountUtxos.values()) {
+        total += BigInt(utxoState.balance.total)
+        spendable += BigInt(utxoState.balance.spendable)
+      }
+
+      return {
+        total: total.toString(),
+        spendable: spendable.toString(),
+      }
     },
 
     /**
      * Disconnect and cleanup
      */
     async disconnect() {
-      if (this._ws) {
-        const scriptType = this.getChronikScriptType()
-        this._ws.unsubscribe(scriptType, this.scriptPayload)
-        this._ws.close()
-      }
+      disconnectWebSocket()
       this.connected = false
     },
 
@@ -1649,15 +1381,7 @@ export const useWalletStore = defineStore('wallet', {
 
       try {
         // Disconnect existing WebSocket
-        if (this._ws) {
-          try {
-            const scriptType = this.getChronikScriptType()
-            this._ws.unsubscribe(scriptType, this.scriptPayload)
-            this._ws.close()
-          } catch {
-            // Ignore close errors
-          }
-        }
+        disconnectWebSocket()
 
         // Clear cached data for new network
         this.transactionHistory = []
@@ -1683,6 +1407,99 @@ export const useWalletStore = defineStore('wallet', {
     getCurrentNetwork(): NetworkType {
       const networkStore = useNetworkStore()
       return networkStore.currentNetwork
+    },
+
+    // =========================================================================
+    // Phase 13 Integration: Onboarding Support
+    // =========================================================================
+
+    /**
+     * Get the mnemonic seed phrase (for backup display)
+     * Only returns if wallet is initialized
+     * @returns The seed phrase or null if not available
+     */
+    getMnemonic(): string | null {
+      if (!this.initialized || !this.seedPhrase) return null
+      return this.seedPhrase
+    },
+
+    // =========================================================================
+    // Transaction Building API (Phase 1: Encapsulation Fix)
+    // =========================================================================
+
+    /**
+     * Get transaction building context for the primary account.
+     * This provides all data needed to build a transaction without
+     * exposing internal private properties.
+     *
+     * @returns Transaction context or null if wallet not initialized
+     */
+    getTransactionBuildContext(): WalletTransactionBuildContext | null {
+      if (!this._script || !this.address) return null
+
+      return {
+        script: this._script,
+        addressType: this.addressType,
+        changeAddress: this.address,
+        internalPubKey: this._internalPubKey,
+        merkleRoot: this._merkleRoot,
+      }
+    },
+
+    /**
+     * Check if wallet is ready for transaction signing.
+     * Use this instead of checking private properties directly.
+     */
+    isReadyForSigning(): boolean {
+      return !!(this._signingKey && this._script && this.initialized)
+    },
+
+    /**
+     * Sign a transaction and return the signed hex.
+     * Handles both P2PKH and P2TR signing internally.
+     *
+     * @param tx - Unsigned Bitcore Transaction
+     * @returns Signed transaction as hex string
+     * @throws Error if wallet not initialized for signing
+     */
+    signTransactionHex(
+      tx: InstanceType<typeof BitcoreTypes.Transaction>,
+    ): string {
+      if (!this._signingKey) {
+        throw new Error('Wallet not initialized for signing')
+      }
+
+      if (this.addressType === 'p2tr') {
+        tx.signSchnorr(this._signingKey)
+      } else {
+        tx.sign(this._signingKey)
+      }
+
+      return tx.toBuffer().toString('hex')
+    },
+
+    /**
+     * Get the script hex for the primary account.
+     * Used for UTXO signing data.
+     */
+    getScriptHex(): string | null {
+      return this._script?.toHex() ?? null
+    },
+
+    /**
+     * Get internal public key as string (for Taproot).
+     * Returns null for non-Taproot addresses.
+     */
+    getInternalPubKeyString(): string | null {
+      return this._internalPubKey?.toString() ?? null
+    },
+
+    /**
+     * Get merkle root as hex string (for Taproot).
+     * Returns null for non-Taproot addresses.
+     */
+    getMerkleRootHex(): string | null {
+      return this._merkleRoot?.toString('hex') ?? null
     },
   },
 })

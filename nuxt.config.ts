@@ -9,7 +9,58 @@ export default defineNuxtConfig({
   // SPA mode - fully client-side rendered
   ssr: false,
 
-  modules: ['@nuxt/ui-pro', '@nuxt/icon', '@pinia/nuxt', '@vueuse/nuxt'],
+  modules: [
+    '@nuxt/ui-pro',
+    '@nuxt/icon',
+    '@pinia/nuxt',
+    '@vueuse/nuxt',
+    '@vite-pwa/nuxt',
+  ],
+
+  // PWA Configuration
+  pwa: {
+    strategies: 'injectManifest',
+    srcDir: 'service-worker',
+    filename: 'sw.ts',
+    registerType: 'autoUpdate',
+    manifest: {
+      name: 'Lotus Web Wallet',
+      short_name: 'Lotus Wallet',
+      description:
+        'The key to the Lotusia ecosystem - P2P wallet with service discovery',
+      theme_color: '#c6005c',
+      background_color: '#000000',
+      display: 'standalone',
+      icons: [
+        { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      ],
+    },
+    injectManifest: {
+      globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
+      maximumFileSizeToCacheInBytes: 3000000, // 3MB
+    },
+    devOptions: {
+      enabled: true,
+      type: 'module',
+    },
+  },
+
+  // Route redirects for old routes to new navigation structure
+  routeRules: {
+    '/send': { redirect: '/transact/send' },
+    '/receive': { redirect: '/transact/receive' },
+    '/history': { redirect: '/transact/history' },
+    '/contacts': { redirect: '/people/contacts' },
+    // Phase 10 R10.5.1: Redirect P2P to Shared Wallets (unified experience)
+    '/p2p': { redirect: '/people/shared-wallets' },
+    '/discover': { redirect: '/people/shared-wallets' },
+    '/people/p2p': { redirect: '/people/shared-wallets' },
+    '/explorer': { redirect: '/explore/explorer' },
+    '/explorer/**': { redirect: '/explore/explorer/**' },
+    '/social': { redirect: '/explore/social' },
+    '/social/**': { redirect: '/explore/social/**' },
+  },
 
   // CSS imports - required for Tailwind CSS and Nuxt UI Pro
   css: ['~/assets/css/main.css'],
@@ -102,6 +153,83 @@ export default defineNuxtConfig({
       commonjsOptions: {
         include: [/node_modules/],
         transformMixedEsModules: true,
+      },
+    },
+    worker: {
+      // Configure Web Worker bundling
+      format: 'es',
+      rollupOptions: {
+        output: {
+          inlineDynamicImports: true,
+        },
+      },
+      plugins: () => {
+        // Resolve polyfill shim paths to the actual plugin shim files
+        // This is needed because the main bundle's polyfills plugin injects
+        // references to these shims, but the worker bundler can't find them
+        const shimAliasPlugin = {
+          name: 'worker-shim-alias',
+          enforce: 'pre' as const,
+          resolveId(id: string) {
+            // Resolve to the actual shim files in the plugin's node_modules
+            if (id === 'vite-plugin-node-polyfills/shims/buffer') {
+              return fileURLToPath(
+                new URL(
+                  './node_modules/vite-plugin-node-polyfills/shims/buffer/dist/index.js',
+                  import.meta.url,
+                ),
+              )
+            }
+            if (id === 'vite-plugin-node-polyfills/shims/process') {
+              return fileURLToPath(
+                new URL(
+                  './node_modules/vite-plugin-node-polyfills/shims/process/dist/index.js',
+                  import.meta.url,
+                ),
+              )
+            }
+            if (id === 'vite-plugin-node-polyfills/shims/global') {
+              return fileURLToPath(
+                new URL(
+                  './node_modules/vite-plugin-node-polyfills/shims/global/dist/index.js',
+                  import.meta.url,
+                ),
+              )
+            }
+            if (id === 'crypto-browserify') {
+              return fileURLToPath(
+                new URL(
+                  './node_modules/crypto-browserify/index.js',
+                  import.meta.url,
+                ),
+              )
+            }
+            return null
+          },
+        }
+
+        return [
+          shimAliasPlugin,
+          // Apply node polyfills for worker bundle
+          nodePolyfills({
+            include: [
+              'buffer',
+              'events',
+              'process',
+              'util',
+              'stream',
+              'crypto',
+            ],
+            globals: {
+              Buffer: true,
+              global: true,
+              process: true,
+            },
+            overrides: {
+              crypto: 'crypto-browserify',
+            },
+          }),
+        ]
       },
     },
     resolve: {

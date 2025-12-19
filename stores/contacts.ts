@@ -1,11 +1,26 @@
 /**
  * Contacts Store
  * Manages contact list with CRUD operations and search functionality
+ *
+ * Phase 4: Contact System Refactor
+ * - Contacts now link to unified identities via identityId
+ * - Address derivation from public key
+ * - Multi-signal online status detection
  */
 import { defineStore } from 'pinia'
-
+import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
+import { useIdentityStore } from './identity'
+import { useP2PStore } from './p2p'
 import type { NetworkType } from './network'
 import { useNetworkStore } from './network'
+import type { Identity, IdentitySignerCapabilities } from '~/types/identity'
+import { IdentityLevel } from '~/types/identity'
+import type { OnlineStatus, ContactWithIdentity } from '~/types/contact'
+import {
+  isValidPublicKey,
+  deriveAddressFromPublicKey,
+  getIdentityLevel,
+} from '~/utils/identity'
 
 // Types
 export interface ContactAddresses {
@@ -17,34 +32,118 @@ export interface ContactAddresses {
   regtest?: string
 }
 
+/**
+ * Signer capabilities for MuSig2
+ */
+export interface SignerCapabilities {
+  /** Supports MuSig2 signing */
+  musig2: boolean
+  /** Threshold for multi-sig (optional) */
+  threshold?: number
+}
+
 export interface Contact {
+  // === IDENTIFICATION ===
   id: string
   name: string
-  /** @deprecated Use addresses object instead. Kept for backward compatibility. */
+
+  // === IDENTITY LINK ===
+  /**
+   * Reference to unified identity (publicKeyHex).
+   * When set, identity properties come from the Identity store.
+   */
+  identityId?: string
+
+  // === ADDRESS ===
+  /**
+   * Lotus address for this contact.
+   * - If identityId is set: derived from identity's publicKey
+   * - If identityId is not set: stored directly (legacy contact)
+   */
   address: string
   /** Network-specific addresses */
   addresses?: ContactAddresses
+
+  // === RELATIONSHIP METADATA ===
   notes?: string
-  avatar?: string // Optional avatar URL or base64
-  tags?: string[] // Optional tags for categorization
-  peerId?: string // Optional P2P peer ID for discovered services
-  serviceType?: string // Optional service type from P2P discovery
-  isFavorite?: boolean // Favorite/starred contact for quick access
+  avatar?: string
+  tags?: string[]
+  isFavorite?: boolean
+  groupId?: string
+
+  // === P2P CONNECTIVITY (legacy - prefer identityId) ===
+  /** @deprecated Use identityId to link to Identity with peerId */
+  peerId?: string
+  serviceType?: string
+  /** @deprecated Use identityId to link to Identity with publicKeyHex */
+  publicKey?: string
+  /** @deprecated Use identityId to link to Identity with signerCapabilities */
+  signerCapabilities?: SignerCapabilities
+  /** @deprecated Use identityId to link to Identity with lastSeenAt */
+  lastSeenOnline?: number
+
+  // === ACTIVITY TRACKING ===
+  lastTransactionAt?: number
+  totalSent?: bigint
+  totalReceived?: bigint
+  transactionCount?: number
+
+  // === TIMESTAMPS ===
   createdAt: number
   updatedAt: number
 }
 
+export interface ContactGroup {
+  id: string
+  name: string
+  icon: string
+  color: string
+  createdAt: number
+}
+
 export interface ContactsState {
   contacts: Contact[]
+  groups: ContactGroup[]
   initialized: boolean
 }
 
-// Storage key
-const STORAGE_KEY = 'lotus-wallet-contacts'
-
 // Generate unique ID
-const generateId = () =>
-  `contact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+const generateId = (prefix: string = 'contact') =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+
+/**
+ * Get online status for a contact.
+ * Phase 2: Delegates to identity store as the canonical source.
+ *
+ * @param contact - The contact to check
+ * @param identity - Resolved identity (if any)
+ * @param _p2pStore - P2P store instance (kept for backwards compatibility)
+ * @returns OnlineStatus
+ */
+function getOnlineStatusForContact(
+  contact: Contact,
+  identity: Identity | undefined,
+  _p2pStore: ReturnType<typeof useP2PStore>,
+): OnlineStatus {
+  const identityStore = useIdentityStore()
+
+  // If contact has identity reference, use identity store's canonical method
+  if (contact.identityId) {
+    return identityStore.getOnlineStatus(contact.identityId)
+  }
+
+  // Legacy: Try to find identity by public key
+  if (contact.publicKey) {
+    return identityStore.getOnlineStatus(contact.publicKey)
+  }
+
+  // Legacy fallback: Check identity if resolved
+  if (identity) {
+    return identityStore.getOnlineStatus(identity.publicKeyHex)
+  }
+
+  return 'unknown'
+}
 
 /**
  * Get the address for a contact on the specified network
@@ -100,6 +199,7 @@ export const hasAddressForNetwork = (
 export const useContactsStore = defineStore('contacts', {
   state: (): ContactsState => ({
     contacts: [],
+    groups: [],
     initialized: false,
   }),
 
@@ -213,6 +313,60 @@ export const useContactsStore = defineStore('contacts', {
     favoriteCount: state => state.contacts.filter(c => c.isFavorite).length,
 
     /**
+     * Get contacts with public keys (for MuSig2)
+     * Checks both identityId and legacy publicKey field
+     */
+    contactsWithPublicKeys: state => {
+      return state.contacts.filter(c => c.identityId || c.publicKey)
+    },
+
+    /**
+     * Find contact by public key (checks both identityId and legacy publicKey)
+     */
+    findByPublicKey: state => {
+      return (publicKey: string) => {
+        const normalized = publicKey.toLowerCase()
+        return state.contacts.find(
+          c =>
+            c.identityId?.toLowerCase() === normalized ||
+            c.publicKey?.toLowerCase() === normalized,
+        )
+      }
+    },
+
+    /**
+     * Find contact by address
+     */
+    findByAddress: state => {
+      return (address: string) =>
+        state.contacts.find(
+          c => c.address.toLowerCase() === address.toLowerCase(),
+        )
+    },
+
+    /**
+     * Find contact by peer ID (checks identity and legacy peerId)
+     */
+    findByPeerId: state => {
+      return (peerId: string) => {
+        // Check legacy field first
+        const legacy = state.contacts.find(c => c.peerId === peerId)
+        if (legacy) return legacy
+
+        // Check via identity store
+        const identityStore = useIdentityStore()
+        const identity = identityStore.findByPeerId(peerId)
+        if (identity) {
+          return state.contacts.find(
+            c => c.identityId === identity.publicKeyHex,
+          )
+        }
+
+        return undefined
+      }
+    },
+
+    /**
      * Get contacts sorted with favorites first
      */
     contactsWithFavoritesFirst: state => {
@@ -224,53 +378,180 @@ export const useContactsStore = defineStore('contacts', {
         return a.name.toLowerCase().localeCompare(b.name.toLowerCase())
       })
     },
+
+    /**
+     * Get all groups sorted by name
+     */
+    sortedGroups: state => {
+      return [...state.groups].sort((a, b) =>
+        a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+      )
+    },
+
+    /**
+     * Get contacts by group ID
+     */
+    getContactsByGroup: state => {
+      return (groupId: string) =>
+        state.contacts.filter(c => c.groupId === groupId)
+    },
+
+    /**
+     * Get contacts without a group
+     */
+    ungroupedContacts: state => {
+      return state.contacts.filter(c => !c.groupId)
+    },
+
+    /**
+     * Get group by ID
+     */
+    getGroupById: state => {
+      return (id: string) => state.groups.find(g => g.id === id)
+    },
+
+    /**
+     * Get contacts with MuSig2 capabilities (can participate in shared wallets)
+     */
+    signerContacts(): ContactWithIdentity[] {
+      return this.contactsWithIdentity.filter(c => c.canMuSig2)
+    },
+
+    /**
+     * Get online contacts
+     */
+    onlineContacts(): ContactWithIdentity[] {
+      return this.contactsWithIdentity.filter(c => c.isOnline)
+    },
+
+    /**
+     * Get contacts with resolved identity information
+     */
+    contactsWithIdentity(): ContactWithIdentity[] {
+      const identityStore = useIdentityStore()
+      const p2pStore = useP2PStore()
+
+      return this.contacts.map(contact => {
+        const identity = contact.identityId
+          ? identityStore.get(contact.identityId)
+          : undefined
+
+        const onlineStatus = getOnlineStatusForContact(
+          contact,
+          identity,
+          p2pStore,
+        )
+
+        return {
+          ...contact,
+          identity,
+          onlineStatus,
+          isOnline: onlineStatus === 'online',
+          canMuSig2: !!(identity?.publicKeyHex || contact.publicKey),
+          level: identity
+            ? getIdentityLevel(identity)
+            : IdentityLevel.ADDRESS_ONLY,
+        }
+      })
+    },
   },
 
   actions: {
     /**
-     * Initialize contacts from localStorage
+     * Initialize contacts and groups from storage service
      */
     initialize() {
       if (this.initialized) return
 
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY)
-        if (saved) {
-          const parsed = JSON.parse(saved)
-          this.contacts = parsed.contacts || []
-        }
-        this.initialized = true
-      } catch (error) {
-        console.error('Failed to load contacts:', error)
-        this.contacts = []
-        this.initialized = true
-      }
+      const saved = getItem<{ contacts: Contact[]; groups: ContactGroup[] }>(
+        STORAGE_KEYS.CONTACTS,
+        { contacts: [], groups: [] },
+      )
+      this.contacts = saved.contacts || []
+      this.groups = saved.groups || []
+      this.initialized = true
+
+      // Phase 2: Migrate legacy contacts to identity system
+      this._migrateContactsToIdentity()
     },
 
     /**
-     * Save contacts to localStorage
+     * Save contacts and groups to storage service
      */
     saveContacts() {
-      try {
-        localStorage.setItem(
-          STORAGE_KEY,
-          JSON.stringify({ contacts: this.contacts }),
-        )
-      } catch (error) {
-        console.error('Failed to save contacts:', error)
-      }
+      setItem(STORAGE_KEYS.CONTACTS, {
+        contacts: this.contacts,
+        groups: this.groups,
+      })
     },
 
     /**
-     * Add a new contact
+     * Add a new contact.
+     * If publicKey is provided, creates/links to an Identity and derives address.
+     *
+     * @param data - Contact data (without auto-generated fields)
+     * @returns The created contact
      */
-    addContact(
-      contact: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>,
-    ): Contact {
+    addContact(data: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>): Contact {
+      const identityStore = useIdentityStore()
+      const networkStore = useNetworkStore()
+
+      let identityId: string | undefined
+      let derivedAddress = data.address
+
+      // If public key provided, create/link identity and derive address
+      if (data.publicKey && isValidPublicKey(data.publicKey)) {
+        const network = networkStore.currentNetwork as 'livenet' | 'testnet'
+        const identity = identityStore.findOrCreate(data.publicKey, network)
+        identityId = identity.publicKeyHex
+        derivedAddress = identity.address
+
+        // Copy P2P info to identity if present
+        if (data.peerId) {
+          identityStore.update(identity.publicKeyHex, {
+            peerId: data.peerId,
+          })
+        }
+
+        // Copy signer capabilities to identity if present
+        if (data.signerCapabilities) {
+          identityStore.update(identity.publicKeyHex, {
+            signerCapabilities: {
+              transactionTypes: ['any'],
+              available: data.signerCapabilities.musig2,
+            },
+          })
+        }
+
+        console.log('[Contacts] Created identity for contact:', {
+          publicKey: data.publicKey.slice(0, 16) + '...',
+          address: derivedAddress?.slice(0, 20) + '...',
+        })
+      }
+
+      // Check for duplicate address
+      if (derivedAddress) {
+        const existing = this.contacts.find(
+          c => c.address.toLowerCase() === derivedAddress.toLowerCase(),
+        )
+        if (existing) {
+          console.warn(
+            '[Contacts] Contact already exists with address:',
+            existing.name,
+          )
+          // Return existing contact instead of throwing
+          return existing
+        }
+      }
+
       const now = Date.now()
       const newContact: Contact = {
-        ...contact,
+        ...data,
         id: generateId(),
+        identityId,
+        address: derivedAddress || '',
+        tags: data.tags || [],
+        isFavorite: data.isFavorite || false,
         createdAt: now,
         updatedAt: now,
       }
@@ -278,7 +559,56 @@ export const useContactsStore = defineStore('contacts', {
       this.contacts.push(newContact)
       this.saveContacts()
 
+      console.log('[Contacts] Added contact:', {
+        name: newContact.name,
+        hasIdentity: !!identityId,
+        address: newContact.address?.slice(0, 20) + '...',
+      })
+
       return newContact
+    },
+
+    /**
+     * Create a contact from a discovered signer.
+     * Automatically derives address from signer's public key.
+     *
+     * @param signer - Discovered signer data
+     * @returns The created or existing contact
+     */
+    addFromSigner(signer: {
+      publicKeyHex: string
+      peerId?: string
+      nickname?: string
+      transactionTypes?: string[]
+      amountRange?: { min?: number; max?: number }
+      fee?: number
+      expiresAt?: number
+    }): Contact {
+      // Check if contact already exists by public key
+      const existingByPubKey = this.contacts.find(
+        c =>
+          c.identityId === signer.publicKeyHex ||
+          c.publicKey === signer.publicKeyHex,
+      )
+      if (existingByPubKey) {
+        console.log(
+          '[Contacts] Contact already exists for signer:',
+          existingByPubKey.name,
+        )
+        return existingByPubKey
+      }
+
+      return this.addContact({
+        name: signer.nickname || `Signer ${signer.publicKeyHex.slice(0, 8)}`,
+        address: '', // Will be derived from publicKey
+        publicKey: signer.publicKeyHex,
+        peerId: signer.peerId,
+        signerCapabilities: {
+          musig2: true,
+        },
+        tags: ['signer'],
+        isFavorite: false,
+      })
     },
 
     /**
@@ -430,6 +760,271 @@ export const useContactsStore = defineStore('contacts', {
       this.saveContacts()
 
       return true
+    },
+
+    // =========================================================================
+    // Group Management
+    // =========================================================================
+
+    /**
+     * Create a new contact group
+     */
+    createGroup(name: string, icon: string, color: string): ContactGroup {
+      const group: ContactGroup = {
+        id: `group_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        icon,
+        color,
+        createdAt: Date.now(),
+      }
+
+      this.groups.push(group)
+      this.saveContacts()
+
+      return group
+    },
+
+    /**
+     * Update a group
+     */
+    updateGroup(
+      id: string,
+      updates: Partial<Omit<ContactGroup, 'id' | 'createdAt'>>,
+    ): ContactGroup | null {
+      const group = this.groups.find(g => g.id === id)
+      if (!group) return null
+
+      Object.assign(group, updates)
+      this.saveContacts()
+
+      return group
+    },
+
+    /**
+     * Delete a group (contacts in the group become ungrouped)
+     */
+    deleteGroup(id: string): boolean {
+      const index = this.groups.findIndex(g => g.id === id)
+      if (index === -1) return false
+
+      // Remove group from all contacts
+      this.contacts.forEach(c => {
+        if (c.groupId === id) {
+          c.groupId = undefined
+          c.updatedAt = Date.now()
+        }
+      })
+
+      this.groups.splice(index, 1)
+      this.saveContacts()
+
+      return true
+    },
+
+    /**
+     * Assign a contact to a group
+     */
+    assignToGroup(contactId: string, groupId: string | null): boolean {
+      const contact = this.contacts.find(c => c.id === contactId)
+      if (!contact) return false
+
+      contact.groupId = groupId || undefined
+      contact.updatedAt = Date.now()
+      this.saveContacts()
+
+      return true
+    },
+
+    /**
+     * Update contact's P2P info (public key, peer ID, capabilities, last seen)
+     */
+    updateP2PInfo(
+      id: string,
+      info: {
+        publicKey?: string
+        peerId?: string
+        signerCapabilities?: SignerCapabilities
+        lastSeenOnline?: number
+      },
+    ): Contact | null {
+      const contact = this.contacts.find(c => c.id === id)
+      if (!contact) return null
+
+      if (info.publicKey !== undefined) contact.publicKey = info.publicKey
+      if (info.peerId !== undefined) contact.peerId = info.peerId
+      if (info.signerCapabilities !== undefined)
+        contact.signerCapabilities = info.signerCapabilities
+      if (info.lastSeenOnline !== undefined)
+        contact.lastSeenOnline = info.lastSeenOnline
+
+      contact.updatedAt = Date.now()
+      this.saveContacts()
+
+      return contact
+    },
+
+    /**
+     * Update contact's last seen online timestamp by peer ID
+     * Called when peer activity is detected
+     */
+    updateLastSeen(peerId: string): void {
+      // Update legacy contact field
+      const contact = this.contacts.find(c => c.peerId === peerId)
+      if (contact) {
+        contact.lastSeenOnline = Date.now()
+        this.saveContacts()
+      }
+
+      // Also update identity store if identity exists for this peer
+      const identityStore = useIdentityStore()
+      const identity = identityStore.findByPeerId(peerId)
+      if (identity) {
+        identityStore.updatePresence(identity.publicKeyHex, {
+          isOnline: true,
+          lastSeenAt: Date.now(),
+        })
+      }
+    },
+
+    /**
+     * Update contact's signer capabilities
+     */
+    updateSignerCapabilities(
+      contactId: string,
+      capabilities: SignerCapabilities,
+    ): Contact | null {
+      const contact = this.contacts.find(c => c.id === contactId)
+      if (!contact) return null
+
+      contact.signerCapabilities = capabilities
+      contact.updatedAt = Date.now()
+      this.saveContacts()
+
+      return contact
+    },
+
+    /**
+     * Get a single contact with resolved identity information
+     *
+     * @param id - Contact ID
+     * @returns ContactWithIdentity or undefined if not found
+     */
+    getContactWithIdentity(id: string): ContactWithIdentity | undefined {
+      const contact = this.contacts.find(c => c.id === id)
+      if (!contact) return undefined
+
+      const identityStore = useIdentityStore()
+      const p2pStore = useP2PStore()
+
+      const identity = contact.identityId
+        ? identityStore.get(contact.identityId)
+        : undefined
+
+      const onlineStatus = getOnlineStatusForContact(
+        contact,
+        identity,
+        p2pStore,
+      )
+
+      return {
+        ...contact,
+        identity,
+        onlineStatus,
+        isOnline: onlineStatus === 'online',
+        canMuSig2: !!(identity?.publicKeyHex || contact.publicKey),
+        level: identity
+          ? getIdentityLevel(identity)
+          : IdentityLevel.ADDRESS_ONLY,
+      }
+    },
+
+    /**
+     * Get online status for a contact
+     *
+     * @param contact - Contact to check
+     * @returns OnlineStatus
+     */
+    getOnlineStatus(contact: Contact): OnlineStatus {
+      const identityStore = useIdentityStore()
+      const p2pStore = useP2PStore()
+
+      const identity = contact.identityId
+        ? identityStore.get(contact.identityId)
+        : undefined
+
+      return getOnlineStatusForContact(contact, identity, p2pStore)
+    },
+
+    /**
+     * Check if a contact is currently online
+     *
+     * @param contact - Contact to check
+     * @returns true if online
+     */
+    isContactOnline(contact: Contact): boolean {
+      return this.getOnlineStatus(contact) === 'online'
+    },
+
+    // =========================================================================
+    // Phase 2: Identity Migration
+    // =========================================================================
+
+    /**
+     * Migrate legacy contacts to use identityId.
+     * Copies legacy P2P data to identity store.
+     */
+    _migrateContactsToIdentity() {
+      const identityStore = useIdentityStore()
+      const networkStore = useNetworkStore()
+      const network = networkStore.currentNetwork as 'livenet' | 'testnet'
+
+      let migrated = 0
+
+      for (const contact of this.contacts) {
+        // Skip if already has identityId
+        if (contact.identityId) continue
+
+        // Migrate contacts with public key
+        if (contact.publicKey) {
+          try {
+            const identity = identityStore.findOrCreate(
+              contact.publicKey,
+              network,
+            )
+
+            // Copy legacy data to identity
+            if (contact.peerId && !identity.peerId) {
+              identity.peerId = contact.peerId
+            }
+            if (contact.lastSeenOnline && !identity.lastSeenAt) {
+              identity.lastSeenAt = contact.lastSeenOnline
+            }
+            if (contact.signerCapabilities && !identity.signerCapabilities) {
+              identity.signerCapabilities = {
+                transactionTypes: ['any'],
+                available: contact.signerCapabilities.musig2,
+              }
+            }
+
+            // Set identity reference
+            contact.identityId = identity.publicKeyHex
+            migrated++
+          } catch (error) {
+            console.warn(
+              `[Contacts] Failed to migrate contact ${contact.name}:`,
+              error,
+            )
+          }
+        }
+      }
+
+      if (migrated > 0) {
+        console.log(
+          `[Contacts] Migrated ${migrated} contacts to identity system`,
+        )
+        identityStore.save()
+        this.saveContacts()
+      }
     },
   },
 })

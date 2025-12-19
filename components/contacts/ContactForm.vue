@@ -2,7 +2,7 @@
 import { useWalletStore } from '~/stores/wallet'
 import { useContactsStore, type Contact } from '~/stores/contacts'
 import { useNetworkStore, NETWORK_CONFIGS } from '~/stores/network'
-import { useAddressFormat } from '~/composables/useUtils'
+import { useAddress } from '~/composables/useAddress'
 
 const props = defineProps<{
   contact?: Contact | null
@@ -21,7 +21,7 @@ const walletStore = useWalletStore()
 const contactsStore = useContactsStore()
 const networkStore = useNetworkStore()
 const toast = useToast()
-const { getNetworkName } = useAddressFormat()
+const { getNetworkName } = useAddress()
 
 // Get the address prefix for the current network
 const addressPlaceholder = computed(() => {
@@ -37,6 +37,7 @@ const tagsInput = ref(props.contact?.tags?.join(', ') || '')
 const peerId = ref(props.contact?.peerId || props.prefillPeerId || '')
 const serviceType = ref(props.contact?.serviceType || props.prefillServiceType || '')
 const isFavorite = ref(props.contact?.isFavorite || false)
+const publicKey = ref(props.contact?.publicKey || '')
 
 const saving = ref(false)
 
@@ -72,12 +73,31 @@ const addressExists = computed(() => {
   return contactsStore.hasAddress(address.value)
 })
 
+// Public key validation (compressed public key format)
+const isValidPublicKey = computed(() => {
+  if (!publicKey.value) return null // Optional field
+  // Check format: 33 bytes hex (compressed public key starting with 02 or 03)
+  if (!/^0[23][0-9a-fA-F]{64}$/.test(publicKey.value)) {
+    return false
+  }
+  return true
+})
+
+const publicKeyError = computed(() => {
+  if (!publicKey.value) return null
+  if (isValidPublicKey.value === false) {
+    return 'Invalid format (must be 66 hex characters starting with 02 or 03)'
+  }
+  return null
+})
+
 const canSave = computed(() => {
   return (
     isValidName.value &&
     isValidAddress.value === true &&
     !addressExists.value &&
-    !saving.value
+    !saving.value &&
+    isValidPublicKey.value !== false
   )
 })
 
@@ -117,6 +137,7 @@ const saveContact = async () => {
       peerId: peerId.value || undefined,
       serviceType: serviceType.value || undefined,
       isFavorite: isFavorite.value,
+      publicKey: publicKey.value.trim() || undefined,
     }
 
     let savedContact: Contact
@@ -223,6 +244,34 @@ const cancel = () => {
         </div>
       </template>
     </UFormField>
+
+    <!-- Public Key (for MuSig2) -->
+    <UFormField label="Public Key" hint="Optional - enables MuSig2 shared wallets">
+      <UInput v-model="publicKey" placeholder="02... or 03..." class="font-mono"
+        :color="publicKeyError ? 'error' : undefined">
+        <template #leading>
+          <UIcon name="i-lucide-key" class="w-5 h-5 text-muted" />
+        </template>
+      </UInput>
+      <template #hint>
+        <span v-if="publicKeyError" class="text-error-500">
+          {{ publicKeyError }}
+        </span>
+        <span v-else-if="isValidPublicKey === true" class="text-success-500">
+          Valid public key
+        </span>
+      </template>
+    </UFormField>
+
+    <!-- Info alert about public keys -->
+    <UAlert v-if="!publicKey && address" color="primary" icon="i-lucide-info" variant="subtle">
+      <template #description>
+        <p class="text-sm">
+          Adding a public key enables MuSig2 multi-signature features with this contact.
+          Public keys cannot be derived from addresses - ask your contact to share theirs.
+        </p>
+      </template>
+    </UAlert>
 
     <!-- Favorite Toggle -->
     <div class="flex items-center gap-3 p-3 rounded-lg border border-default">

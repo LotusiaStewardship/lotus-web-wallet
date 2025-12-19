@@ -1,467 +1,334 @@
 <script setup lang="ts">
+/**
+ * Advertise Settings Page
+ *
+ * Configure P2P signer advertisement settings.
+ * Allows users to become signers and help others with multi-signature transactions.
+ */
+import { useMuSig2Store, type TransactionType } from '~/stores/musig2'
 import { useP2PStore } from '~/stores/p2p'
 import { useWalletStore } from '~/stores/wallet'
-import { useBitcore } from '~/composables/useBitcore'
-import { useMuSig2 } from '~/composables/useMuSig2'
-
-// Transaction type constants (matching SDK's TransactionType enum values)
-const TransactionType = {
-  SPEND: 'spend',
-  SWAP: 'swap',
-  COINJOIN: 'coinjoin',
-  CUSTODY: 'custody',
-  ESCROW: 'escrow',
-  CHANNEL: 'channel',
-} as const
-
-type TransactionTypeValue = (typeof TransactionType)[keyof typeof TransactionType]
 
 definePageMeta({
-  title: 'Advertise Service',
+  title: 'Advertise',
 })
 
+const musig2Store = useMuSig2Store()
 const p2pStore = useP2PStore()
 const walletStore = useWalletStore()
-const musig2 = useMuSig2()
-const { Bitcore } = useBitcore()
 const toast = useToast()
-const router = useRouter()
+const route = useRoute()
 
-// ============================================================================
-// State
-// ============================================================================
+// Form state
+const signerEnabled = ref(false)
+const nickname = ref('')
+const transactionTypes = ref<TransactionType[]>(['spend'])
+const fee = ref('0')
+const minAmount = ref('')
+const maxAmount = ref('')
+const saving = ref(false)
 
-const publishing = ref(false)
+// Transaction type options
+const txTypeOptions: Array<{
+  label: string
+  value: TransactionType
+  description: string
+}> = [
+    {
+      label: 'Spend',
+      value: 'spend',
+      description: 'Help sign spending transactions',
+    },
+    {
+      label: 'CoinJoin',
+      value: 'coinjoin',
+      description: 'Participate in privacy-enhancing transactions',
+    },
+    {
+      label: 'Escrow',
+      value: 'escrow',
+      description: 'Act as escrow for trades',
+    },
+    {
+      label: 'Swap',
+      value: 'swap',
+      description: 'Facilitate atomic swaps',
+    },
+  ]
 
-// Wallet Presence
-const presenceEnabled = ref(p2pStore.isAdvertisingPresence)
-const presenceNickname = ref('')
-
-// MuSig2 Signer Configuration
-const signerEnabled = ref(musig2.isAdvertisingSigner.value)
-const signerNickname = ref('')
-const signerDescription = ref('')
-const signerFee = ref<number | undefined>(undefined)
-const signerMinAmount = ref<number | undefined>(undefined)
-const signerMaxAmount = ref<number | undefined>(undefined)
-const selectedTransactionTypes = ref<TransactionTypeValue[]>([TransactionType.SPEND])
-
-// Transaction type options with metadata
-const transactionTypeOptions = [
-  {
-    value: TransactionType.SPEND,
-    label: 'Spend',
-    icon: 'i-lucide-send',
-    description: 'Standard multi-sig spend transactions',
-  },
-  {
-    value: TransactionType.SWAP,
-    label: 'Atomic Swap',
-    icon: 'i-lucide-repeat',
-    description: 'Cross-chain atomic swaps',
-  },
-  {
-    value: TransactionType.COINJOIN,
-    label: 'CoinJoin',
-    icon: 'i-lucide-shuffle',
-    description: 'Privacy-enhancing CoinJoin rounds',
-  },
-  {
-    value: TransactionType.CUSTODY,
-    label: 'Custody',
-    icon: 'i-lucide-shield',
-    description: 'Multi-sig custody arrangements',
-  },
-  {
-    value: TransactionType.ESCROW,
-    label: 'Escrow',
-    icon: 'i-lucide-lock',
-    description: 'Escrow and dispute resolution',
-  },
-  {
-    value: TransactionType.CHANNEL,
-    label: 'Channel',
-    icon: 'i-lucide-git-branch',
-    description: 'Payment channel operations',
-  },
-]
-
-// ============================================================================
-// Computed
-// ============================================================================
-
-// Get public key from wallet
-// Note: The wallet store exposes _hdPrivkey as a private property
-// We access it via the store's internal state for signing purposes
-const walletPublicKey = computed(() => {
-  if (!walletStore.address || !Bitcore) return null
-  return walletStore.getPublicKeyHex()
-})
-
-// Validation for signer
-const canPublishSigner = computed(() => {
-  if (!p2pStore.initialized || publishing.value) return false
-  if (!walletPublicKey.value) return false
-  return selectedTransactionTypes.value.length > 0
-})
-
-// ============================================================================
-// Actions
-// ============================================================================
-
-// Toggle transaction type
-const toggleTransactionType = (txType: TransactionTypeValue) => {
-  const index = selectedTransactionTypes.value.indexOf(txType)
-  if (index >= 0) {
-    selectedTransactionTypes.value.splice(index, 1)
-  } else {
-    selectedTransactionTypes.value.push(txType)
+// Load existing settings on mount
+onMounted(() => {
+  // Load from store state
+  signerEnabled.value = musig2Store.signerEnabled
+  if (musig2Store.signerConfig) {
+    nickname.value = musig2Store.signerConfig.nickname || ''
+    transactionTypes.value = musig2Store.signerConfig.transactionTypes || [
+      'spend',
+    ]
+    fee.value = String(musig2Store.signerConfig.fee || 0)
+    minAmount.value = String(musig2Store.signerConfig.amountRange?.min || '')
+    maxAmount.value = String(musig2Store.signerConfig.amountRange?.max || '')
   }
-}
+})
 
-// Toggle wallet presence
-const togglePresence = async () => {
-  if (publishing.value) return
-  publishing.value = true
+// Check if P2P is connected
+const isP2PConnected = computed(() => p2pStore.connected && p2pStore.initialized)
+
+// Check if P2P is fully operational (DHT ready - required for discovery)
+const isP2PFullyOperational = computed(() => p2pStore.isFullyOperational)
+
+// Check if MuSig2 is initialized
+const isMuSig2Ready = computed(() => musig2Store.initialized)
+
+// Save settings
+async function saveSettings() {
+  if (!isP2PConnected.value) {
+    toast.add({
+      title: 'Not Connected',
+      description: 'Please connect to the P2P network first',
+      color: 'warning',
+    })
+    return
+  }
+
+  if (!isP2PFullyOperational.value) {
+    toast.add({
+      title: 'Network Not Ready',
+      description: 'Please wait for the P2P network to become fully operational (DHT ready)',
+      color: 'warning',
+    })
+    return
+  }
+
+  saving.value = true
 
   try {
-    if (presenceEnabled.value) {
-      // Withdraw presence
-      await p2pStore.withdrawPresence()
-      presenceEnabled.value = false
+    // Initialize MuSig2 if not already
+    if (!isMuSig2Ready.value) {
+      await musig2Store.initialize()
+    }
+
+    if (signerEnabled.value) {
+      // Advertise as signer
+      await musig2Store.advertiseSigner({
+        nickname: nickname.value || 'Anonymous',
+        transactionTypes: transactionTypes.value,
+        fee: parseFloat(fee.value) || 0,
+        amountRange: {
+          min: minAmount.value ? parseFloat(minAmount.value) : undefined,
+          max: maxAmount.value ? parseFloat(maxAmount.value) : undefined,
+        },
+      })
+
       toast.add({
-        title: 'Presence Disabled',
-        description: 'You are no longer visible on the network',
-        color: 'neutral',
-        icon: 'i-lucide-eye-off',
+        title: 'Signer Published',
+        description: 'Your signer advertisement is now live on the network',
+        color: 'success',
       })
     } else {
-      // Advertise presence
-      await p2pStore.advertisePresence({
-        walletAddress: walletStore.address,
-        nickname: presenceNickname.value || undefined,
-      })
-      presenceEnabled.value = true
+      // Withdraw advertisement
+      await musig2Store.withdrawSigner()
       toast.add({
-        title: 'Presence Enabled',
-        description: 'You are now visible on the network',
-        color: 'success',
-        icon: 'i-lucide-eye',
+        title: 'Settings Saved',
+        description: 'Signer advertisement disabled',
+        color: 'info',
       })
     }
-  } catch (err) {
-    toast.add({
-      title: 'Failed',
-      description: err instanceof Error ? err.message : 'Operation failed',
-      color: 'error',
-      icon: 'i-lucide-x-circle',
-    })
-  } finally {
-    publishing.value = false
-  }
-}
+  } catch (error) {
+    console.error('Failed to save signer settings:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Failed to save settings'
 
-// Publish signer advertisement
-const publishSigner = async () => {
-  if (!canPublishSigner.value || !walletPublicKey.value) return
-
-  publishing.value = true
-
-  try {
-    await musig2.advertiseSigner({
-      publicKeyHex: walletPublicKey.value,
-      transactionTypes: selectedTransactionTypes.value as string[],
-      amountRange:
-        signerMinAmount.value || signerMaxAmount.value
-          ? { min: signerMinAmount.value, max: signerMaxAmount.value }
-          : undefined,
-      nickname: signerNickname.value || undefined,
-      description: signerDescription.value || undefined,
-      fee: signerFee.value,
-    })
-
-    signerEnabled.value = true
-
-    toast.add({
-      title: 'Signer Published',
-      description: 'You are now available as a MuSig2 signer',
-      color: 'success',
-      icon: 'i-lucide-check-circle',
-    })
-
-    router.push('/p2p')
-  } catch (err) {
-    toast.add({
-      title: 'Publish Failed',
-      description: err instanceof Error ? err.message : 'Failed to publish signer',
-      color: 'error',
-      icon: 'i-lucide-x-circle',
-    })
-  } finally {
-    publishing.value = false
-  }
-}
-
-// Withdraw signer advertisement
-const withdrawSigner = async () => {
-  if (publishing.value) return
-  publishing.value = true
-
-  try {
-    await musig2.withdrawSigner()
-    signerEnabled.value = false
-    toast.add({
-      title: 'Signer Withdrawn',
-      description: 'You are no longer available as a signer',
-      color: 'neutral',
-      icon: 'i-lucide-x',
-    })
-  } catch (err) {
-    toast.add({
-      title: 'Failed',
-      description: err instanceof Error ? err.message : 'Operation failed',
-      color: 'error',
-      icon: 'i-lucide-x-circle',
-    })
-  } finally {
-    publishing.value = false
-  }
-}
-
-// Initialize MuSig2 when P2P becomes ready
-const initMuSig2 = async () => {
-  if (p2pStore.initialized && !musig2.isInitialized.value && !musig2.isInitializing.value) {
-    try {
-      console.log('[Advertise] Initializing MuSig2...')
-      await musig2.initialize()
-      console.log('[Advertise] MuSig2 initialized')
-    } catch {
-      // Error handled by composable
+    // Provide more helpful error messages
+    let description = errorMessage
+    if (errorMessage.includes('discovery layer not available')) {
+      description = 'The P2P discovery layer is not ready. Please wait for the network to fully initialize.'
     }
+
+    toast.add({
+      title: 'Save Failed',
+      description,
+      color: 'error',
+    })
+  } finally {
+    saving.value = false
   }
 }
 
-// Sync UI state with composable state
-const syncState = () => {
-  presenceEnabled.value = p2pStore.isAdvertisingPresence
-  signerEnabled.value = musig2.isAdvertisingSigner.value
-
-  // Load existing signer config if available
-  if (musig2.mySignerConfig.value) {
-    const config = musig2.mySignerConfig.value
-    signerNickname.value = config.nickname || ''
-    signerDescription.value = config.description || ''
-    signerFee.value = config.fee
-    signerMinAmount.value = config.amountRange?.min
-    signerMaxAmount.value = config.amountRange?.max
-    selectedTransactionTypes.value = [...config.transactionTypes] as TransactionTypeValue[]
+// Toggle handler
+async function handleToggle(enabled: boolean) {
+  signerEnabled.value = enabled
+  if (!enabled) {
+    // Auto-save when disabling
+    await saveSettings()
   }
 }
 
-// Watch for P2P initialization to trigger MuSig2 init
-watch(() => p2pStore.initialized, (isInitialized) => {
-  if (isInitialized) {
-    initMuSig2().then(syncState)
-  }
-})
-
-// Watch for MuSig2 initialization to sync state
-watch(() => musig2.isInitialized.value, (isInitialized) => {
-  if (isInitialized) {
-    syncState()
-  }
-})
-
-// Initialize P2P and MuSig2 if needed
-onMounted(async () => {
-  if (!p2pStore.initialized) {
-    try {
-      await p2pStore.initialize()
-    } catch {
-      // Error handled by store
+// Toggle transaction type
+function toggleTxType(value: TransactionType, checked: boolean) {
+  if (checked) {
+    if (!transactionTypes.value.includes(value)) {
+      transactionTypes.value = [...transactionTypes.value, value]
     }
+  } else {
+    transactionTypes.value = transactionTypes.value.filter(t => t !== value)
   }
+}
 
-  // Initialize MuSig2 after P2P is ready
-  await initMuSig2()
+// Navigate to P2P page to connect
+function goToP2P() {
+  navigateTo('/people/p2p')
+}
 
-  // Sync state
-  syncState()
+// Determine back path from query or default
+const backPath = computed(() => {
+  return (route.query.from as string) || '/settings'
 })
 </script>
 
 <template>
-  <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Header -->
-    <div>
-      <SettingsBackButton />
-      <h1 class="text-2xl font-bold">P2P Services</h1>
-      <p class="text-muted">Configure your presence and services on the P2P network</p>
-    </div>
+  <div class="space-y-4">
+    <SettingsBackButton :to="backPath" />
 
-    <!-- P2P Status -->
-    <UAlert v-if="!p2pStore.initialized" color="warning" variant="subtle" icon="i-lucide-loader-2">
-      <template #title>Connecting to P2P Network...</template>
+    <!-- Header -->
+    <UiAppCard>
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+          <UIcon name="i-lucide-megaphone" class="w-6 h-6 text-primary" />
+        </div>
+        <div class="flex-1">
+          <h2 class="text-lg font-semibold">Signer Advertisement</h2>
+          <p class="text-sm text-muted">
+            Advertise yourself as a signer to help others with multi-signature
+            transactions
+          </p>
+        </div>
+        <USwitch v-model="signerEnabled" :disabled="!isP2PConnected" @update:model-value="handleToggle" />
+      </div>
+    </UiAppCard>
+
+    <!-- P2P Not Connected Warning -->
+    <UAlert v-if="!isP2PConnected" color="warning" icon="i-lucide-wifi-off" title="P2P Not Connected">
       <template #description>
-        Please wait while we establish a connection to the network.
+        <p class="mb-2">
+          You need to connect to the P2P network before you can advertise as a
+          signer.
+        </p>
+        <UButton color="warning" variant="soft" size="sm" @click="goToP2P">
+          Connect to P2P Network
+        </UButton>
       </template>
     </UAlert>
 
-    <!-- Wallet Presence Card -->
-    <UCard>
-      <div class="flex items-start justify-between gap-4">
-        <div class="flex items-start gap-3">
-          <div
-            class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-primary-100 dark:bg-primary-900/20">
-            <UIcon name="i-lucide-wifi" class="w-5 h-5 text-primary-500" />
-          </div>
-          <div>
-            <p class="font-semibold">Wallet Presence</p>
-            <p class="text-sm text-muted">Let others know you're online and available for P2P interactions</p>
-          </div>
-        </div>
-        <USwitch :model-value="presenceEnabled" :disabled="!p2pStore.initialized || publishing"
-          @update:model-value="togglePresence" />
-      </div>
-
-      <!-- Presence Options (shown when enabled) -->
-      <div v-if="presenceEnabled" class="mt-4 pt-4 border-t border-default">
-        <UFormField label="Display Name" hint="Optional nickname visible to others">
-          <UInput v-model="presenceNickname" placeholder="Anonymous" />
-        </UFormField>
-      </div>
-    </UCard>
-
-    <!-- MuSig2 Signer Card -->
-    <UCard>
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-pen-tool" class="w-5 h-5 text-success-500" />
-          <span class="font-semibold">MuSig2 Signer</span>
-          <UBadge v-if="signerEnabled" color="success" variant="subtle" size="xs">Active</UBadge>
-        </div>
-      </template>
-
-      <div class="space-y-4">
-        <p class="text-sm text-muted">
-          Become a MuSig2 signer to participate in multi-signature transactions with other users.
+    <!-- P2P Connected but not fully operational -->
+    <UAlert v-else-if="isP2PConnected && !isP2PFullyOperational" color="info" icon="i-lucide-loader"
+      title="Network Initializing">
+      <template #description>
+        <p>
+          The P2P network is connected but still initializing. Please wait for
+          the DHT to become ready before publishing your signer advertisement.
         </p>
-
-        <!-- Transaction Types -->
-        <UFormField label="Transaction Types" required hint="Select the types of transactions you're willing to sign">
-          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <button v-for="txType in transactionTypeOptions" :key="txType.value"
-              class="p-3 rounded-lg border-2 text-left transition-all" :class="[
-                selectedTransactionTypes.includes(txType.value)
-                  ? 'border-success-500 bg-success-50 dark:bg-success-900/20'
-                  : 'border-default hover:border-success-300'
-              ]" @click="toggleTransactionType(txType.value)">
-              <div class="flex items-center gap-2">
-                <UIcon :name="txType.icon" class="w-4 h-4"
-                  :class="selectedTransactionTypes.includes(txType.value) ? 'text-success-500' : 'text-muted'" />
-                <span class="text-sm font-medium">{{ txType.label }}</span>
-              </div>
-            </button>
-          </div>
-        </UFormField>
-
-        <!-- Signer Details -->
-        <div class="grid sm:grid-cols-2 gap-4">
-          <UFormField label="Display Name" hint="Optional">
-            <UInput class="w-full" v-model="signerNickname" placeholder="Anonymous Signer" />
-          </UFormField>
-
-          <UFormField label="Signing Fee (XPI)" hint="Optional fee per signature">
-            <UInput class="w-full" v-model="signerFee" type="number" placeholder="0" min="0" step="0.01" />
-          </UFormField>
-        </div>
-
-        <!-- Amount Range -->
-        <UFormField label="Amount Range (XPI)" hint="Optional limits on transaction amounts">
-          <div class="grid grid-cols-2 gap-4">
-            <UInput v-model="signerMinAmount" type="number" placeholder="Min" min="0" />
-            <UInput v-model="signerMaxAmount" type="number" placeholder="Max" min="0" />
-          </div>
-        </UFormField>
-
-        <!-- Description -->
-        <UFormField label="Description">
-          <UTextarea class="w-full" v-model="signerDescription" placeholder="Describe your signing service..."
-            :rows="3" />
-        </UFormField>
-
-        <!-- Action Buttons -->
-        <div class="flex gap-2">
-          <UButton v-if="!signerEnabled" block color="success" :loading="publishing" :disabled="!canPublishSigner"
-            icon="i-lucide-check" @click="publishSigner">
-            {{ publishing ? 'Publishing...' : 'Become a Signer' }}
-          </UButton>
-          <template v-else>
-            <UButton block color="neutral" variant="outline" :loading="publishing" icon="i-lucide-x"
-              @click="withdrawSigner">
-              Stop Signing
-            </UButton>
-          </template>
-        </div>
-      </div>
-    </UCard>
-
-    <!-- Info Card -->
-    <UCard>
-      <div class="flex gap-3">
-        <UIcon name="i-lucide-info" class="w-5 h-5 text-info-500 shrink-0 mt-0.5" />
-        <div class="text-sm text-muted space-y-2">
-          <p>
-            <strong>Wallet Presence</strong> lets others see you're online. It expires after 1 hour but auto-refreshes
-            while
-            you're connected.
-          </p>
-          <p>
-            <strong>MuSig2 Signer</strong> advertises your availability to participate in multi-signature transactions.
-            Other users can discover you and request your signature.
-          </p>
-        </div>
-      </div>
-    </UCard>
-
-    <!-- Current Status -->
-    <UCard v-if="musig2.mySignerConfig.value || p2pStore.myPresenceConfig">
-      <template #header>
-        <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-radio" class="w-5 h-5" />
-          <span class="font-semibold">Active Advertisements</span>
-        </div>
       </template>
+    </UAlert>
 
-      <div class="divide-y divide-default -my-2">
-        <!-- Presence -->
-        <div v-if="p2pStore.myPresenceConfig" class="py-3 flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <UIcon name="i-lucide-wifi" class="w-4 h-4 text-primary-500" />
-            <div>
-              <p class="font-medium">Wallet Presence</p>
-              <p class="text-xs text-muted">{{ p2pStore.myPresenceConfig.walletAddress.slice(0, 20)
-                }}...
-              </p>
-            </div>
-          </div>
-          <UBadge color="success" variant="subtle" size="xs">Active</UBadge>
-        </div>
+    <!-- Settings (only shown when enabled) -->
+    <template v-if="signerEnabled && isP2PConnected">
+      <!-- Identity -->
+      <UiAppCard title="Identity" icon="i-lucide-user">
+        <UFormField label="Nickname" hint="Optional display name for other users">
+          <UInput v-model="nickname" placeholder="Anonymous" />
+        </UFormField>
+      </UiAppCard>
 
-        <!-- Signer -->
-        <div v-if="musig2.mySignerConfig.value" class="py-3 flex items-center justify-between">
-          <div class="flex items-center gap-3">
-            <UIcon name="i-lucide-pen-tool" class="w-4 h-4 text-success-500" />
+      <!-- Transaction Types -->
+      <UiAppCard title="Transaction Types" icon="i-lucide-list-checks">
+        <p class="text-sm text-muted mb-3">
+          Select the types of transactions you're willing to sign
+        </p>
+        <div class="space-y-2">
+          <label v-for="option in txTypeOptions" :key="option.value"
+            class="flex items-start gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+            :class="{
+              'border-primary bg-primary/5': transactionTypes.includes(
+                option.value,
+              ),
+            }">
+            <UCheckbox :model-value="transactionTypes.includes(option.value)" @update:model-value="
+              checked => toggleTxType(option.value, checked as boolean)
+            " />
             <div>
-              <p class="font-medium">MuSig2 Signer</p>
-              <p class="text-xs text-muted">
-                {{ musig2.mySignerConfig.value.transactionTypes.join(', ') }}
-              </p>
+              <div class="font-medium text-sm">{{ option.label }}</div>
+              <div class="text-xs text-muted">{{ option.description }}</div>
             </div>
-          </div>
-          <UBadge color="success" variant="subtle" size="xs">Active</UBadge>
+          </label>
         </div>
+      </UiAppCard>
+
+      <!-- Fee Structure -->
+      <UiAppCard title="Fee Structure" icon="i-lucide-coins">
+        <div class="space-y-4">
+          <UFormField label="Fee per signature" hint="Amount in XPI you charge per signature (0 for free)">
+            <UInput v-model="fee" type="number" step="0.001" min="0" placeholder="0">
+              <template #trailing>
+                <span class="text-muted text-sm">XPI</span>
+              </template>
+            </UInput>
+          </UFormField>
+
+          <div class="grid grid-cols-2 gap-4">
+            <UFormField label="Minimum amount" hint="Optional">
+              <UInput v-model="minAmount" type="number" min="0" placeholder="No minimum">
+                <template #trailing>
+                  <span class="text-muted text-sm">XPI</span>
+                </template>
+              </UInput>
+            </UFormField>
+            <UFormField label="Maximum amount" hint="Optional">
+              <UInput v-model="maxAmount" type="number" min="0" placeholder="No maximum">
+                <template #trailing>
+                  <span class="text-muted text-sm">XPI</span>
+                </template>
+              </UInput>
+            </UFormField>
+          </div>
+        </div>
+      </UiAppCard>
+
+      <!-- Save Button -->
+      <UButton color="primary" block size="lg" :loading="saving" :disabled="transactionTypes.length === 0"
+        @click="saveSettings">
+        <UIcon name="i-lucide-save" class="w-4 h-4 mr-2" />
+        Save & Publish
+      </UButton>
+
+      <!-- Validation Warning -->
+      <UAlert v-if="transactionTypes.length === 0" color="warning" icon="i-lucide-alert-triangle">
+        <template #description>
+          Please select at least one transaction type to advertise.
+        </template>
+      </UAlert>
+    </template>
+
+    <!-- Info when disabled -->
+    <UiAppCard v-else-if="isP2PConnected">
+      <div class="text-center py-4">
+        <UIcon name="i-lucide-info" class="w-8 h-8 text-muted mx-auto mb-2" />
+        <p class="text-sm text-muted">
+          Enable signer advertisement to help others with multi-signature
+          transactions and earn fees for your service.
+        </p>
       </div>
-    </UCard>
+    </UiAppCard>
+
+    <!-- Current Status (when advertising) -->
+    <UiAppCard v-if="musig2Store.signerEnabled" title="Current Status" icon="i-lucide-activity">
+      <div class="flex items-center gap-3">
+        <div class="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+        <span class="text-sm">Your signer advertisement is active</span>
+      </div>
+      <div class="mt-3 text-xs text-muted">
+        Other users can now discover you and request your help with
+        multi-signature transactions.
+      </div>
+    </UiAppCard>
   </div>
 </template>
