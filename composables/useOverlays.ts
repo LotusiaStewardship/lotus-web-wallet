@@ -1,23 +1,121 @@
 /**
  * Centralized Overlay Management Composable
  *
- * Uses Nuxt UI 3's useOverlay to programmatically control all modals and slideovers.
- * Each modal instance is created lazily only when first opened for optimal performance.
+ * Programmatic modal system built on Nuxt UI 3's useOverlay. All modals are opened
+ * via functions (not template components), providing consistent behavior, history
+ * management, and modal chaining support.
  *
- * Architecture:
- * - Lazy component imports (Nuxt handles code-splitting)
- * - Per-modal instance caching (overlay.create() called only when modal first opens)
- * - History state management for back button support
- * - Modal chaining support for flows like Scan → Send
+ * ## Architecture
+ *
+ * - **Lazy Loading**: Modal components are lazy-imported and code-split by Nuxt
+ * - **Instance Caching**: Each modal instance is created once and reused (destroyOnClose: false)
+ * - **History Management**: Browser back button support via history.pushState()
+ * - **Modal Chaining**: Support for flows like ActionSheet → Send or Scan → AddContact
+ * - **Multi-Stage Navigation**: Internal back navigation for wizard-style modals
+ *
+ * ## How Modals Work
+ *
+ * 1. **Opening**: Call `openModal()` function (e.g., `openSendModal()`)
+ * 2. **Instance Creation**: Modal instance is created via `useOverlay().create()` (lazy, cached)
+ * 3. **History State**: `pushHistoryState()` adds browser history entry for back button
+ * 4. **Modal Opens**: `modal.open(props)` displays the modal and returns a Promise
+ * 5. **User Interaction**: User interacts with modal (X button, ESC, back button, submit)
+ * 6. **Modal Closes**: Modal emits 'close' event, Promise resolves with result
+ * 7. **Cleanup**: History state is cleaned up, query params removed (if syncToRoute)
+ *
+ * ## URL Synchronization (syncToRoute)
+ *
+ * Some modals support `syncToRoute` flag to sync modal state with URL query parameters.
+ * This enables:
+ * - Deep linking (e.g., `/?send=lotus_123` opens SendModal)
+ * - Browser refresh preserves modal state
+ * - Shareable URLs with pre-filled modal data
+ *
+ * ### CRITICAL: Query Param Cleanup Pattern
+ *
+ * For modals with `syncToRoute = true`, query params MUST be cleaned up BEFORE calling
+ * `cleanupHistoryAfterClose()`. This is because:
+ *
+ * 1. Modal opens with `?param=value` in URL
+ * 2. History stack: `[/, /?param=value]` (pushState adds entry)
+ * 3. User clicks X button → modal closes
+ * 4. If we call `history.back()` first, browser navigates to previous entry
+ * 5. Previous entry STILL has `?param=value` in URL
+ * 6. Query params reappear after cleanup! ❌
+ *
+ * **Correct Pattern**:
+ * ```typescript
+ * if (syncToRoute) {
+ *   // 1. Clean query params via router.replace() (changes current URL)
+ *   if (route.query.param) {
+ *     await router.replace({ query: { ...route.query, param: undefined } })
+ *   }
+ *   // 2. Clear history state WITHOUT calling history.back()
+ *   clearHistoryState()
+ * } else {
+ *   // For non-syncToRoute modals, use normal cleanup (calls history.back())
+ *   await cleanupHistoryAfterClose('modalName')
+ * }
+ * ```
+ *
+ * ## Modal Chaining
+ *
+ * When one modal opens another (e.g., Scan → Send), call `resetForChaining()` between them:
+ *
+ * ```typescript
+ * const result = await openScanModal()
+ * if (!result) return
+ *
+ * resetForChaining() // Transfer history entry to next modal
+ * await openSendModal({ initialRecipient: result.address })
+ * ```
+ *
+ * This prevents creating duplicate history entries and ensures back button works correctly.
+ *
+ * ## Multi-Stage Modals
+ *
+ * Wizard-style modals with multiple steps use `registerBackHandler()` for internal navigation:
+ *
+ * ```typescript
+ * onMounted(() => {
+ *   registerBackHandler(() => {
+ *     if (step.value === 'confirm') {
+ *       step.value = 'details'
+ *       return false // Handled internally, don't close modal
+ *     }
+ *     return true // Close modal
+ *   })
+ * })
+ * ```
+ *
+ * The handler returns:
+ * - `false`: Back navigation handled internally (go to previous step)
+ * - `true`: Close the modal
  *
  * @example
- * const { openSendModal, openReceiveModal, openActionSheet } = useOverlays()
+ * // Basic usage
+ * const { openSendModal, openReceiveModal } = useOverlays()
+ * await openSendModal({ initialRecipient: 'lotus_123' })
  *
- * // Open send modal with props
- * const result = await openSendModal({ initialRecipient: 'lotus_123' })
+ * @example
+ * // With URL synchronization
+ * await openSendModal({ initialRecipient: 'lotus_123' }, true) // syncToRoute = true
+ * // URL becomes: /?send=lotus_123
  *
- * // Open action sheet
- * const action = await openActionSheet()
+ * @example
+ * // Modal chaining
+ * const result = await openScanModal()
+ * if (result?.type === 'address') {
+ *   resetForChaining()
+ *   await openSendModal({ initialRecipient: result.address })
+ * }
+ *
+ * @example
+ * // With result handling
+ * const result = await openSendModal()
+ * if (result?.success) {
+ *   console.log('Transaction sent:', result.txid)
+ * }
  */
 import {
   LazyActionsSendModal,
@@ -516,13 +614,20 @@ export function useOverlays() {
     pushHistoryState('sendModal', modal.id, () => modal.close())
     const result = await modal.open(props)
     clearBackHandler()
-    await cleanupHistoryAfterClose('sendModal')
 
-    if (route.query.send) {
-      const newQuery = { ...route.query }
-      delete newQuery.send
-      delete newQuery.amount
-      await router.replace({ query: newQuery })
+    if (syncToRoute) {
+      // Clean query params before history cleanup (see top-level JSDoc for details)
+      if (route.query.send) {
+        const newQuery = { ...route.query }
+        delete newQuery.send
+        delete newQuery.amount
+        await router.replace({ query: newQuery })
+      }
+      // Clear history state without calling history.back()
+      clearHistoryState()
+    } else {
+      // For non-syncToRoute modals, use normal cleanup (calls history.back())
+      await cleanupHistoryAfterClose('sendModal')
     }
 
     return result as SendModalResult | undefined
@@ -584,15 +689,22 @@ export function useOverlays() {
     const modal = getAddContactModal()
     pushHistoryState('addContactModal', modal.id, () => modal.close())
     await modal.open(props)
-    await cleanupHistoryAfterClose('addContactModal')
 
-    if (route.query.add) {
-      const newQuery = { ...route.query }
-      delete newQuery.add
-      delete newQuery.address
-      delete newQuery.name
-      delete newQuery.pubkey
-      await router.replace({ query: newQuery })
+    if (syncToRoute) {
+      // Clean query params before history cleanup (see top-level JSDoc for details)
+      if (route.query.add) {
+        const newQuery = { ...route.query }
+        delete newQuery.add
+        delete newQuery.address
+        delete newQuery.name
+        delete newQuery.pubkey
+        await router.replace({ query: newQuery })
+      }
+      // Clear history state without calling history.back()
+      clearHistoryState()
+    } else {
+      // For non-syncToRoute modals, use normal cleanup (calls history.back())
+      await cleanupHistoryAfterClose('addContactModal')
     }
   }
 
@@ -625,12 +737,19 @@ export function useOverlays() {
     pushHistoryState('backupModal', modal.id, () => modal.close())
     await modal.open()
     clearBackHandler()
-    await cleanupHistoryAfterClose('backupModal')
 
-    if (route.query.backup) {
-      const newQuery = { ...route.query }
-      delete newQuery.backup
-      await router.replace({ query: newQuery })
+    if (syncToRoute) {
+      // Clean query params before history cleanup (see top-level JSDoc for details)
+      if (route.query.backup) {
+        const newQuery = { ...route.query }
+        delete newQuery.backup
+        await router.replace({ query: newQuery })
+      }
+      // Clear history state without calling history.back()
+      clearHistoryState()
+    } else {
+      // For non-syncToRoute modals, use normal cleanup (calls history.back())
+      await cleanupHistoryAfterClose('backupModal')
     }
   }
 
@@ -678,13 +797,20 @@ export function useOverlays() {
     pushHistoryState('createWalletModal', modal.id, () => modal.close())
     await modal.open(props)
     clearBackHandler()
-    await cleanupHistoryAfterClose('createWalletModal')
 
-    if (route.query.create) {
-      const newQuery = { ...route.query }
-      delete newQuery.create
-      delete newQuery.with
-      await router.replace({ query: newQuery })
+    if (syncToRoute) {
+      // Clean query params before history cleanup (see top-level JSDoc for details)
+      if (route.query.create) {
+        const newQuery = { ...route.query }
+        delete newQuery.create
+        delete newQuery.with
+        await router.replace({ query: newQuery })
+      }
+      // Clear history state without calling history.back()
+      clearHistoryState()
+    } else {
+      // For non-syncToRoute modals, use normal cleanup
+      await cleanupHistoryAfterClose('createWalletModal')
     }
   }
 

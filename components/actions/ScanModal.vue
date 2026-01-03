@@ -148,7 +148,7 @@ function retryCamera() {
 }
 
 function openManualEntry() {
-  emit('close', { manualEntry: true } as any)
+  emit('close', { manualEntry: true })
 }
 </script>
 

@@ -37,11 +37,11 @@ const p2pLoading = ref(false)
 const signerLoading = ref(false)
 
 // Watch for query params
-watch(() => route.query, async (query) => {
+/* watch(() => route.query, async (query) => {
   if (query.backup === 'true') {
     await openBackupModal(true)
   }
-}, { immediate: true })
+}, { immediate: true }) */
 
 // Computed - read from stores
 const isBackedUp = computed(() => onboardingStore.backupComplete)

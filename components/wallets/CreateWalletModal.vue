@@ -25,16 +25,12 @@ const emit = defineEmits<{
 const peopleStore = usePeopleStore()
 const musig2Store = useMuSig2Store()
 
-// Reset state on mount
 onMounted(() => {
+  // Reset state on mount
   reset()
   if (props.preselectedContact) {
     form.participantIds = [props.preselectedContact]
   }
-})
-
-// Register back handler for multi-stage navigation
-onMounted(() => {
   registerBackHandler(() => {
     if (step.value === 'participants') {
       step.value = 'name'
