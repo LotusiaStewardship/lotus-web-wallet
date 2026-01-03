@@ -3,7 +3,7 @@
  * Fetches transaction data from the Lotus Explorer API
  */
 
-import type { ScriptChunkPlatformUTF8 } from 'lotus-sdk/lib/rank'
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type {
   Block as ChronikBlock,
   BlockInfo as ChronikBlockInfo,

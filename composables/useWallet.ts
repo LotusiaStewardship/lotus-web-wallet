@@ -153,9 +153,9 @@ export function useWallet() {
   // ========================================================================
 
   /**
-   * Whether draft is active
+   * Whether draft is active (has address or amount set)
    */
-  const hasDraft = computed(() => draftStore.initialized)
+  const hasDraft = computed(() => draftStore.hasAddress || draftStore.hasAmount)
 
   /**
    * Whether draft is valid and can be sent
@@ -191,7 +191,7 @@ export function useWallet() {
    * Start a new transaction draft
    */
   function startSend() {
-    draftStore.initialize()
+    draftStore.reset()
   }
 
   /**

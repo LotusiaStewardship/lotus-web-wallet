@@ -10,7 +10,7 @@
  *   // Bitcore is guaranteed to be available after plugin initialization
  *   const address = new Bitcore.XAddress(addressString)
  */
-import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
+import type * as BitcoreTypes from 'xpi-ts/lib/bitcore'
 import {
   getBitcore,
   isBitcoreLoaded,

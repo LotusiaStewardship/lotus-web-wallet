@@ -7,12 +7,13 @@
  * The crypto worker offloads CPU-intensive cryptographic operations
  * from the main thread to prevent UI blocking.
  */
+import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
 
 // ============================================================================
 // Address Types
 // ============================================================================
 
-export type AddressType = 'p2pkh' | 'p2tr'
+export type AddressType = 'p2pkh' | 'p2tr-commitment'
 
 // ============================================================================
 // Request Messages (Main → Worker)
@@ -40,7 +41,7 @@ export interface DeriveKeysRequest {
   payload: {
     mnemonic: string
     addressType: AddressType
-    network: string
+    network: NetworkName
     /** BIP44 account index (0 = PRIMARY, 1 = MUSIG2, etc.) */
     accountIndex?: number
     /** Address index within the account chain */

@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { useWalletStore } from '~/stores/wallet'
-import { useOnboardingStore } from '~/stores/onboarding'
-import { useNotificationStore } from '~/stores/notifications'
+import { prewarmOverlays } from '~/composables/useOverlays'
 
 const walletStore = useWalletStore()
 const onboardingStore = useOnboardingStore()
 const notificationStore = useNotificationStore()
+const p2pStore = useP2PStore()
+const musig2Store = useMuSig2Store()
+const settingsStore = useSettingsStore()
 const colorMode = useColorMode()
 
 // Keyboard shortcuts modal state
 const shortcutsModalOpen = ref(false)
 
 // Register global keyboard shortcut for help modal (Cmd+/)
-onKeyStroke('/', (e) => {
+// TODO: this shows the modal, but the shortcuts don't work, so disable it for now
+/* onKeyStroke('/', (e) => {
   if (e.metaKey || e.ctrlKey) {
     e.preventDefault()
     shortcutsModalOpen.value = true
   }
-})
+}) */
 
 // Initialize stores on app mount
 onMounted(async () => {
@@ -27,11 +29,45 @@ onMounted(async () => {
   // Initialize notification store
   notificationStore.initialize()
 
+  // Initialize UI settings store
+  settingsStore.initialize()
+
+  // Load P2P settings from storage (before wallet init)
+  p2pStore.loadSettings()
+
   // Initialize wallet (async, may create new or load existing)
   await walletStore.initialize()
 
+  // After wallet is ready, conditionally initialize P2P if autoConnect is enabled
+  if (p2pStore.settings.autoConnect && !p2pStore.initialized) {
+    try {
+      await p2pStore.initialize()
+      console.log('[App] P2P auto-connected based on settings')
+
+      // If P2P connected and signer was previously enabled, initialize MuSig2
+      if (p2pStore.connected && musig2Store.signerConfig) {
+        try {
+          await musig2Store.initialize()
+          console.log('[App] MuSig2 auto-initialized for signer restoration')
+        } catch (musig2Error) {
+          console.warn('[App] Failed to auto-initialize MuSig2:', musig2Error)
+        }
+      }
+    } catch (p2pError) {
+      console.warn('[App] Failed to auto-connect P2P:', p2pError)
+    }
+  }
+
   // Set up service worker message handler
   setupServiceWorkerMessageHandler()
+
+  // Pre-warm overlay instances during idle time to eliminate first-click delay
+  // Use requestIdleCallback if available, otherwise fall back to setTimeout
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => prewarmOverlays(), { timeout: 2000 })
+  } else {
+    setTimeout(prewarmOverlays, 100)
+  }
 })
 
 // Handle messages from service worker
@@ -73,7 +109,8 @@ provide('colorMode', colorMode)
     </ClientOnly> -->
 
     <!-- Keyboard Shortcuts Help Modal -->
-    <CommonKeyboardShortcutsModal v-model:open="shortcutsModalOpen" />
+    <!-- TODO: the modal shows shortcut keys that don't work, so just disable it -->
+    <!-- <UiKeyboardShortcutsModal v-model:open="shortcutsModalOpen" /> -->
   </UApp>
 </template>
 
@@ -90,7 +127,7 @@ body,
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
-  height: 8px;
+  /*height: 8px;*/
 }
 
 ::-webkit-scrollbar-track {

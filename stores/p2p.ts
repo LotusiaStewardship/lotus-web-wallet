@@ -4,12 +4,19 @@
  * Core P2P connectivity layer for the wallet.
  * This store manages reactive state for P2P connection status, peers, and presence.
  *
+ * Access Pattern:
+ * - Uses plugin getter functions for service access (NOT composables)
+ * - Does NOT import SDK directly
+ * - Manages application state, delegates to P2P plugin for operations
+ *
  * Architecture:
  * - This store provides REACTIVE STATE for P2P
  * - All P2P operations are delegated to the P2P plugin (plugins/04.p2p.client.ts)
  * - Protocol-specific functionality (MuSig2, FROST, SwapSig) uses getCoordinator() from service
  */
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useMuSig2Store } from './musig2'
 import { useContactsStore } from './contacts'
 import { useIdentityStore } from './identity'
 import { getItem, setItem, removeItem, STORAGE_KEYS } from '~/utils/storage'
@@ -25,9 +32,9 @@ import {
   stopPresenceAdvertising,
   discoverPeers,
   getCoordinator,
-  getSDKModule,
   isP2PInitialized,
   connectToPeer as serviceConnectToPeer,
+  connectWithRetry as serviceConnectWithRetry,
   disconnectFromPeer as serviceDisconnectFromPeer,
   type P2PEventCallbacks,
 } from '~/plugins/04.p2p.client'
@@ -169,706 +176,751 @@ let connectionStateMonitorId: ReturnType<typeof setInterval> | null = null
 // Store Definition
 // ============================================================================
 
-export const useP2PStore = defineStore('p2p', {
-  state: (): P2PState => ({
-    initialized: false,
-    connected: false,
-    connectionState: P2PConnectionState.DISCONNECTED,
-    peerId: '',
-    multiaddrs: [],
-    connectedPeers: [],
-    onlinePeers: [],
-    myPresenceConfig: null,
-    activityEvents: [],
-    dhtReady: false,
-    routingTableSize: 0,
-    error: null,
-    settings: { ...DEFAULT_P2P_SETTINGS },
-    settingsLoaded: false,
-  }),
+export const useP2PStore = defineStore('p2p', () => {
+  // === STATE ===
+  const initialized = ref(false)
+  const connected = ref(false)
+  const connectionState = ref<P2PConnectionState>(
+    P2PConnectionState.DISCONNECTED,
+  )
+  const peerId = ref('')
+  const multiaddrs = ref<string[]>([])
+  const connectedPeers = ref<UIPeerInfo[]>([])
+  const onlinePeers = ref<UIPresenceAdvertisement[]>([])
+  const myPresenceConfig = ref<PresenceConfig | null>(null)
+  const activityEvents = ref<P2PActivityEvent[]>([])
+  const dhtReady = ref(false)
+  const routingTableSize = ref(0)
+  const error = ref<string | null>(null)
+  const settings = ref<P2PSettings>({ ...DEFAULT_P2P_SETTINGS })
+  const settingsLoaded = ref(false)
 
-  getters: {
-    peerCount: (state): number => state.connectedPeers.length,
-    onlinePeerCount: (state): number => state.onlinePeers.length,
-    isOnline: (state): boolean => state.connected && state.initialized,
+  // === GETTERS ===
+  const peerCount = computed(() => connectedPeers.value.length)
+  const onlinePeerCount = computed(() => onlinePeers.value.length)
+  const isOnline = computed(() => connected.value && initialized.value)
 
-    connectionStatusMessage: (state): string => {
-      switch (state.connectionState) {
-        case P2PConnectionState.DISCONNECTED:
-          return 'Not connected'
-        case P2PConnectionState.CONNECTING:
-          return 'Connecting to network...'
-        case P2PConnectionState.CONNECTED:
-          return 'Connected, waiting for peers...'
-        case P2PConnectionState.DHT_INITIALIZING:
-          return 'Initializing DHT...'
-        case P2PConnectionState.DHT_READY:
-          return `DHT ready (${state.routingTableSize} peers in routing table)`
-        case P2PConnectionState.FULLY_OPERATIONAL:
-          return `Online with ${state.connectedPeers.length} peers`
-        case P2PConnectionState.RECONNECTING:
-          return 'Reconnecting...'
-        case P2PConnectionState.ERROR:
-          return state.error || 'Connection error'
-        default:
-          return 'Unknown state'
-      }
-    },
+  const connectionStatusMessage = computed(() => {
+    switch (connectionState.value) {
+      case P2PConnectionState.DISCONNECTED:
+        return 'Not connected'
+      case P2PConnectionState.CONNECTING:
+        return 'Connecting to network...'
+      case P2PConnectionState.CONNECTED:
+        return 'Connected, waiting for peers...'
+      case P2PConnectionState.DHT_INITIALIZING:
+        return 'Initializing DHT...'
+      case P2PConnectionState.DHT_READY:
+        return `DHT ready (${routingTableSize.value} peers in routing table)`
+      case P2PConnectionState.FULLY_OPERATIONAL:
+        return `Online with ${connectedPeers.value.length} peers`
+      case P2PConnectionState.RECONNECTING:
+        return 'Reconnecting...'
+      case P2PConnectionState.ERROR:
+        return error.value || 'Connection error'
+      default:
+        return 'Unknown state'
+    }
+  })
 
-    isFullyOperational: (state): boolean =>
-      state.connectionState === P2PConnectionState.DHT_READY ||
-      state.connectionState === P2PConnectionState.FULLY_OPERATIONAL,
+  const isFullyOperational = computed(
+    () =>
+      connectionState.value === P2PConnectionState.DHT_READY ||
+      connectionState.value === P2PConnectionState.FULLY_OPERATIONAL,
+  )
 
-    isDHTReady: (state): boolean =>
-      state.connectionState === P2PConnectionState.DHT_READY ||
-      state.connectionState === P2PConnectionState.FULLY_OPERATIONAL,
+  const isDHTReady = computed(
+    () =>
+      connectionState.value === P2PConnectionState.DHT_READY ||
+      connectionState.value === P2PConnectionState.FULLY_OPERATIONAL,
+  )
 
-    isAdvertisingPresence: (state): boolean => state.myPresenceConfig !== null,
+  const isAdvertisingPresence = computed(() => myPresenceConfig.value !== null)
 
-    recentActivity: (state): P2PActivityEvent[] =>
-      state.activityEvents.slice(0, 20),
+  const recentActivity = computed(() => activityEvents.value.slice(0, 20))
 
-    /**
-     * Alias for isAdvertisingPresence (for component compatibility)
-     * Used by p2p/SettingsPanel.vue
-     */
-    presenceEnabled: (state): boolean => state.myPresenceConfig !== null,
+  /**
+   * Alias for isAdvertisingPresence (for component compatibility)
+   * Used by p2p/SettingsPanel.vue
+   */
+  const presenceEnabled = computed(() => myPresenceConfig.value !== null)
 
-    /**
-     * Check if a specific peer is online
-     * Used by contact components to show online status
-     */
-    isPeerOnline:
-      state =>
-      (peerId: string): boolean => {
-        return state.connectedPeers.some(p => p.peerId === peerId)
-      },
+  /**
+   * Get set of online peer IDs for efficient lookup
+   */
+  const onlinePeerIds = computed(() => {
+    return new Set(connectedPeers.value.map(p => p.peerId))
+  })
 
-    /**
-     * Get set of online peer IDs for efficient lookup
-     */
-    onlinePeerIds: (state): Set<string> => {
-      return new Set(state.connectedPeers.map(p => p.peerId))
-    },
-  },
+  // === PARAMETERIZED GETTERS (as functions) ===
+  /**
+   * Check if a specific peer is online
+   * Used by contact components to show online status
+   */
+  function isPeerOnline(peerIdToCheck: string): boolean {
+    return connectedPeers.value.some(p => p.peerId === peerIdToCheck)
+  }
 
-  actions: {
-    // ========================================================================
-    // Initialization
-    // ========================================================================
+  // === ACTIONS ===
+  // ========================================================================
+  // Initialization
+  // ========================================================================
 
-    async initialize(config?: Record<string, unknown>) {
-      if (this.initialized) return
-      if (initializationPromise) {
-        await initializationPromise
-        return
-      }
+  async function initialize(config?: Record<string, unknown>) {
+    if (initialized.value) return
+    if (initializationPromise) {
+      await initializationPromise
+      return
+    }
 
-      initializationPromise = this._doInitialize(config)
-      try {
-        await initializationPromise
-      } finally {
-        initializationPromise = null
-      }
-    },
+    initializationPromise = _doInitialize(config)
+    try {
+      await initializationPromise
+    } finally {
+      initializationPromise = null
+    }
+  }
 
-    async _doInitialize(config?: Record<string, unknown>) {
-      try {
-        this.connectionState = P2PConnectionState.CONNECTING
+  async function _doInitialize(config?: Record<string, unknown>) {
+    try {
+      connectionState.value = P2PConnectionState.CONNECTING
 
-        // Load saved config
-        const savedConfig = getItem<Record<string, unknown>>(
-          STORAGE_KEYS.P2P_CONFIG,
-          {},
-        )
+      // Load saved config
+      const savedConfig = getItem<Record<string, unknown>>(
+        STORAGE_KEYS.P2P_CONFIG,
+        {},
+      )
 
-        // Merge configs
-        const mergedConfig = {
-          bootstrapNodes: DEFAULT_BOOTSTRAP_PEERS,
-          ...savedConfig,
-          ...config,
-        }
-
-        // Create event callbacks for service
-        const callbacks: P2PEventCallbacks = {
-          onConnectionStateChange: (state, _previousState, error) => {
-            this._handleConnectionStateChange(state, error)
-          },
-          onPeerConnected: peer => {
-            this._handlePeerConnected(peer)
-          },
-          onPeerDisconnected: peerId => {
-            this._handlePeerDisconnected(peerId)
-          },
-          onPresenceDiscovered: presence => {
-            this._handlePresenceDiscovered(presence)
-          },
-          onError: error => {
-            this._handleError(error)
-          },
-        }
-
-        // Initialize via service
-        const { peerId, multiaddrs } = await initializeP2P(
-          {
-            bootstrapNodes: mergedConfig.bootstrapNodes as string[],
-            enableDHT: true,
-          },
-          callbacks,
-        )
-
-        this.peerId = peerId
-        this.multiaddrs = multiaddrs
-        this.initialized = true
-        this.connected = true
-        this.connectionState = P2PConnectionState.CONNECTED
-        this.error = null
-
-        this._startConnectionStateMonitor()
-        this._updateConnectionState()
-
-        await this._restoreSavedPresence()
-
-        this._addActivityEvent({
-          type: 'info',
-          peerId: this.peerId,
-          message: 'Connected to P2P network',
-        })
-      } catch (error) {
-        console.error('Failed to initialize P2P:', error)
-        this.error =
-          error instanceof Error ? error.message : 'Failed to initialize P2P'
-        this.connected = false
-        this.connectionState = P2PConnectionState.ERROR
-        throw error
-      }
-    },
-
-    /**
-     * Get the P2PCoordinator instance
-     * Used by protocol composables (MuSig2, FROST, etc.)
-     * Delegates to service
-     */
-    getCoordinator() {
-      return getCoordinator()
-    },
-
-    /**
-     * Get the SDK module
-     * Delegates to service
-     */
-    getSDKModule() {
-      return getSDKModule()
-    },
-
-    // ========================================================================
-    // Event Handlers (called by service callbacks)
-    // ========================================================================
-
-    _handleConnectionStateChange(state: P2PConnectionState, error?: string) {
-      console.log(`[P2P Store] Connection state changed to: ${state}`)
-
-      const wasDHTReady = this.dhtReady
-
-      this.connectionState = state
-
-      if (error) {
-        this.error = error
+      // Merge configs
+      const mergedConfig = {
+        bootstrapNodes: DEFAULT_BOOTSTRAP_PEERS,
+        ...savedConfig,
+        ...config,
       }
 
-      // Update DHT ready flag based on state
-      // DHT is ready when routing table has at least 1 peer
-      this.dhtReady =
-        state === P2PConnectionState.DHT_READY ||
-        state === P2PConnectionState.FULLY_OPERATIONAL
-
-      // Update connected flag
-      this.connected =
-        state !== P2PConnectionState.DISCONNECTED &&
-        state !== P2PConnectionState.ERROR
-
-      // Trigger actions when DHT becomes ready (Phase 6.1.1)
-      if (!wasDHTReady && this.dhtReady) {
-        console.log(
-          '[P2P Store] DHT became ready, triggering dependent actions',
-        )
-        this._onDHTReady()
-      }
-    },
-
-    /**
-     * Called when DHT becomes ready
-     * Triggers MuSig2 initialization and emits activity event (Phase 6.1.1, 6.1.2)
-     */
-    async _onDHTReady() {
-      // Initialize MuSig2 if not already done
-      try {
-        const { useMuSig2Store } = await import('./musig2')
-        const musig2Store = useMuSig2Store()
-        if (!musig2Store.initialized) {
-          console.log('[P2P Store] Auto-initializing MuSig2 on DHT ready')
-          await musig2Store.initialize()
-        }
-      } catch (error) {
-        console.error('[P2P Store] Failed to auto-initialize MuSig2:', error)
+      // Create event callbacks for service
+      const callbacks: P2PEventCallbacks = {
+        onConnectionStateChange: (state, _previousState, err) => {
+          _handleConnectionStateChange(state, err)
+        },
+        onPeerConnected: peer => {
+          _handlePeerConnected(peer)
+        },
+        onPeerDisconnected: pId => {
+          _handlePeerDisconnected(pId)
+        },
+        onPresenceDiscovered: presence => {
+          _handlePresenceDiscovered(presence)
+        },
+        onError: err => {
+          _handleError(err)
+        },
       }
 
-      // Emit event for activity feed
-      this._addActivityEvent({
+      // Initialize via service
+      const result = await initializeP2P(
+        {
+          bootstrapNodes: mergedConfig.bootstrapNodes as string[],
+          enableDHT: true,
+        },
+        callbacks,
+      )
+
+      peerId.value = result.peerId
+      multiaddrs.value = result.multiaddrs
+      initialized.value = true
+      connected.value = true
+      connectionState.value = P2PConnectionState.CONNECTED
+      error.value = null
+
+      _startConnectionStateMonitor()
+      _updateConnectionState()
+
+      await _restoreSavedPresence()
+
+      _addActivityEvent({
         type: 'info',
-        peerId: this.peerId,
-        message: 'DHT ready - discovery enabled',
+        peerId: peerId.value,
+        message: 'Connected to P2P network',
       })
-    },
+    } catch (err) {
+      console.error('Failed to initialize P2P:', err)
+      error.value =
+        err instanceof Error ? err.message : 'Failed to initialize P2P'
+      connected.value = false
+      connectionState.value = P2PConnectionState.ERROR
+      throw err
+    }
+  }
 
-    _handlePeerConnected(peer: UIPeerInfo) {
-      if (!this.connectedPeers.find(p => p.peerId === peer.peerId)) {
-        this.connectedPeers.push(peer)
-        this._addActivityEvent({
-          type: 'peer_joined',
-          peerId: peer.peerId,
-          message: `Peer connected: ${peer.peerId.slice(0, 12)}...`,
-        })
+  /**
+   * Get the P2PCoordinator instance
+   * Used by protocol composables (MuSig2, FROST, etc.)
+   * Delegates to service
+   */
+  function getCoordinatorInstance() {
+    return getCoordinator()
+  }
 
-        // Phase 2: Update identity store on peer connection
-        const identityStore = useIdentityStore()
-        identityStore.updateFromPeerConnection(peer.peerId, peer.multiaddrs)
+  // ========================================================================
+  // Event Handlers (called by service callbacks)
+  // ========================================================================
 
-        // Update contact's last seen timestamp (legacy support)
-        const contactsStore = useContactsStore()
-        contactsStore.updateLastSeen(peer.peerId)
+  function _handleConnectionStateChange(
+    state: P2PConnectionState,
+    err?: string,
+  ) {
+    console.log(`[P2P Store] Connection state changed to: ${state}`)
+
+    const wasDHTReady = dhtReady.value
+
+    connectionState.value = state
+
+    if (err) {
+      error.value = err
+    }
+
+    // Update DHT ready flag based on state
+    // DHT is ready when routing table has at least 1 peer
+    dhtReady.value =
+      state === P2PConnectionState.DHT_READY ||
+      state === P2PConnectionState.FULLY_OPERATIONAL
+
+    // Update connected flag
+    connected.value =
+      state !== P2PConnectionState.DISCONNECTED &&
+      state !== P2PConnectionState.ERROR
+
+    // Trigger actions when DHT becomes ready (Phase 6.1.1)
+    if (!wasDHTReady && dhtReady.value) {
+      console.log('[P2P Store] DHT became ready, triggering dependent actions')
+      _onDHTReady()
+    }
+  }
+
+  /**
+   * Called when DHT becomes ready
+   * Triggers MuSig2 initialization and emits activity event (Phase 6.1.1, 6.1.2)
+   */
+  async function _onDHTReady() {
+    // Initialize MuSig2 if not already done
+    try {
+      const musig2Store = useMuSig2Store()
+      if (!musig2Store.initialized) {
+        console.log('[P2P Store] Auto-initializing MuSig2 on DHT ready')
+        await musig2Store.initialize()
       }
-    },
+    } catch (err) {
+      console.error('[P2P Store] Failed to auto-initialize MuSig2:', err)
+    }
 
-    _handlePeerDisconnected(peerId: string) {
-      this.connectedPeers = this.connectedPeers.filter(p => p.peerId !== peerId)
-      this._addActivityEvent({
-        type: 'peer_left',
-        peerId: peerId,
-        message: `Peer disconnected: ${peerId.slice(0, 12)}...`,
+    // Emit event for activity feed
+    _addActivityEvent({
+      type: 'info',
+      peerId: peerId.value,
+      message: 'DHT ready - discovery enabled',
+    })
+  }
+
+  function _handlePeerConnected(peer: UIPeerInfo) {
+    if (!connectedPeers.value.find(p => p.peerId === peer.peerId)) {
+      connectedPeers.value.push(peer)
+      _addActivityEvent({
+        type: 'peer_joined',
+        peerId: peer.peerId,
+        message: `Peer connected: ${peer.peerId.slice(0, 12)}...`,
       })
 
-      // Phase 2: Mark identity offline by peer ID
+      // Phase 2: Update identity store on peer connection
       const identityStore = useIdentityStore()
-      identityStore.markOfflineByPeerId(peerId)
+      identityStore.updateFromPeerConnection(peer.peerId, peer.multiaddrs)
 
-      // Update contact's last seen timestamp on disconnect too (legacy support)
+      // Update contact's last seen timestamp (legacy support)
       const contactsStore = useContactsStore()
-      contactsStore.updateLastSeen(peerId)
-    },
+      contactsStore.updateLastSeen(peer.peerId)
+    }
+  }
 
-    _handleError(error: Error) {
-      console.error('[P2P Store] Error:', error)
-      this._addActivityEvent({
-        type: 'error',
-        peerId: this.peerId,
-        message: `Error: ${error.message}`,
-      })
-    },
+  function _handlePeerDisconnected(pId: string) {
+    connectedPeers.value = connectedPeers.value.filter(p => p.peerId !== pId)
+    _addActivityEvent({
+      type: 'peer_left',
+      peerId: pId,
+      message: `Peer disconnected: ${pId.slice(0, 12)}...`,
+    })
 
-    // ========================================================================
-    // Connection State Management
-    // ========================================================================
+    // Phase 2: Mark identity offline by peer ID
+    const identityStore = useIdentityStore()
+    identityStore.markOfflineByPeerId(pId)
 
-    _startConnectionStateMonitor() {
-      if (connectionStateMonitorId) {
-        clearInterval(connectionStateMonitorId)
+    // Update contact's last seen timestamp on disconnect too (legacy support)
+    const contactsStore = useContactsStore()
+    contactsStore.updateLastSeen(pId)
+  }
+
+  function _handleError(err: Error) {
+    console.error('[P2P Store] Error:', err)
+    _addActivityEvent({
+      type: 'error',
+      peerId: peerId.value,
+      message: `Error: ${err.message}`,
+    })
+  }
+
+  // ========================================================================
+  // Connection State Management
+  // ========================================================================
+
+  function _startConnectionStateMonitor() {
+    if (connectionStateMonitorId) {
+      clearInterval(connectionStateMonitorId)
+    }
+    // Monitor stats updates (state is handled by service events)
+    connectionStateMonitorId = setInterval(() => {
+      _updateConnectionState()
+    }, 10000) // Less frequent since state is event-driven
+  }
+
+  function _stopConnectionStateMonitor() {
+    if (connectionStateMonitorId) {
+      clearInterval(connectionStateMonitorId)
+      connectionStateMonitorId = null
+    }
+  }
+
+  function _updateConnectionState() {
+    if (!isP2PInitialized() || !initialized.value) {
+      connectionState.value = P2PConnectionState.DISCONNECTED
+      return
+    }
+
+    // Update stats from service
+    const dhtStats = getDHTStats()
+    routingTableSize.value = dhtStats.routingTableSize
+
+    // Connection state is managed by service events
+    // This method is kept for manual stat updates only
+  }
+
+  // ========================================================================
+  // Presence
+  // ========================================================================
+
+  /**
+   * Advertise presence on the P2P network
+   * Delegates to P2P service
+   */
+  async function advertisePresence(config: PresenceConfig) {
+    if (!isP2PInitialized() || !initialized.value) {
+      throw new Error('P2P not initialized')
+    }
+
+    // Delegate to service
+    await startPresenceAdvertising(config)
+
+    myPresenceConfig.value = config
+    _savePresenceConfig(config)
+  }
+
+  /**
+   * Withdraw presence from the P2P network
+   * Delegates to P2P service
+   */
+  async function withdrawPresence() {
+    if (isP2PInitialized() && myPresenceConfig.value) {
+      await stopPresenceAdvertising()
+    }
+    myPresenceConfig.value = null
+    _savePresenceConfig(null)
+  }
+
+  /**
+   * Handle presence discovered event from service
+   */
+  function _handlePresenceDiscovered(presence: UIPresenceAdvertisement) {
+    // Skip our own presence
+    if (presence.peerId === peerId.value) {
+      return
+    }
+
+    const now = Date.now()
+
+    // Skip expired presence
+    if (presence.expiresAt <= now) {
+      return
+    }
+
+    // Initialize connection status if not set
+    const presenceWithStatus: UIPresenceAdvertisement = {
+      ...presence,
+      connectionStatus: presence.connectionStatus || 'disconnected',
+      connectionType: presence.connectionType,
+    }
+
+    const existingIndex = onlinePeers.value.findIndex(
+      p => p.peerId === presence.peerId,
+    )
+
+    if (existingIndex >= 0) {
+      // Preserve existing connection status if connected
+      const existing = onlinePeers.value[existingIndex]
+      if (existing.connectionStatus === 'connected') {
+        presenceWithStatus.connectionStatus = existing.connectionStatus
+        presenceWithStatus.connectionType = existing.connectionType
       }
-      // Monitor stats updates (state is handled by service events)
-      connectionStateMonitorId = setInterval(() => {
-        this._updateConnectionState()
-      }, 10000) // Less frequent since state is event-driven
-    },
-
-    _stopConnectionStateMonitor() {
-      if (connectionStateMonitorId) {
-        clearInterval(connectionStateMonitorId)
-        connectionStateMonitorId = null
+      // Merge relay addresses from both sources
+      if (existing.relayAddrs && presenceWithStatus.relayAddrs) {
+        const mergedAddrs = new Set([
+          ...existing.relayAddrs,
+          ...presenceWithStatus.relayAddrs,
+        ])
+        presenceWithStatus.relayAddrs = Array.from(mergedAddrs)
       }
-    },
+      onlinePeers.value[existingIndex] = presenceWithStatus
+    } else {
+      onlinePeers.value.push(presenceWithStatus)
+    }
 
-    _updateConnectionState() {
-      if (!isP2PInitialized() || !this.initialized) {
-        this.connectionState = P2PConnectionState.DISCONNECTED
-        return
+    _cleanupExpiredPresence()
+  }
+
+  /**
+   * Update connection status for a peer
+   */
+  function _updatePeerConnectionStatus(
+    pId: string,
+    status: PeerConnectionStatus,
+    connType?: PeerConnectionType,
+  ): void {
+    const peerIndex = onlinePeers.value.findIndex(p => p.peerId === pId)
+    if (peerIndex >= 0) {
+      onlinePeers.value[peerIndex] = {
+        ...onlinePeers.value[peerIndex],
+        connectionStatus: status,
+        connectionType: connType,
       }
+    }
+  }
 
-      // Update stats from service
-      const dhtStats = getDHTStats()
-      this.routingTableSize = dhtStats.routingTableSize
+  function _cleanupExpiredPresence() {
+    const now = Date.now()
+    onlinePeers.value = onlinePeers.value.filter(p => p.expiresAt > now)
+  }
 
-      // Connection state is managed by service events
-      // This method is kept for manual stat updates only
-    },
+  function _savePresenceConfig(config: PresenceConfig | null) {
+    if (config) {
+      setItem(STORAGE_KEYS.P2P_PRESENCE_CONFIG, config)
+    } else {
+      removeItem(STORAGE_KEYS.P2P_PRESENCE_CONFIG)
+    }
+  }
 
-    // ========================================================================
-    // Presence
-    // ========================================================================
-
-    /**
-     * Advertise presence on the P2P network
-     * Delegates to P2P service
-     */
-    async advertisePresence(config: PresenceConfig) {
-      if (!isP2PInitialized() || !this.initialized) {
-        throw new Error('P2P not initialized')
-      }
-
-      // Delegate to service
-      await startPresenceAdvertising(config)
-
-      this.myPresenceConfig = config
-      this._savePresenceConfig(config)
-    },
-
-    /**
-     * Withdraw presence from the P2P network
-     * Delegates to P2P service
-     */
-    async withdrawPresence() {
-      if (isP2PInitialized() && this.myPresenceConfig) {
-        await stopPresenceAdvertising()
-      }
-      this.myPresenceConfig = null
-      this._savePresenceConfig(null)
-    },
-
-    /**
-     * Handle presence discovered event from service
-     */
-    _handlePresenceDiscovered(presence: UIPresenceAdvertisement) {
-      // Skip our own presence
-      if (presence.peerId === this.peerId) {
-        return
-      }
-
-      const now = Date.now()
-
-      // Skip expired presence
-      if (presence.expiresAt <= now) {
-        return
-      }
-
-      // Initialize connection status if not set
-      const presenceWithStatus: UIPresenceAdvertisement = {
-        ...presence,
-        connectionStatus: presence.connectionStatus || 'disconnected',
-        connectionType: presence.connectionType,
-      }
-
-      const existingIndex = this.onlinePeers.findIndex(
-        p => p.peerId === presence.peerId,
-      )
-
-      if (existingIndex >= 0) {
-        // Preserve existing connection status if connected
-        const existing = this.onlinePeers[existingIndex]
-        if (existing.connectionStatus === 'connected') {
-          presenceWithStatus.connectionStatus = existing.connectionStatus
-          presenceWithStatus.connectionType = existing.connectionType
-        }
-        // Merge relay addresses from both sources
-        if (existing.relayAddrs && presenceWithStatus.relayAddrs) {
-          const mergedAddrs = new Set([
-            ...existing.relayAddrs,
-            ...presenceWithStatus.relayAddrs,
-          ])
-          presenceWithStatus.relayAddrs = Array.from(mergedAddrs)
-        }
-        this.onlinePeers[existingIndex] = presenceWithStatus
-      } else {
-        this.onlinePeers.push(presenceWithStatus)
-      }
-
-      this._cleanupExpiredPresence()
-    },
-
-    /**
-     * Update connection status for a peer
-     */
-    _updatePeerConnectionStatus(
-      peerId: string,
-      status: PeerConnectionStatus,
-      connectionType?: PeerConnectionType,
-    ): void {
-      const peerIndex = this.onlinePeers.findIndex(p => p.peerId === peerId)
-      if (peerIndex >= 0) {
-        this.onlinePeers[peerIndex] = {
-          ...this.onlinePeers[peerIndex],
-          connectionStatus: status,
-          connectionType: connectionType,
-        }
-      }
-    },
-
-    _cleanupExpiredPresence() {
-      const now = Date.now()
-      this.onlinePeers = this.onlinePeers.filter(p => p.expiresAt > now)
-    },
-
-    _savePresenceConfig(config: PresenceConfig | null) {
-      if (config) {
-        setItem(STORAGE_KEYS.P2P_PRESENCE_CONFIG, config)
-      } else {
-        removeItem(STORAGE_KEYS.P2P_PRESENCE_CONFIG)
-      }
-    },
-
-    async _restoreSavedPresence() {
-      const saved = getItem<PresenceConfig | null>(
-        STORAGE_KEYS.P2P_PRESENCE_CONFIG,
-        null,
-      )
-      if (saved) {
-        try {
-          await this.advertisePresence(saved)
-        } catch (err) {
-          console.warn('[P2P] Failed to restore presence config:', err)
-        }
-      }
-    },
-
-    // ========================================================================
-    // Activity Feed
-    // ========================================================================
-
-    _addActivityEvent(event: Omit<P2PActivityEvent, 'id' | 'timestamp'>) {
-      const fullEvent: P2PActivityEvent = {
-        ...event,
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        timestamp: Date.now(),
-      }
-
-      this.activityEvents.unshift(fullEvent)
-
-      if (this.activityEvents.length > MAX_ACTIVITY_EVENTS) {
-        this.activityEvents = this.activityEvents.slice(0, MAX_ACTIVITY_EVENTS)
-      }
-    },
-
-    // ========================================================================
-    // Peer Management
-    // ========================================================================
-
-    /**
-     * Connect to a peer by multiaddr
-     * Delegates to P2P service
-     */
-    async connectToPeer(multiaddr: string) {
-      if (!isP2PInitialized()) {
-        throw new Error('P2P not initialized')
-      }
-      await serviceConnectToPeer(multiaddr)
-    },
-
-    /**
-     * Disconnect from a peer
-     * Delegates to P2P service
-     */
-    async disconnectFromPeer(peerId: string) {
-      if (!isP2PInitialized()) {
-        throw new Error('P2P not initialized')
-      }
-      await serviceDisconnectFromPeer(peerId)
-      this.connectedPeers = this.connectedPeers.filter(p => p.peerId !== peerId)
-    },
-
-    /**
-     * Connect to an online peer by their peerId
-     * Uses relay addresses from presence advertisement
-     */
-    async connectToOnlinePeer(peerId: string): Promise<boolean> {
-      const presence = this.onlinePeers.find(p => p.peerId === peerId)
-      if (!presence) {
-        console.warn(`[P2P Store] Peer ${peerId} not found in online peers`)
-        return false
-      }
-
-      // Update connection status to connecting
-      this._updatePeerConnectionStatus(peerId, 'connecting')
-
+  async function _restoreSavedPresence() {
+    const saved = getItem<PresenceConfig | null>(
+      STORAGE_KEYS.P2P_PRESENCE_CONFIG,
+      null,
+    )
+    if (saved) {
       try {
-        const { connectWithRetry } = await import('~/plugins/04.p2p.client')
-        const result = await connectWithRetry(presence)
+        await advertisePresence(saved)
+      } catch (err) {
+        console.warn('[P2P] Failed to restore presence config:', err)
+      }
+    }
+  }
 
-        if (result.success) {
-          this._updatePeerConnectionStatus(
-            peerId,
-            'connected',
-            result.connectionType,
-          )
-          this._addActivityEvent({
-            type: 'info',
-            peerId,
-            message: `Connected to peer via ${result.connectionType}`,
-          })
-          return true
-        } else {
-          this._updatePeerConnectionStatus(peerId, 'failed')
-          this._addActivityEvent({
-            type: 'error',
-            peerId,
-            message: `Failed to connect: ${result.error}`,
-          })
-          return false
-        }
-      } catch (error) {
-        console.error(`[P2P Store] Failed to connect to ${peerId}:`, error)
-        this._updatePeerConnectionStatus(peerId, 'failed')
+  // ========================================================================
+  // Activity Feed
+  // ========================================================================
+
+  function _addActivityEvent(
+    event: Omit<P2PActivityEvent, 'id' | 'timestamp'>,
+  ) {
+    const fullEvent: P2PActivityEvent = {
+      ...event,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      timestamp: Date.now(),
+    }
+
+    activityEvents.value.unshift(fullEvent)
+
+    if (activityEvents.value.length > MAX_ACTIVITY_EVENTS) {
+      activityEvents.value = activityEvents.value.slice(0, MAX_ACTIVITY_EVENTS)
+    }
+  }
+
+  // ========================================================================
+  // Peer Management
+  // ========================================================================
+
+  /**
+   * Connect to a peer by multiaddr
+   * Delegates to P2P service
+   */
+  async function connectToPeer(multiaddr: string) {
+    if (!isP2PInitialized()) {
+      throw new Error('P2P not initialized')
+    }
+    await serviceConnectToPeer(multiaddr)
+  }
+
+  /**
+   * Disconnect from a peer
+   * Delegates to P2P service
+   */
+  async function disconnectFromPeer(pId: string) {
+    if (!isP2PInitialized()) {
+      throw new Error('P2P not initialized')
+    }
+    await serviceDisconnectFromPeer(pId)
+    connectedPeers.value = connectedPeers.value.filter(p => p.peerId !== pId)
+  }
+
+  /**
+   * Connect to an online peer by their peerId
+   * Uses relay addresses from presence advertisement
+   */
+  async function connectToOnlinePeer(pId: string): Promise<boolean> {
+    const presence = onlinePeers.value.find(p => p.peerId === pId)
+    if (!presence) {
+      console.warn(`[P2P Store] Peer ${pId} not found in online peers`)
+      return false
+    }
+
+    // Update connection status to connecting
+    _updatePeerConnectionStatus(pId, 'connecting')
+
+    try {
+      const result = await serviceConnectWithRetry(presence)
+
+      if (result.success) {
+        _updatePeerConnectionStatus(pId, 'connected', result.connectionType)
+        _addActivityEvent({
+          type: 'info',
+          peerId: pId,
+          message: `Connected to peer via ${result.connectionType}`,
+        })
+        return true
+      } else {
+        _updatePeerConnectionStatus(pId, 'failed')
+        _addActivityEvent({
+          type: 'error',
+          peerId: pId,
+          message: `Failed to connect: ${result.error}`,
+        })
         return false
       }
-    },
+    } catch (err) {
+      console.error(`[P2P Store] Failed to connect to ${pId}:`, err)
+      _updatePeerConnectionStatus(pId, 'failed')
+      return false
+    }
+  }
 
-    /**
-     * Get connection status for a peer
-     */
-    getPeerConnectionStatus(peerId: string): PeerConnectionStatus | undefined {
-      const peer = this.onlinePeers.find(p => p.peerId === peerId)
-      return peer?.connectionStatus
-    },
+  /**
+   * Get connection status for a peer
+   */
+  function getPeerConnectionStatus(
+    pId: string,
+  ): PeerConnectionStatus | undefined {
+    const peer = onlinePeers.value.find(p => p.peerId === pId)
+    return peer?.connectionStatus
+  }
 
-    // ========================================================================
-    // Lifecycle
-    // ========================================================================
+  // ========================================================================
+  // Lifecycle
+  // ========================================================================
 
-    /**
-     * Stop the P2P connection
-     * Delegates to P2P service
-     */
-    async stop() {
-      this._stopConnectionStateMonitor()
+  /**
+   * Stop the P2P connection
+   * Delegates to P2P service
+   */
+  async function stop() {
+    _stopConnectionStateMonitor()
 
-      // Stop via service
-      await stopP2P()
+    // Stop via service
+    await stopP2P()
 
-      this.initialized = false
-      this.connected = false
-      this.connectionState = P2PConnectionState.DISCONNECTED
-      this.connectedPeers = []
-      this.onlinePeers = []
-      this.activityEvents = []
-      this.error = null
-    },
+    initialized.value = false
+    connected.value = false
+    connectionState.value = P2PConnectionState.DISCONNECTED
+    connectedPeers.value = []
+    onlinePeers.value = []
+    activityEvents.value = []
+    error.value = null
+  }
 
-    // ========================================================================
-    // Phase 13 Integration: Convenience Methods
-    // ========================================================================
+  // ========================================================================
+  // Phase 13 Integration: Convenience Methods
+  // ========================================================================
 
-    /**
-     * Connect to P2P network (alias for initialize)
-     * Used by p2p/HeroCard.vue
-     */
-    async connect(config?: Record<string, unknown>) {
-      if (this.initialized && this.connected) return
-      await this.initialize(config)
-    },
+  /**
+   * Connect to P2P network (alias for initialize)
+   * Used by p2p/HeroCard.vue
+   */
+  async function connect(config?: Record<string, unknown>) {
+    if (initialized.value && connected.value) return
+    await initialize(config)
+  }
 
-    /**
-     * Disconnect from P2P network (alias for stop)
-     * Used by p2p/HeroCard.vue
-     */
-    async disconnect() {
-      await this.stop()
-    },
+  /**
+   * Disconnect from P2P network (alias for stop)
+   * Used by p2p/HeroCard.vue
+   */
+  async function disconnect() {
+    await stop()
+  }
 
-    /**
-     * Enable presence advertising
-     * Used by p2p/SettingsPanel.vue
-     */
-    async enablePresence(config: PresenceConfig) {
-      await this.advertisePresence(config)
-    },
+  /**
+   * Enable presence advertising
+   * Used by p2p/SettingsPanel.vue
+   */
+  async function enablePresence(config: PresenceConfig) {
+    await advertisePresence(config)
+  }
 
-    /**
-     * Disable presence advertising
-     * Used by p2p/SettingsPanel.vue
-     */
-    async disablePresence() {
-      await this.withdrawPresence()
-    },
+  /**
+   * Disable presence advertising
+   * Used by p2p/SettingsPanel.vue
+   */
+  async function disablePresence() {
+    await withdrawPresence()
+  }
 
-    // ========================================================================
-    // Settings Management
-    // ========================================================================
+  // ========================================================================
+  // Settings Management
+  // ========================================================================
 
-    /**
-     * Load settings from storage
-     */
-    loadSettings() {
-      if (this.settingsLoaded) return
+  /**
+   * Load settings from storage
+   */
+  function loadSettings() {
+    if (settingsLoaded.value) return
 
-      const saved = getItem<P2PSettings>(STORAGE_KEYS.P2P_SETTINGS, {
-        ...DEFAULT_P2P_SETTINGS,
-      })
+    const saved = getItem<P2PSettings>(STORAGE_KEYS.P2P_SETTINGS, {
+      ...DEFAULT_P2P_SETTINGS,
+    })
 
-      this.settings = {
-        ...DEFAULT_P2P_SETTINGS,
-        ...saved,
-      }
-      this.settingsLoaded = true
-    },
+    settings.value = {
+      ...DEFAULT_P2P_SETTINGS,
+      ...saved,
+    }
+    settingsLoaded.value = true
+  }
 
-    /**
-     * Save settings to storage
-     */
-    saveSettings() {
-      setItem(STORAGE_KEYS.P2P_SETTINGS, this.settings)
-    },
+  /**
+   * Save settings to storage
+   */
+  function saveSettings() {
+    setItem(STORAGE_KEYS.P2P_SETTINGS, settings.value)
+  }
 
-    /**
-     * Update settings with partial values
-     */
-    updateSettings(updates: Partial<P2PSettings>) {
-      this.settings = {
-        ...this.settings,
-        ...updates,
-      }
-      this.saveSettings()
-    },
+  /**
+   * Update settings with partial values
+   */
+  function updateSettings(updates: Partial<P2PSettings>) {
+    settings.value = {
+      ...settings.value,
+      ...updates,
+    }
+    saveSettings()
+  }
 
-    /**
-     * Reset settings to defaults
-     */
-    resetSettings() {
-      this.settings = { ...DEFAULT_P2P_SETTINGS }
-      this.saveSettings()
-    },
+  /**
+   * Reset settings to defaults
+   */
+  function resetSettings() {
+    settings.value = { ...DEFAULT_P2P_SETTINGS }
+    saveSettings()
+  }
 
-    /**
-     * Add a custom bootstrap peer
-     */
-    addBootstrapPeer(multiaddr: string): boolean {
-      if (!multiaddr.startsWith('/')) {
-        return false
-      }
-      if (this.settings.bootstrapPeers.includes(multiaddr)) {
-        return false
-      }
-      this.settings.bootstrapPeers = [
-        ...this.settings.bootstrapPeers,
-        multiaddr,
-      ]
-      this.saveSettings()
-      return true
-    },
+  /**
+   * Add a custom bootstrap peer
+   */
+  function addBootstrapPeer(multiaddr: string): boolean {
+    if (!multiaddr.startsWith('/')) {
+      return false
+    }
+    if (settings.value.bootstrapPeers.includes(multiaddr)) {
+      return false
+    }
+    settings.value.bootstrapPeers = [
+      ...settings.value.bootstrapPeers,
+      multiaddr,
+    ]
+    saveSettings()
+    return true
+  }
 
-    /**
-     * Remove a custom bootstrap peer
-     */
-    removeBootstrapPeer(multiaddr: string) {
-      this.settings.bootstrapPeers = this.settings.bootstrapPeers.filter(
-        p => p !== multiaddr,
-      )
-      this.saveSettings()
-    },
+  /**
+   * Remove a custom bootstrap peer
+   */
+  function removeBootstrapPeer(multiaddr: string) {
+    settings.value.bootstrapPeers = settings.value.bootstrapPeers.filter(
+      p => p !== multiaddr,
+    )
+    saveSettings()
+  }
 
-    /**
-     * Get effective bootstrap peers (custom if set, otherwise defaults)
-     */
-    getEffectiveBootstrapPeers(): string[] {
-      return this.settings.bootstrapPeers.length > 0
-        ? this.settings.bootstrapPeers
-        : DEFAULT_BOOTSTRAP_PEERS
-    },
-  },
+  /**
+   * Get effective bootstrap peers (custom if set, otherwise defaults)
+   */
+  function getEffectiveBootstrapPeers(): string[] {
+    return settings.value.bootstrapPeers.length > 0
+      ? settings.value.bootstrapPeers
+      : DEFAULT_BOOTSTRAP_PEERS
+  }
+
+  // === RETURN ===
+  return {
+    // State
+    initialized,
+    connected,
+    connectionState,
+    peerId,
+    multiaddrs,
+    connectedPeers,
+    onlinePeers,
+    myPresenceConfig,
+    activityEvents,
+    dhtReady,
+    routingTableSize,
+    error,
+    settings,
+    settingsLoaded,
+    // Getters
+    peerCount,
+    onlinePeerCount,
+    isOnline,
+    connectionStatusMessage,
+    isFullyOperational,
+    isDHTReady,
+    isAdvertisingPresence,
+    recentActivity,
+    presenceEnabled,
+    onlinePeerIds,
+    // Parameterized getters (functions)
+    isPeerOnline,
+    // Actions
+    initialize,
+    getCoordinator: getCoordinatorInstance,
+    advertisePresence,
+    withdrawPresence,
+    connectToPeer,
+    disconnectFromPeer,
+    connectToOnlinePeer,
+    getPeerConnectionStatus,
+    stop,
+    connect,
+    disconnect,
+    enablePresence,
+    disablePresence,
+    loadSettings,
+    saveSettings,
+    updateSettings,
+    resetSettings,
+    addBootstrapPeer,
+    removeBootstrapPeer,
+    getEffectiveBootstrapPeers,
+  }
 })

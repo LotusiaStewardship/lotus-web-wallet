@@ -5,10 +5,13 @@
  * This plugin initializes lazily - the client is created when first needed
  * with a specific network configuration.
  *
- * Pattern:
- * - Plugin provides factory function and getter
- * - Composable (useChronikClient) provides reactive wrapper
- * - Stores use the composable for blockchain operations
+ * Access Patterns:
+ * - Components: useChronikClient() composable
+ * - Stores: Import getter functions directly from this plugin
+ * - Workers: Not available (use static imports in worker)
+ *
+ * Dependencies:
+ * - None (independent blockchain client)
  *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
@@ -18,6 +21,7 @@ import type {
   Utxo as ChronikUtxo,
   Tx as ChronikTx,
 } from 'chronik-client'
+import { ChronikClient as ChronikClientClass } from 'chronik-client'
 import type { NetworkConfig } from '~/types/network'
 
 // ============================================================================
@@ -93,9 +97,8 @@ export async function initializeChronik(
 
   currentOptions = options
 
-  // Dynamically import Chronik client
-  const { ChronikClient } = await import('chronik-client')
-  chronikClient = new ChronikClient(options.network.chronikUrl)
+  // Use statically imported Chronik client
+  chronikClient = new ChronikClientClass(options.network.chronikUrl)
 
   console.log(
     `[Chronik Plugin] Initialized client for ${options.network.displayName}`,
@@ -110,8 +113,7 @@ export async function connectWebSocket(): Promise<void> {
     throw new Error('Chronik client not initialized')
   }
 
-  const { scriptPayload, onTransaction, onConnectionChange, onBlock } =
-    currentOptions
+  const { onTransaction, onConnectionChange, onBlock } = currentOptions
 
   // Create WebSocket endpoint
   wsEndpoint = chronikClient.ws({
@@ -152,13 +154,9 @@ export async function connectWebSocket(): Promise<void> {
   // Wait for connection
   await wsEndpoint.waitForOpen()
 
-  // Subscribe to real-time websocket events
-  const { scriptType } = currentOptions
-  wsEndpoint.subscribe(scriptType, scriptPayload)
-
-  console.log(
-    `[Chronik Plugin] Subscribed to ${scriptType} script: ${scriptPayload}`,
-  )
+  // Do not subscribe to any scripts here
+  // stores/wallet.ts will handle subscriptions via subscribeToMultipleScripts
+  // function defined below
 }
 
 /**

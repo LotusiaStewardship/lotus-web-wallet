@@ -24,10 +24,11 @@
 import { computed, unref, type ComputedRef, type Ref } from 'vue'
 import { useContactsStore, type Contact } from '~/stores/contacts'
 import { useIdentityStore } from '~/stores/identity'
-import { useMuSig2Store, type SharedWallet } from '~/stores/musig2'
+import { useMuSig2Store } from '~/stores/musig2'
 import { useWalletStore } from '~/stores/wallet'
 import type { Identity } from '~/types/identity'
 import type { OnlineStatus } from '~/types/contact'
+import type { SharedWallet } from '~/types/people'
 
 // ============================================================================
 // Types

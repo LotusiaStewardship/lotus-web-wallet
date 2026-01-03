@@ -10,9 +10,7 @@
  * This composable is stateless - it operates on provided inputs and returns results.
  * State management remains in the draft store.
  */
-
-import { getBitcore } from '~/plugins/bitcore.client'
-import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
+import type * as BitcoreTypes from 'xpi-ts/lib/bitcore'
 import { DUST_THRESHOLD, MAX_TX_SIZE, MAX_RECIPIENTS } from '~/utils/constants'
 
 // ============================================================================
@@ -54,7 +52,7 @@ export interface TransactionBuildContext {
   /** Script for inputs */
   script: InstanceType<typeof BitcoreTypes.Script>
   /** Address type for signing */
-  addressType: 'p2pkh' | 'p2tr'
+  addressType: AddressType
   /** Internal public key for Taproot (optional) */
   internalPubKey?: InstanceType<typeof BitcoreTypes.PublicKey>
   /** Merkle root for Taproot (optional) */
@@ -106,8 +104,8 @@ export function useTransactionBuilder() {
   /**
    * Get the Bitcore SDK instance
    */
-  function getBitcoreSDK(): typeof BitcoreTypes | null {
-    return getBitcore()
+  function getBitcoreSDK(): typeof BitcoreTypes | undefined {
+    return useNuxtApp()?.$bitcore
   }
 
   /**
@@ -148,7 +146,7 @@ export function useTransactionBuilder() {
     tx: InstanceType<typeof BitcoreTypes.Transaction>,
     utxos: UtxoEntry[],
     script: InstanceType<typeof BitcoreTypes.Script>,
-    addressType: 'p2pkh' | 'p2tr',
+    addressType: AddressType,
     internalPubKey?: InstanceType<typeof BitcoreTypes.PublicKey>,
     merkleRoot?: Buffer,
   ): void {
@@ -163,7 +161,7 @@ export function useTransactionBuilder() {
         script,
         satoshis: Number(utxo.value),
       }
-      if (addressType === 'p2tr') {
+      if (addressType === 'p2tr-commitment') {
         utxoData.internalPubKey = internalPubKey
         utxoData.merkleRoot = merkleRoot
       }
@@ -390,7 +388,7 @@ export function useTransactionBuilder() {
    */
   function estimateTransaction(
     ctx: TransactionBuildContext,
-    currentNetwork: string,
+    currentNetwork: BitcoreTypes.NetworkName,
   ): TransactionEstimate {
     const Bitcore = getBitcoreSDK()
 

@@ -2,135 +2,185 @@
 /**
  * People Hub Page
  *
- * Phase 10 R10.3.1: Updated to remove P2P card.
- * Landing page for the People section with access to Contacts and Shared Wallets.
- * P2P functionality is now integrated into Shared Wallets.
+ * Central hub for contacts, shared wallets, and P2P presence.
  */
-import { useContactsStore } from '~/stores/contacts'
-import { useMuSig2Store } from '~/stores/musig2'
-import { useP2PStore } from '~/stores/p2p'
+import { usePeopleStore } from '~/stores/people'
+import type { Person } from '~/types/people'
 
 definePageMeta({
   title: 'People',
 })
 
-const contactsStore = useContactsStore()
-const musig2Store = useMuSig2Store()
-const p2pStore = useP2PStore()
+const peopleStore = usePeopleStore()
+const route = useRoute()
+const router = useRouter()
 
-// Quick stats
-const stats = computed(() => [
-  {
-    label: 'Contacts',
-    value: contactsStore.contactCount,
-    icon: 'i-lucide-users',
-  },
-  {
-    label: 'Shared Wallets',
-    value: musig2Store.sharedWallets.length,
-    icon: 'i-lucide-shield',
-  },
-  {
-    label: 'P2P Status',
-    value: p2pStore.connected ? 'Online' : 'Offline',
-    icon: 'i-lucide-wifi',
-    color: p2pStore.connected ? 'text-success' : 'text-muted',
-  },
-])
-
-// Navigation items - Phase 10: Removed P2P Network card
-const subPages = computed(() => [
-  {
-    label: 'Contacts',
-    icon: 'i-lucide-users',
-    to: '/people/contacts',
-    description: 'Manage your saved addresses',
-    badge: contactsStore.contactCount > 0 ? contactsStore.contactCount : undefined,
-  },
-  {
-    label: 'Shared Wallets',
-    icon: 'i-lucide-shield',
-    to: '/people/shared-wallets',
-    description: 'Multi-signature wallets and P2P coordination',
-    badge: (musig2Store.sharedWallets.length + musig2Store.pendingRequestCount) || undefined,
-    status: p2pStore.connected ? 'connected' : 'disconnected',
-  },
-])
-
-// Pending requests count for badge
-const pendingRequestsCount = computed(() => {
-  return musig2Store.pendingRequestCount
+// Initialize store
+onMounted(() => {
+  peopleStore.initialize()
 })
+
+const activeTab = ref<'all' | 'favorites' | 'online' | 'signers' | 'wallets'>('all')
+
+// Overlay management via useOverlays
+const { openSendModal, openAddContactModal, openShareMyContactModal } = useOverlays()
+
+// Watch for query params to open add contact modal
+watch(() => route.query, async (query) => {
+  if (query.add === 'true') {
+    await openAddContactModal({
+      initialAddress: (query.address as string) || undefined,
+      initialName: (query.name as string) || undefined,
+      initialPublicKey: (query.pubkey as string) || undefined,
+    }, true)
+  }
+}, { immediate: true })
+
+const tabs = computed(() => [
+  { id: 'all' as const, label: 'All', icon: 'i-lucide-users', count: peopleStore.allPeople.length },
+  { id: 'favorites' as const, label: 'Favorites', icon: 'i-lucide-star', count: peopleStore.favorites.length },
+  { id: 'online' as const, label: 'Online', icon: 'i-lucide-wifi', count: peopleStore.onlinePeople.length },
+  { id: 'signers' as const, label: 'Signers', icon: 'i-lucide-shield', count: peopleStore.signers.length },
+  { id: 'wallets' as const, label: 'Wallets', icon: 'i-lucide-wallet', count: peopleStore.allWallets.length },
+])
+
+const displayedPeople = computed(() => {
+  switch (activeTab.value) {
+    case 'favorites':
+      return peopleStore.favorites
+    case 'online':
+      return peopleStore.onlinePeople
+    case 'signers':
+      return peopleStore.signers
+    default:
+      return peopleStore.filteredPeople
+  }
+})
+
+const emptyStateTitle = computed(() => {
+  switch (activeTab.value) {
+    case 'favorites':
+      return 'No favorites yet'
+    case 'online':
+      return 'No one online'
+    case 'signers':
+      return 'No signers found'
+    default:
+      return 'No contacts yet'
+  }
+})
+
+const emptyStateMessage = computed(() => {
+  switch (activeTab.value) {
+    case 'favorites':
+      return 'Star contacts to add them to your favorites.'
+    case 'online':
+      return 'Contacts with P2P enabled will appear here when online.'
+    case 'signers':
+      return 'Contacts with public keys can participate in shared wallets.'
+    default:
+      return 'Add people you transact with to keep track of your relationships.'
+  }
+})
+
+async function openAddContact() {
+  await openAddContactModal()
+}
+
+async function openSendTo(person: Person) {
+  await openSendModal({ initialRecipient: person.address })
+}
+
+function toggleFavorite(person: Person) {
+  peopleStore.updatePerson(person.id, { isFavorite: !person.isFavorite })
+}
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Hero Card -->
-    <UiAppHeroCard icon="i-lucide-users" title="People" subtitle="Manage contacts and connect with the P2P network" />
-
-    <!-- Quick Stats -->
-    <div class="grid grid-cols-3 gap-4">
-      <div v-for="stat in stats" :key="stat.label"
-        class="p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <UIcon :name="stat.icon" class="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <p class="text-xs text-muted">{{ stat.label }}</p>
-            <p class="font-semibold" :class="stat.color">{{ stat.value }}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Pending Requests Alert -->
-    <UAlert v-if="pendingRequestsCount > 0" color="warning" icon="i-lucide-bell"
-      :title="`${pendingRequestsCount} pending signing request${pendingRequestsCount > 1 ? 's' : ''}`"
-      description="You have signing requests waiting for your action.">
-      <template #actions>
-        <UButton color="warning" variant="soft" size="sm" to="/people/shared-wallets">
-          View Requests
+  <div class="space-y-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">People</h1>
+      <div class="flex gap-2">
+        <UButton variant="outline" icon="i-lucide-share-2" @click="openShareMyContactModal()">
+          Share Me
         </UButton>
-      </template>
-    </UAlert>
-
-    <!-- Navigation Grid - Phase 10: Updated to 2 columns -->
-    <div class="grid gap-4 md:grid-cols-2">
-      <NuxtLink v-for="page in subPages" :key="page.to" :to="page.to"
-        class="block p-6 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-primary dark:hover:border-primary hover:shadow-md transition-all">
-        <div class="flex items-start gap-4">
-          <div class="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-            <UIcon :name="page.icon" class="w-6 h-6 text-primary" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-semibold text-lg">{{ page.label }}</span>
-              <UBadge v-if="page.badge" color="primary" variant="subtle" size="xs">
-                {{ page.badge }}
-              </UBadge>
-              <span v-if="page.status" class="w-2 h-2 rounded-full"
-                :class="page.status === 'connected' ? 'bg-success-500' : 'bg-gray-400'" />
-            </div>
-            <p class="text-sm text-gray-500">{{ page.description }}</p>
-          </div>
-        </div>
-      </NuxtLink>
+        <UButton icon="i-lucide-user-plus" color="primary" @click="openAddContact">
+          Add
+        </UButton>
+      </div>
     </div>
 
-    <!-- Recent Activity Preview -->
-    <UiAppCard v-if="p2pStore.recentActivity.length > 0" title="Recent Activity" icon="i-lucide-activity"
-      :action="{ label: 'View All', to: '/people/p2p' }">
-      <div class="divide-y divide-default -mx-4">
-        <div v-for="(event, index) in p2pStore.recentActivity.slice(0, 3)" :key="index"
-          class="px-4 py-3 flex items-center gap-3">
-          <UIcon name="i-lucide-activity" class="w-4 h-4 text-muted" />
-          <span class="text-sm">{{ event.type }}</span>
-          <span class="text-xs text-muted ml-auto">
-            {{ new Date(event.timestamp).toLocaleTimeString() }}
-          </span>
+    <!-- Search -->
+    <UInput v-model="peopleStore.searchQuery" icon="i-lucide-search" placeholder="Search people..." />
+
+    <!-- Tabs -->
+    <div class="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+      <UButton v-for="tab in tabs" :key="tab.id" :color="activeTab === tab.id ? 'primary' : 'neutral'"
+        :variant="activeTab === tab.id ? 'solid' : 'ghost'" size="sm" :icon="tab.icon" @click="activeTab = tab.id">
+        {{ tab.label }}
+        <UBadge v-if="tab.count > 0" :color="activeTab === tab.id ? 'neutral' : 'primary'" size="xs" class="ml-1">
+          {{ tab.count }}
+        </UBadge>
+      </UButton>
+    </div>
+
+    <!-- Online Now Section -->
+    <div v-if="activeTab === 'all' && peopleStore.onlinePeople.length > 0" class="space-y-2">
+      <h3 class="text-sm font-medium text-gray-500 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-success animate-pulse" />
+        Online Now
+      </h3>
+      <div class="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
+        <PeoplePersonChip v-for="person in peopleStore.onlinePeople" :key="person.id" :person="person"
+          @click="navigateTo(`/people/${person.id}`)" />
+      </div>
+    </div>
+
+    <!-- Shared Wallets Tab -->
+    <template v-if="activeTab === 'wallets'">
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium text-gray-500">Shared Wallets</h3>
+          <UButton variant="ghost" size="xs" icon="i-lucide-plus" @click="navigateTo('/people/wallets?create=true')">
+            Create
+          </UButton>
+        </div>
+
+        <PeopleSharedWalletCard v-for="wallet in peopleStore.allWallets" :key="wallet.id" :wallet="wallet"
+          @click="navigateTo(`/people/wallets/${wallet.id}`)" />
+
+        <div v-if="peopleStore.allWallets.length === 0" class="text-center py-8">
+          <UIcon name="i-lucide-shield" class="w-12 h-12 mx-auto text-gray-400 mb-4" />
+          <h3 class="text-lg font-medium mb-1">No shared wallets</h3>
+          <p class="text-gray-500 text-sm mb-4">
+            Create a wallet that requires multiple people to approve transactions.
+          </p>
+          <UButton color="primary" @click="navigateTo('/people/wallets?create=true')">
+            Create Shared Wallet
+          </UButton>
         </div>
       </div>
-    </UiAppCard>
+    </template>
+
+    <!-- People List -->
+    <template v-else>
+      <div v-if="displayedPeople.length > 0" class="space-y-2">
+        <PeoplePersonCard v-for="person in displayedPeople" :key="person.id" :person="person"
+          @click="navigateTo(`/people/${person.id}`)" @send="openSendTo(person)" @favorite="toggleFavorite(person)" />
+      </div>
+
+      <!-- Empty State -->
+      <div v-else class="text-center py-12">
+        <UIcon name="i-lucide-users" class="w-12 h-12 mx-auto text-gray-400 mb-4" />
+        <h3 class="text-lg font-medium mb-1">{{ emptyStateTitle }}</h3>
+        <p class="text-gray-500 text-sm mb-4">{{ emptyStateMessage }}</p>
+        <UButton v-if="activeTab === 'all'" color="primary" @click="openAddContact">
+          Add Your First Contact
+        </UButton>
+      </div>
+    </template>
+
+    <!-- All modals are managed by useOverlays composable -->
   </div>
 </template>

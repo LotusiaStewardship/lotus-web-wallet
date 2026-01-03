@@ -3,7 +3,7 @@
  * Handles profile avatar fetching and caching for social profiles
  */
 
-import type { ScriptChunkPlatformUTF8 } from 'lotus-sdk/lib/rank'
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 
 /**
  * Get Twitter/X profile image URL through unavatar.io

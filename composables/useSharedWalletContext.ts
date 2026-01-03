@@ -21,11 +21,7 @@
  * ```
  */
 import { computed, unref, type ComputedRef, type Ref } from 'vue'
-import {
-  useMuSig2Store,
-  type SharedWallet,
-  type SharedWalletParticipant,
-} from '~/stores/musig2'
+import { useMuSig2Store } from '~/stores/musig2'
 import { useIdentityStore } from '~/stores/identity'
 import { useContactsStore, type Contact } from '~/stores/contacts'
 import { useWalletStore } from '~/stores/wallet'
@@ -33,6 +29,7 @@ import { AccountPurpose } from '~/types/accounts'
 import type { Identity } from '~/types/identity'
 import type { OnlineStatus } from '~/types/contact'
 import type { WalletSigningSession } from '~/plugins/05.musig2.client'
+import type { SharedWallet, SharedWalletParticipant } from '~/types/people'
 
 // ============================================================================
 // Types
@@ -163,8 +160,6 @@ export function useSharedWalletContext(
         displayName = 'You'
       } else if (contact?.name) {
         displayName = contact.name
-      } else if (p.nickname) {
-        displayName = p.nickname
       } else {
         displayName = `${p.publicKeyHex.slice(0, 8)}...`
       }
@@ -222,7 +217,7 @@ export function useSharedWalletContext(
   })
 
   const sharedAddress = computed((): string => {
-    return wallet.value?.sharedAddress ?? ''
+    return wallet.value?.address ?? ''
   })
 
   const isParticipant = computed((): boolean => {

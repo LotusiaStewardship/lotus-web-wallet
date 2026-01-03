@@ -4,56 +4,40 @@
  * Provides the MuSig2 coordinator for multi-signature operations.
  * This plugin manages MuSig2 session lifecycle, signer discovery, and signing protocol.
  *
- * Pattern:
- * - Plugin provides singleton coordinator and exported functions
- * - Composable (useMuSig2Coordinator) provides reactive wrapper
- * - Stores use the composable for MuSig2 operations
+ * Access Patterns:
+ * - Components: useMuSig2() composable
+ * - Stores: Import getter functions directly from this plugin
+ * - Workers: Not available (use static imports in worker)
+ *
+ * Dependencies:
+ * - p2p: For P2P coordinator and connection management
+ * - discovery-cache: For persistent signer cache
  *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
 import type { DiscoveredSigner, MuSig2SessionState } from '~/types/musig2'
 import { SESSION_TIMEOUT } from '~/types/musig2'
 import { AccountPurpose } from '~/types/accounts'
-import {
-  getCoordinator,
-  isP2PInitialized,
-  isDHTReady,
-  getDHTStats,
-  setupConnectionStateHandlers,
-  connectWithRetry,
-} from '~/plugins/04.p2p.client'
-import { getSDKCacheAdapter } from '~/plugins/03.discovery-cache.client'
-import { useWalletStore } from '~/stores/wallet'
-import { useP2PStore } from '~/stores/p2p'
-import { useMuSig2Store } from '~/stores/musig2'
+import * as XpiP2P from 'xpi-p2p-ts'
+import { Bitcore } from 'xpi-ts'
 
 // ============================================================================
-// SDK Types (imported dynamically, exported for composable use)
+// SDK Types (statically imported, exported for composable use)
 // ============================================================================
 
-export type MuSig2P2PCoordinatorType = InstanceType<
-  typeof import('lotus-sdk').P2P.MuSig2P2PCoordinator
->
-export type MuSig2DiscoveryType = InstanceType<
-  typeof import('lotus-sdk').P2P.MuSig2Discovery
->
-export type PublicKeyType = InstanceType<
-  typeof import('lotus-sdk').Bitcore.PublicKey
->
-export type PrivateKeyType = InstanceType<
-  typeof import('lotus-sdk').Bitcore.PrivateKey
->
-export type SessionAnnouncementType =
-  import('lotus-sdk').P2P.SessionAnnouncement
-export type MuSig2SignerAdvertisementType =
-  import('lotus-sdk').P2P.MuSig2SignerAdvertisement
-export type TransactionTypeEnum = import('lotus-sdk').P2P.TransactionType
-export type MuSig2P2PConfigType = import('lotus-sdk').P2P.MuSig2P2PConfig
-export type MuSig2DiscoveryConfigType =
-  import('lotus-sdk').P2P.MuSig2DiscoveryConfig
-export type MuSig2SignerCriteriaType =
-  import('lotus-sdk').P2P.MuSig2SignerCriteria
-export type MuSig2P2PSessionType = import('lotus-sdk').P2P.MuSig2P2PSession
+export type MuSig2P2PCoordinatorType = XpiP2P.MuSig2P2PCoordinator
+export type MuSig2DiscoveryType = XpiP2P.MuSig2Discovery
+// Note: Using any for Bitcore types due to xpi-p2p-ts bundling xpi-ts internally
+// The runtime objects are compatible even though TypeScript sees different types
+export type PublicKeyType = any
+export type PrivateKeyType = any
+export type SessionAnnouncementType = XpiP2P.SessionAnnouncement
+export type MuSig2SignerAdvertisementType = XpiP2P.MuSig2SignerAdvertisement
+export type TransactionTypeEnum = XpiP2P.TransactionType
+export type MuSig2P2PConfigType = XpiP2P.MuSig2P2PConfig
+export type MuSig2DiscoveryConfigType = XpiP2P.MuSig2DiscoveryConfig
+export type MuSig2SignerCriteriaType = XpiP2P.MuSig2SignerCriteria
+export type MuSig2P2PSessionType = XpiP2P.MuSig2P2PSession
 
 // ============================================================================
 // Wallet-Meaningful Types
@@ -181,12 +165,15 @@ let eventUnsubscribers: Array<() => void> = []
 let activeSignerAdId: string | null = null
 let signerSubscriptionId: string | null = null
 
-// SDK module reference (loaded once)
-let sdkModule: typeof import('lotus-sdk') | null = null
+// P2P plugin access - set during plugin setup
+let p2pPlugin: ReturnType<typeof useNuxtApp>['$p2p'] | null = null
+let discoveryCachePlugin:
+  | ReturnType<typeof useNuxtApp>['$discoveryCache']
+  | null = null
 
 // Pending advertisement state for re-advertisement when DHT becomes ready
 let pendingAdvertisement: {
-  publicKey: PublicKeyType | string
+  signingContext: SignerSigningContext
   options: SignerAdvertisingOptions
 } | null = null
 let dhtReadyCallbackRegistered = false
@@ -300,17 +287,13 @@ function _mapP2PSessionToWalletSession(
  * Map string transaction types to SDK enum values
  */
 function _mapTransactionTypes(types: string[]): TransactionTypeEnum[] {
-  if (!sdkModule) return []
-
-  const { TransactionType } = sdkModule.P2P
-
   const typeMap: Record<string, TransactionTypeEnum> = {
-    spend: TransactionType.SPEND,
-    swap: TransactionType.SWAP,
-    coinjoin: TransactionType.COINJOIN,
-    custody: TransactionType.CUSTODY,
-    escrow: TransactionType.ESCROW,
-    channel: TransactionType.CHANNEL,
+    spend: XpiP2P.TransactionType.SPEND,
+    swap: XpiP2P.TransactionType.SWAP,
+    coinjoin: XpiP2P.TransactionType.COINJOIN,
+    custody: XpiP2P.TransactionType.CUSTODY,
+    escrow: XpiP2P.TransactionType.ESCROW,
+    channel: XpiP2P.TransactionType.CHANNEL,
   }
 
   return types
@@ -322,9 +305,9 @@ function _mapTransactionTypes(types: string[]): TransactionTypeEnum[] {
  * Setup event handlers for coordinator events
  */
 function _setupEventHandlers(): void {
-  if (!musig2Coordinator || !sdkModule) return
+  if (!musig2Coordinator) return
 
-  const { MuSig2Event } = sdkModule.P2P
+  const { MuSig2Event } = XpiP2P
 
   // Session lifecycle events
   const onSessionCreated = (sessionId: string) => {
@@ -447,13 +430,24 @@ function _setupEventHandlers(): void {
 }
 
 /**
+ * Signing context required for signer advertisement
+ * Passed from store to avoid plugin importing stores
+ */
+export interface SignerSigningContext {
+  privateKeyHex: string
+  publicKeyHex: string
+}
+
+/**
  * Internal function to actually publish the signer advertisement
+ * @param signingContext - Signing keys from wallet (passed by caller)
+ * @param options - Advertising options
  */
 async function _publishSignerAdvertisement(
-  publicKey: PublicKeyType | string,
+  signingContext: SignerSigningContext,
   options: SignerAdvertisingOptions,
 ): Promise<string> {
-  if (!musig2Coordinator || !sdkModule) {
+  if (!musig2Coordinator) {
     throw new Error('MuSig2 not initialized')
   }
 
@@ -462,19 +456,10 @@ async function _publishSignerAdvertisement(
     throw new Error('MuSig2 discovery layer not available')
   }
 
-  // Get the MuSig2 signing key from the dedicated account
-  const walletStore = useWalletStore()
-
-  // Use MuSig2 account key (not primary wallet key)
-  const privateKeyHex = walletStore.getPrivateKeyHex(AccountPurpose.MUSIG2)
-  const musig2PublicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
-
-  if (!privateKeyHex || !musig2PublicKeyHex) {
-    throw new Error('MuSig2 signing key not available - wallet not initialized')
-  }
+  const { privateKeyHex, publicKeyHex } = signingContext
 
   // Set the signing key on the discovery layer
-  const signingKey = new sdkModule.Bitcore.PrivateKey(privateKeyHex)
+  const signingKey = Bitcore.PrivateKey.fromString(privateKeyHex) as any
   discovery.setSigningKey(signingKey)
 
   console.log('[MuSig2 Plugin] MuSig2 signing key set for advertisement')
@@ -484,8 +469,8 @@ async function _publishSignerAdvertisement(
     options.transactionTypes || ['spend'],
   )
 
-  // Use the MuSig2 public key for advertisement (ignore passed publicKey)
-  const pubKeyObj = new sdkModule.Bitcore.PublicKey(musig2PublicKeyHex)
+  // Use the MuSig2 public key for advertisement
+  const pubKeyObj = new Bitcore.PublicKey(publicKeyHex) as any
 
   console.log(
     '[MuSig2 Plugin] Publishing signer advertisement with MuSig2 key:',
@@ -529,7 +514,12 @@ function _registerDHTReadyCallback(): void {
     '[MuSig2 Plugin] Registering DHT ready callback for pending advertisement',
   )
 
-  setupConnectionStateHandlers({
+  if (!p2pPlugin) {
+    console.warn('[MuSig2 Plugin] P2P plugin not available for DHT callback')
+    return
+  }
+
+  p2pPlugin.setupConnectionStateHandlers({
     onDHTReady: async () => {
       console.log('[MuSig2 Plugin] DHT ready callback triggered')
       if (pendingAdvertisement) {
@@ -538,7 +528,7 @@ function _registerDHTReadyCallback(): void {
         )
         try {
           await _publishSignerAdvertisement(
-            pendingAdvertisement.publicKey,
+            pendingAdvertisement.signingContext,
             pendingAdvertisement.options,
           )
           console.log(
@@ -565,7 +555,7 @@ function _registerDHTReadyCallback(): void {
         console.log('[MuSig2 Plugin] Re-advertising after reconnect')
         try {
           await _publishSignerAdvertisement(
-            pendingAdvertisement.publicKey,
+            pendingAdvertisement.signingContext,
             pendingAdvertisement.options,
           )
         } catch (err) {
@@ -601,23 +591,32 @@ export async function initializeMuSig2(
     return
   }
 
-  if (!isP2PInitialized()) {
+  // Verify P2P plugin is available
+  if (!p2pPlugin) {
+    throw new Error(
+      'P2P plugin not available - ensure MuSig2 plugin runs after P2P',
+    )
+  }
+
+  if (!p2pPlugin.isInitialized()) {
     throw new Error('P2P must be initialized before MuSig2')
   }
 
-  const p2pCoordinator = getCoordinator()
+  const p2pCoordinator = p2pPlugin.getCoordinator()
   if (!p2pCoordinator) {
     throw new Error('P2P coordinator not available')
   }
 
   eventCallbacks = callbacks
 
-  // Load SDK
-  sdkModule = await import('lotus-sdk')
-  const { MuSig2P2PCoordinator } = sdkModule.P2P
+  // Use statically imported SDK
+  const { MuSig2P2PCoordinator } = XpiP2P
 
   // Get the SDK-compatible discovery cache adapter for persistence
-  const discoveryCache = getSDKCacheAdapter()
+  if (!discoveryCachePlugin) {
+    throw new Error('Discovery cache plugin not available')
+  }
+  const discoveryCache = discoveryCachePlugin.getSDKAdapter()
 
   // Merge discovery config with defaults
   const finalDiscoveryConfig: MuSig2DiscoveryConfigType = {
@@ -683,7 +682,6 @@ export async function cleanupMuSig2(): Promise<void> {
   // Cleanup coordinator
   await musig2Coordinator.cleanup()
   musig2Coordinator = null
-  sdkModule = null
 
   console.log('[MuSig2 Plugin] Cleaned up')
 }
@@ -699,12 +697,12 @@ export async function cleanupMuSig2(): Promise<void> {
  * If DHT is not ready, queues the advertisement and registers a callback
  * to publish when DHT becomes ready.
  *
- * @param publicKey - Signer's public key (PublicKey object or hex string)
+ * @param signingContext - Signing keys from wallet (privateKeyHex, publicKeyHex)
  * @param options - Advertising options
  * @returns Advertisement ID or 'pending' if queued for later
  */
 export async function startSignerAdvertising(
-  publicKey: PublicKeyType | string,
+  signingContext: SignerSigningContext,
   options: SignerAdvertisingOptions = {},
 ): Promise<string> {
   console.log('[MuSig2 Plugin] startSignerAdvertising() called')
@@ -724,8 +722,11 @@ export async function startSignerAdvertising(
     throw new Error('MuSig2 discovery layer not available')
   }
 
-  // Check DHT readiness
-  const dhtStats = getDHTStats()
+  // Check DHT readiness via P2P plugin
+  if (!p2pPlugin) {
+    throw new Error('P2P plugin not available')
+  }
+  const dhtStats = p2pPlugin.getDHTStats()
   console.log('[MuSig2 Plugin] DHT stats:', {
     isReady: dhtStats.isReady,
     routingTableSize: dhtStats.routingTableSize,
@@ -734,7 +735,7 @@ export async function startSignerAdvertising(
 
   if (!dhtStats.isReady) {
     // Store for later and register callback
-    pendingAdvertisement = { publicKey, options }
+    pendingAdvertisement = { signingContext, options }
     console.log(
       '[MuSig2 Plugin] DHT not ready, queuing advertisement for later',
     )
@@ -746,7 +747,7 @@ export async function startSignerAdvertising(
   }
 
   // DHT is ready, proceed with advertisement
-  return await _publishSignerAdvertisement(publicKey, options)
+  return await _publishSignerAdvertisement(signingContext, options)
 }
 
 /**
@@ -805,7 +806,10 @@ export async function discoverSigners(
   }
 
   // Log DHT and cache state for diagnostics
-  const dhtStats = getDHTStats()
+  if (!p2pPlugin) {
+    throw new Error('P2P plugin not available')
+  }
+  const dhtStats = p2pPlugin.getDHTStats()
   console.log('[MuSig2 Plugin] DHT stats before discovery:', {
     isReady: dhtStats.isReady,
     routingTableSize: dhtStats.routingTableSize,
@@ -1098,44 +1102,25 @@ export async function abortSession(
 // ============================================================================
 
 /**
- * Get the MuSig2 signing key for the current wallet
+ * Create a PrivateKey object from hex string
+ * Utility function for callers that have the key hex
  *
- * Uses the dedicated MuSig2 account key, isolated from the primary spending key.
- *
- * @returns Object with privateKeyHex and publicKeyHex, or null if not available
+ * @param privateKeyHex - Private key as hex string
+ * @returns PrivateKey object
  */
-export function getMuSig2SigningKey(): {
-  privateKeyHex: string
-  publicKeyHex: string
-} | null {
-  const walletStore = useWalletStore()
-
-  const privateKeyHex = walletStore.getPrivateKeyHex(AccountPurpose.MUSIG2)
-  const publicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
-
-  if (!privateKeyHex || !publicKeyHex) {
-    console.error('[MuSig2 Plugin] MuSig2 key not available')
-    return null
-  }
-
-  return { privateKeyHex, publicKeyHex }
+export function createPrivateKey(privateKeyHex: string): PrivateKeyType {
+  return new Bitcore.PrivateKey(privateKeyHex) as any
 }
 
 /**
- * Get the MuSig2 private key as a PrivateKey object
+ * Create a PublicKey object from hex string
+ * Utility function for callers that have the key hex
  *
- * @returns PrivateKey object or null if not available
+ * @param publicKeyHex - Public key as hex string
+ * @returns PublicKey object
  */
-export function getMuSig2PrivateKey(): PrivateKeyType | null {
-  if (!sdkModule) {
-    console.error('[MuSig2 Plugin] SDK not loaded')
-    return null
-  }
-
-  const signingKey = getMuSig2SigningKey()
-  if (!signingKey) return null
-
-  return new sdkModule.Bitcore.PrivateKey(signingKey.privateKeyHex)
+export function createPublicKey(publicKeyHex: string): PublicKeyType {
+  return new Bitcore.PublicKey(publicKeyHex) as any
 }
 
 /**
@@ -1178,18 +1163,36 @@ export function unsubscribeFromMuSig2Events(): void {
 // ============================================================================
 
 /**
+ * Peer context for connectivity checks
+ * Passed from store to avoid plugin importing stores
+ */
+export interface PeerContext {
+  myPeerId: string
+  onlinePeers: Array<{
+    peerId: string
+    connectionStatus?: string
+    connectionType?: 'webrtc' | 'relay' | 'direct'
+    relayAddrs?: string[]
+  }>
+}
+
+/**
  * Ensure all session participants are connected before proceeding
  *
  * @param participantPeerIds - Array of participant peer IDs
+ * @param peerContext - Current peer context (from store)
  * @returns Connection results for each participant
  */
 export async function ensureParticipantsConnected(
   participantPeerIds: string[],
+  peerContext: PeerContext,
 ): Promise<{
   allConnected: boolean
   results: Map<string, ParticipantConnectionResult>
 }> {
-  const p2pStore = useP2PStore()
+  if (!p2pPlugin) {
+    throw new Error('P2P plugin not available')
+  }
 
   const results = new Map<string, ParticipantConnectionResult>()
 
@@ -1197,13 +1200,13 @@ export async function ensureParticipantsConnected(
 
   for (const peerId of participantPeerIds) {
     // Skip self
-    if (peerId === p2pStore.peerId) {
+    if (peerId === peerContext.myPeerId) {
       results.set(peerId, { connected: true, connectionType: 'direct' })
       continue
     }
 
     // Find peer in online peers
-    const presence = p2pStore.onlinePeers.find(p => p.peerId === peerId)
+    const presence = peerContext.onlinePeers.find(p => p.peerId === peerId)
 
     if (!presence) {
       results.set(peerId, { connected: false, error: 'Peer not discovered' })
@@ -1220,9 +1223,9 @@ export async function ensureParticipantsConnected(
       continue
     }
 
-    // Attempt connection
+    // Attempt connection via P2P plugin
     console.log(`[MuSig2] Connecting to participant ${peerId}...`)
-    const result = await connectWithRetry(presence, {
+    const result = await p2pPlugin.connectWithRetry(presence as any, {
       maxRetries: 3,
       initialDelayMs: 1000,
     })
@@ -1248,11 +1251,15 @@ export async function ensureParticipantsConnected(
  * Pre-flight check before starting a signing session
  *
  * @param sharedWallet - The shared wallet to check participants for
+ * @param peerContext - Current peer context (from store)
  * @returns Pre-flight result with connectivity status
  */
-export async function preflightSigningSession(sharedWallet: {
-  participants: Array<{ peerId?: string; nickname?: string }>
-}): Promise<PreflightResult> {
+export async function preflightSigningSession(
+  sharedWallet: {
+    participants: Array<{ peerId?: string; nickname?: string }>
+  },
+  peerContext: PeerContext,
+): Promise<PreflightResult> {
   const participantPeerIds = sharedWallet.participants
     .map(p => p.peerId)
     .filter((id): id is string => !!id)
@@ -1269,6 +1276,7 @@ export async function preflightSigningSession(sharedWallet: {
 
   const { allConnected, results } = await ensureParticipantsConnected(
     participantPeerIds,
+    peerContext,
   )
 
   const disconnectedParticipants: string[] = []
@@ -1298,10 +1306,20 @@ export async function preflightSigningSession(sharedWallet: {
 }
 
 /**
+ * Session initiation context
+ * Passed from store to avoid plugin importing stores
+ */
+export interface SessionInitContext {
+  signingContext: SignerSigningContext
+  peerContext: PeerContext
+}
+
+/**
  * Initiate a MuSig2 signing session with connectivity check
  *
  * @param sharedWallet - The shared wallet for the session
  * @param message - Message/transaction to sign
+ * @param initContext - Session initialization context (signing keys and peer info)
  * @param options - Session options
  * @returns Session initiation result
  */
@@ -1315,6 +1333,7 @@ export async function initiateSigningSession(
     }>
   },
   message: Buffer,
+  initContext: SessionInitContext,
   options: {
     skipConnectivityCheck?: boolean
     metadata?: SessionMetadata
@@ -1328,7 +1347,10 @@ export async function initiateSigningSession(
   if (!options.skipConnectivityCheck) {
     console.log('[MuSig2] Running pre-flight connectivity check...')
 
-    const preflight = await preflightSigningSession(sharedWallet)
+    const preflight = await preflightSigningSession(
+      sharedWallet,
+      initContext.peerContext,
+    )
 
     if (!preflight.ready) {
       console.warn('[MuSig2] Pre-flight failed:', preflight.error)
@@ -1345,19 +1367,18 @@ export async function initiateSigningSession(
 
   // Step 2: Create and announce session
   try {
-    if (!musig2Coordinator || !sdkModule) {
+    if (!musig2Coordinator) {
       return { success: false, error: 'MuSig2 coordinator not initialized' }
-    }
-
-    // Get my private key for signing
-    const privateKey = await getMuSig2PrivateKey()
-    if (!privateKey) {
-      return { success: false, error: 'MuSig2 signing key not available' }
     }
 
     // Convert participant public keys to PublicKey objects
     const publicKeys = sharedWallet.participants.map(
-      p => new sdkModule!.Bitcore.PublicKey(p.publicKeyHex),
+      p => new Bitcore.PublicKey(p.publicKeyHex) as any,
+    )
+
+    // Create private key from context
+    const privateKey = createPrivateKey(
+      initContext.signingContext.privateKeyHex,
     )
 
     // Create session with metadata including wallet ID
@@ -1385,39 +1406,43 @@ export async function initiateSigningSession(
 }
 
 /**
+ * Callbacks for session connection failure handling
+ * Used to notify store of connection status changes
+ */
+export interface SessionConnectionCallbacks {
+  onParticipantDisconnected: (sessionId: string, peerId: string) => void
+  onParticipantReconnected: (sessionId: string, peerId: string) => void
+}
+
+/**
  * Handle connection failure during active session
  *
  * @param sessionId - The session ID
  * @param failedPeerId - The peer ID that failed
+ * @param peerContext - Current peer context
+ * @param callbacks - Callbacks to notify store of status changes
  */
 export async function handleSessionConnectionFailure(
   sessionId: string,
   failedPeerId: string,
+  peerContext: PeerContext,
+  callbacks: SessionConnectionCallbacks,
 ): Promise<void> {
-  const musig2Store = useMuSig2Store()
+  // Notify store of disconnection
+  callbacks.onParticipantDisconnected(sessionId, failedPeerId)
 
-  // Update session state
-  musig2Store.updateSessionParticipantStatus(
-    sessionId,
-    failedPeerId,
-    'disconnected',
-  )
+  // Find peer in online peers
+  const presence = peerContext.onlinePeers.find(p => p.peerId === failedPeerId)
 
-  // Attempt reconnection
-  const p2pStore = useP2PStore()
-  const presence = p2pStore.onlinePeers.find(p => p.peerId === failedPeerId)
-
-  if (presence) {
+  if (presence && p2pPlugin) {
     console.log(`[MuSig2] Attempting to reconnect to ${failedPeerId}...`)
 
-    const result = await connectWithRetry(presence, { maxRetries: 2 })
+    const result = await p2pPlugin.connectWithRetry(presence as any, {
+      maxRetries: 2,
+    })
 
     if (result.success) {
-      musig2Store.updateSessionParticipantStatus(
-        sessionId,
-        failedPeerId,
-        'connected',
-      )
+      callbacks.onParticipantReconnected(sessionId, failedPeerId)
       console.log(`[MuSig2] Reconnected to ${failedPeerId}`)
     } else {
       console.warn(`[MuSig2] Failed to reconnect to ${failedPeerId}`)
@@ -1426,38 +1451,56 @@ export async function handleSessionConnectionFailure(
 }
 
 /**
+ * Session monitoring context
+ * Provides session and peer state for monitoring
+ */
+export interface SessionMonitorContext {
+  getSession: (sessionId: string) => WalletSigningSession | null
+  getPeerContext: () => PeerContext
+  callbacks: SessionConnectionCallbacks
+}
+
+/**
  * Monitor session participant connections
  *
  * @param sessionId - The session ID to monitor
+ * @param monitorContext - Context providing session and peer state
  * @returns Cleanup function to stop monitoring
  */
-export function monitorSessionConnections(sessionId: string): () => void {
+export function monitorSessionConnections(
+  sessionId: string,
+  monitorContext: SessionMonitorContext,
+): () => void {
   let isMonitoring = true
   let intervalId: ReturnType<typeof setInterval> | null = null
 
   const checkConnections = async () => {
     if (!isMonitoring) return
 
-    const musig2Store = useMuSig2Store()
-    const p2pStore = useP2PStore()
-
-    const session = musig2Store.activeSessions.find(s => s.id === sessionId)
+    const session = monitorContext.getSession(sessionId)
     if (!session) {
       // Session no longer exists, stop monitoring
       if (intervalId) clearInterval(intervalId)
       return
     }
 
+    const peerContext = monitorContext.getPeerContext()
+
     for (const participant of session.participants) {
       // Skip self
-      if (participant.peerId === p2pStore.peerId) continue
+      if (participant.peerId === peerContext.myPeerId) continue
 
-      const peer = p2pStore.onlinePeers.find(
+      const peer = peerContext.onlinePeers.find(
         p => p.peerId === participant.peerId,
       )
 
       if (!peer || peer.connectionStatus === 'failed') {
-        await handleSessionConnectionFailure(sessionId, participant.peerId)
+        await handleSessionConnectionFailure(
+          sessionId,
+          participant.peerId,
+          peerContext,
+          monitorContext.callbacks,
+        )
       }
     }
   }
@@ -1484,7 +1527,13 @@ export function monitorSessionConnections(sessionId: string): () => void {
 
 export default defineNuxtPlugin({
   name: 'musig2',
-  setup() {
+  dependsOn: ['p2p', 'discovery-cache'],
+  setup(nuxtApp) {
+    // Store references to dependent plugins for use in exported functions
+    // Type assertions needed because NuxtApp types may not be fully resolved at this point
+    p2pPlugin = (nuxtApp as any).$p2p
+    discoveryCachePlugin = (nuxtApp as any).$discoveryCache
+
     console.log('[MuSig2 Plugin] Ready (lazy initialization)')
 
     return {
@@ -1508,8 +1557,8 @@ export default defineNuxtPlugin({
           canFinalizeSession,
           finalizeSession,
           abortSession,
-          getMuSig2SigningKey,
-          getMuSig2PrivateKey,
+          createPrivateKey,
+          createPublicKey,
           isInitialized: isMuSig2Initialized,
           hasDiscovery,
           getCoordinator: getMuSig2Coordinator,
@@ -1551,8 +1600,8 @@ declare module '#app' {
       canFinalizeSession: typeof canFinalizeSession
       finalizeSession: typeof finalizeSession
       abortSession: typeof abortSession
-      getMuSig2SigningKey: typeof getMuSig2SigningKey
-      getMuSig2PrivateKey: typeof getMuSig2PrivateKey
+      createPrivateKey: typeof createPrivateKey
+      createPublicKey: typeof createPublicKey
       isInitialized: typeof isMuSig2Initialized
       hasDiscovery: typeof hasDiscovery
       getCoordinator: typeof getMuSig2Coordinator
@@ -1588,8 +1637,8 @@ declare module 'vue' {
       canFinalizeSession: typeof canFinalizeSession
       finalizeSession: typeof finalizeSession
       abortSession: typeof abortSession
-      getMuSig2SigningKey: typeof getMuSig2SigningKey
-      getMuSig2PrivateKey: typeof getMuSig2PrivateKey
+      createPrivateKey: typeof createPrivateKey
+      createPublicKey: typeof createPublicKey
       isInitialized: typeof isMuSig2Initialized
       hasDiscovery: typeof hasDiscovery
       getCoordinator: typeof getMuSig2Coordinator

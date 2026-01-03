@@ -217,6 +217,22 @@ export function formatRelativeTime(timestamp: number): string {
 }
 
 /**
+ * Format a timestamp into a date group label (Today, Yesterday, This Week, etc.)
+ */
+export function formatDateGroup(timestamp: number): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Yesterday'
+  if (days < 7) return 'This Week'
+  if (days < 30) return 'This Month'
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+}
+
+/**
  * Format a timestamp as date/time string
  */
 export function formatDateTime(timestamp: number): string {

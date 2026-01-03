@@ -8,6 +8,11 @@
  * - Transaction signing (ECDSA and Schnorr)
  * - Message signing and verification
  *
+ * Access Pattern:
+ * - Uses STATIC IMPORTS only (workers cannot access Nuxt plugins)
+ * - Self-contained SDK access via direct import from xpi-ts
+ * - Communicates with main thread via postMessage
+ *
  * The Bitcore SDK is loaded once in the worker and reused for all operations.
  *
  * Note: This worker is behind a feature flag (USE_CRYPTO_WORKER) and
@@ -25,8 +30,21 @@ import type {
   MessageSignedResponse,
   CryptoWorkerStatus,
 } from '~/types/crypto-worker'
-
-declare let self: DedicatedWorkerGlobalScope
+import {
+  Mnemonic,
+  HDPrivateKey,
+  Networks,
+  Address,
+  Script,
+  Transaction,
+  PrivateKey,
+  PublicKey,
+  tweakPublicKey,
+  buildPayToTaproot,
+  Message,
+  Hash,
+} from 'xpi-ts/lib/bitcore'
+import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
 
 const WORKER_VERSION = '2.0.0'
 
@@ -34,31 +52,13 @@ const WORKER_VERSION = '2.0.0'
 // SDK Loading
 // ============================================================================
 
-type BitcoreSDK = typeof import('lotus-sdk').Bitcore
-let Bitcore: BitcoreSDK | null = null
-let sdkLoading: Promise<BitcoreSDK> | null = null
-let sdkReady = false
+//type BitcoreSDK = typeof Bitcore
+//const sdkReady = true
 
-async function ensureSDK(): Promise<BitcoreSDK> {
-  if (Bitcore) return Bitcore
-
-  if (!sdkLoading) {
-    sdkLoading = (async () => {
-      try {
-        const sdk = await import('lotus-sdk')
-        Bitcore = sdk.Bitcore as BitcoreSDK
-        sdkReady = true
-        console.log('[CryptoWorker] SDK loaded successfully')
-        return Bitcore
-      } catch (error) {
-        console.error('[CryptoWorker] Failed to load SDK:', error)
-        throw error
-      }
-    })()
-  }
-
-  return sdkLoading
-}
+//async function ensureSDK(): Promise<BitcoreSDK> {
+// SDK is statically imported, always available
+//return Bitcore
+//}
 
 // ============================================================================
 // Constants
@@ -74,7 +74,7 @@ const BIP44_COINTYPE = 10605
 // Initialize SDK and signal ready
 ;(async () => {
   try {
-    await ensureSDK()
+    // await ensureSDK()
 
     const status: CryptoWorkerStatus = {
       ready: true,
@@ -117,20 +117,19 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 
   try {
     // Ensure SDK is loaded before processing
-    const sdk = await ensureSDK()
+    //const sdk = await ensureSDK()
 
     switch (type) {
       case 'GENERATE_MNEMONIC':
-        await handleGenerateMnemonic(sdk, requestId, request.payload.strength)
+        await handleGenerateMnemonic(requestId, request.payload.strength)
         break
 
       case 'VALIDATE_MNEMONIC':
-        await handleValidateMnemonic(sdk, requestId, request.payload.mnemonic)
+        await handleValidateMnemonic(requestId, request.payload.mnemonic)
         break
 
       case 'DERIVE_KEYS':
         await handleDeriveKeys(
-          sdk,
           requestId,
           request.payload.mnemonic,
           request.payload.addressType,
@@ -143,7 +142,6 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 
       case 'SIGN_TRANSACTION':
         await handleSignTransaction(
-          sdk,
           requestId,
           request.payload.txHex,
           request.payload.utxos,
@@ -156,7 +154,6 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 
       case 'SIGN_MESSAGE':
         await handleSignMessage(
-          sdk,
           requestId,
           request.payload.message,
           request.payload.privateKey,
@@ -165,7 +162,6 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 
       case 'VERIFY_MESSAGE':
         await handleVerifyMessage(
-          sdk,
           requestId,
           request.payload.message,
           request.payload.address,
@@ -198,11 +194,9 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 // ============================================================================
 
 async function handleGenerateMnemonic(
-  sdk: BitcoreSDK,
   requestId: string,
   strength?: 128 | 160 | 192 | 224 | 256,
 ): Promise<void> {
-  const { Mnemonic } = sdk
   const mnemonic = new Mnemonic(strength)
 
   const response: CryptoWorkerResponse = {
@@ -216,11 +210,9 @@ async function handleGenerateMnemonic(
 }
 
 async function handleValidateMnemonic(
-  sdk: BitcoreSDK,
   requestId: string,
   mnemonic: string,
 ): Promise<void> {
-  const { Mnemonic } = sdk
   const valid = Mnemonic.isValid(mnemonic)
 
   const response: CryptoWorkerResponse = {
@@ -232,26 +224,18 @@ async function handleValidateMnemonic(
 }
 
 async function handleDeriveKeys(
-  sdk: BitcoreSDK,
   requestId: string,
   mnemonicPhrase: string,
   addressType: AddressType,
-  networkName: string,
+  networkName: NetworkName,
   accountIndex: number = 0,
   addressIndex: number = 0,
   isChange: boolean = false,
 ): Promise<void> {
-  const {
-    Mnemonic,
-    HDPrivateKey,
-    Networks,
-    Address,
-    Script,
-    tweakPublicKey,
-    buildPayToTaproot,
-  } = sdk
-
   const network = Networks.get(networkName)
+  if (!network) {
+    throw new Error(`Unknown network: ${networkName}`)
+  }
   const mnemonic = new Mnemonic(mnemonicPhrase)
   const hdPrivkey = HDPrivateKey.fromSeed(mnemonic.toSeed())
 
@@ -272,7 +256,7 @@ async function handleDeriveKeys(
   let internalPubKeyHex: string | undefined
   let merkleRootHex: string | undefined
 
-  if (addressType === 'p2tr') {
+  if (addressType === 'p2tr-commitment') {
     // Taproot (P2TR) address generation
     const internalPubKey = signingKey.publicKey
     const merkleRoot = Buffer.alloc(32) // Empty merkle root for key-path-only
@@ -309,7 +293,6 @@ async function handleDeriveKeys(
 }
 
 async function handleSignTransaction(
-  sdk: BitcoreSDK,
   requestId: string,
   txHex: string,
   utxos: Array<{ outpoint: string; satoshis: number; scriptHex: string }>,
@@ -318,8 +301,6 @@ async function handleSignTransaction(
   internalPubKeyHex?: string,
   merkleRootHex?: string,
 ): Promise<void> {
-  const { Transaction, PrivateKey, Script, PublicKey } = sdk
-
   // Deserialize the transaction to get outputs and locktime
   const deserializedTx = new Transaction(txHex)
 
@@ -358,7 +339,7 @@ async function handleSignTransaction(
 
   const privateKey = new PrivateKey(privateKeyStr)
 
-  if (addressType === 'p2tr') {
+  if (addressType === 'p2tr-commitment') {
     tx.signSchnorr(privateKey)
   } else {
     tx.sign(privateKey)
@@ -378,13 +359,10 @@ async function handleSignTransaction(
 }
 
 async function handleSignMessage(
-  sdk: BitcoreSDK,
   requestId: string,
   messageText: string,
   privateKeyStr: string,
 ): Promise<void> {
-  const { Message, PrivateKey } = sdk
-
   const message = new Message(messageText)
   const privateKey = new PrivateKey(privateKeyStr)
   const signature = message.sign(privateKey)
@@ -400,14 +378,11 @@ async function handleSignMessage(
 }
 
 async function handleVerifyMessage(
-  sdk: BitcoreSDK,
   requestId: string,
   messageText: string,
   address: string,
   signature: string,
 ): Promise<void> {
-  const { Message } = sdk
-
   const message = new Message(messageText)
   let valid = false
 
@@ -437,11 +412,6 @@ async function handleHashData(
   const dataBuffer = Buffer.from(data, 'hex')
 
   // Use SDK's Hash utilities for all algorithms (consistent and reliable)
-  if (!Bitcore) {
-    throw new Error('SDK not loaded - cannot perform hash operation')
-  }
-
-  const { Hash } = Bitcore
 
   switch (algorithm) {
     case 'sha256': {

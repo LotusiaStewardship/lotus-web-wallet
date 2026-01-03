@@ -1,21 +1,27 @@
 /**
- * Draft Transaction Store (Simplified)
+ * Draft Transaction Store
  *
- * Manages the state of a draft transaction:
- * - Recipients (address, amount, sendMax)
- * - Fee rate
- * - Coin control (selected UTXOs)
- * - OP_RETURN data
- * - Locktime
+ * Simplified store for managing draft transactions in the new SendModal flow.
+ * Designed for single-recipient transactions with optional advanced features.
  *
- * Transaction building logic is delegated to useTransactionBuilder composable.
- * This store is the single source of truth for transaction crafting state.
+ * Primary API (for SendModal):
+ * - setAddress(address) - Set recipient address
+ * - setAmount(sats) - Set amount in satoshis
+ * - setSendMax(enabled) - Enable/disable send max
+ * - send() - Build, sign, and broadcast transaction
+ * - reset() - Clear draft state
+ *
+ * Advanced API (for power users):
+ * - setFeeRate(rate) - Custom fee rate
+ * - setSelectedUtxos(outpoints) - Coin control
+ * - setOpReturn(config) - OP_RETURN data
+ * - setLocktime(config) - Locktime
  */
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useWalletStore } from './wallet'
 import { useNetworkStore } from './network'
-import { useNotificationStore } from './notifications'
-import { getBitcore, isBitcoreLoaded } from '~/plugins/bitcore.client'
+import { getBitcore } from '~/plugins/bitcore.client'
 import {
   broadcastTransaction,
   isChronikInitialized,
@@ -23,45 +29,32 @@ import {
 import {
   useTransactionBuilder,
   type UtxoEntry,
-  type RecipientData,
   type OpReturnConfig,
   type LocktimeConfig,
   type TransactionBuildContext,
-  type TransactionEstimate,
 } from '~/composables/useTransactionBuilder'
-import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
 import { DEFAULT_FEE_RATE, USE_CRYPTO_WORKER } from '~/utils/constants'
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export interface DraftRecipient {
-  id: string
+export interface DraftState {
+  // Core transaction data
   address: string
   amountSats: bigint
   sendMax: boolean
-}
 
-export interface DraftState {
-  initialized: boolean
-  recipients: DraftRecipient[]
+  // Advanced options
   feeRate: number
-  /** Selected UTXOs for coin control (empty = auto-select) */
   selectedUtxos: string[]
   opReturn: OpReturnConfig | null
   locktime: LocktimeConfig | null
 
-  // Computed values (updated by _recalculate)
+  // Computed values (updated by recalculate)
   estimatedFee: number
   availableBalance: bigint
-  inputAmount: bigint
-  outputAmount: bigint
-  changeAmount: bigint
   maxSendable: bigint
-  selectedUtxoCount: number
-  totalUtxoCount: number
-  computedUtxoOutpoints: string[]
   isValid: boolean
   validationError: string | null
 
@@ -75,27 +68,18 @@ export interface DraftState {
 // Helpers
 // ============================================================================
 
-function generateId(): string {
-  return crypto.randomUUID()
-}
-
 function createInitialState(): DraftState {
   return {
-    initialized: false,
-    recipients: [],
+    address: '',
+    amountSats: 0n,
+    sendMax: false,
     feeRate: DEFAULT_FEE_RATE,
     selectedUtxos: [],
     opReturn: null,
     locktime: null,
     estimatedFee: 0,
     availableBalance: 0n,
-    inputAmount: 0n,
-    outputAmount: 0n,
-    changeAmount: 0n,
     maxSendable: 0n,
-    selectedUtxoCount: 0,
-    totalUtxoCount: 0,
-    computedUtxoOutpoints: [],
     isValid: false,
     validationError: null,
     sending: false,
@@ -108,388 +92,392 @@ function createInitialState(): DraftState {
 // Store
 // ============================================================================
 
-export const useDraftStore = defineStore('draft', {
-  state: (): DraftState => createInitialState(),
+export const useDraftStore = defineStore('draft', () => {
+  // === STATE ===
+  const address = ref('')
+  const amountSats = ref(0n)
+  const sendMax = ref(false)
+  const feeRate = ref(DEFAULT_FEE_RATE)
+  const selectedUtxos = ref<string[]>([])
+  const opReturn = ref<OpReturnConfig | null>(null)
+  const locktime = ref<LocktimeConfig | null>(null)
+  const estimatedFee = ref(0)
+  const availableBalance = ref(0n)
+  const maxSendable = ref(0n)
+  const isValid = ref(false)
+  const validationError = ref<string | null>(null)
+  const sending = ref(false)
+  const sendError = ref<string | null>(null)
+  const lastTxid = ref<string | null>(null)
 
-  getters: {
-    canSend(): boolean {
-      return this.isValid && !this.sending && this.recipients.length > 0
-    },
+  // === GETTERS ===
+  const canSend = computed(() => isValid.value && !sending.value)
+  const hasAddress = computed(() => address.value.length > 0)
+  const hasAmount = computed(() => amountSats.value > 0n || sendMax.value)
 
-    recipientCount(): number {
-      return this.recipients.length
-    },
+  // === INTERNAL HELPERS ===
+  function _getAvailableUtxos(): UtxoEntry[] {
+    const walletStore = useWalletStore()
+    const spendable = walletStore.getSpendableUtxos()
 
-    isMultiSend(): boolean {
-      return this.recipients.length > 1
-    },
-  },
-
-  actions: {
-    // ========================================================================
-    // Initialization
-    // ========================================================================
-
-    initialize() {
-      Object.assign(this, createInitialState())
-
-      const walletStore = useWalletStore()
-      const availableUtxos = this._getAvailableUtxos()
-      const availableBalance = availableUtxos.reduce(
-        (sum, utxo) => sum + BigInt(utxo.value),
-        0n,
+    if (selectedUtxos.value.length > 0) {
+      return spendable.filter(utxo =>
+        selectedUtxos.value.includes(utxo.outpoint),
       )
-      this.availableBalance = availableBalance
-      this.totalUtxoCount = availableUtxos.length
+    }
 
-      this.recipients = [
-        {
-          id: generateId(),
-          address: '',
-          amountSats: 0n,
-          sendMax: false,
-        },
-      ]
+    return spendable
+  }
 
-      this.initialized = true
-    },
+  function _buildContext(): TransactionBuildContext | null {
+    const walletStore = useWalletStore()
+    const Bitcore = getBitcore()
 
-    reset() {
-      Object.assign(this, createInitialState())
-    },
+    const txContext = walletStore.getTransactionBuildContext()
+    if (!Bitcore || !txContext) return null
 
-    // ========================================================================
-    // Recipient Management
-    // ========================================================================
+    const availableUtxosList = _getAvailableUtxos()
 
-    addRecipient(): string {
-      const id = generateId()
-      this.recipients.push({
-        id,
-        address: '',
-        amountSats: 0n,
-        sendMax: false,
-      })
-      this._recalculate()
-      return id
-    },
+    // Build single recipient for transaction builder
+    const recipients = [
+      {
+        address: address.value,
+        amountSats: amountSats.value,
+        sendMax: sendMax.value,
+      },
+    ]
 
-    removeRecipient(id: string) {
-      const index = this.recipients.findIndex(r => r.id === id)
-      if (index !== -1 && this.recipients.length > 1) {
-        this.recipients.splice(index, 1)
-        this._recalculate()
+    return {
+      availableUtxos: availableUtxosList,
+      recipients,
+      feeRate: feeRate.value,
+      changeAddress: txContext.changeAddress,
+      script: txContext.script,
+      addressType: txContext.addressType,
+      internalPubKey: txContext.internalPubKey,
+      merkleRoot: txContext.merkleRoot,
+      opReturn: opReturn.value,
+      locktime: locktime.value,
+      selectedUtxoOutpoints:
+        selectedUtxos.value.length > 0 ? selectedUtxos.value : undefined,
+    }
+  }
+
+  function _recalculate() {
+    const walletStore = useWalletStore()
+    const networkStore = useNetworkStore()
+    const builder = useTransactionBuilder()
+
+    // Reset validation
+    isValid.value = false
+    validationError.value = null
+
+    // Get available balance
+    const availableUtxosList = _getAvailableUtxos()
+    availableBalance.value = availableUtxosList.reduce(
+      (sum, utxo) => sum + BigInt(utxo.value),
+      0n,
+    )
+
+    if (availableUtxosList.length === 0) {
+      if (walletStore.initialized) {
+        validationError.value = 'No spendable UTXOs available'
+      } else {
+        validationError.value = 'Loading balance...'
       }
-    },
+      maxSendable.value = 0n
+      estimatedFee.value = 0
+      return
+    }
 
-    updateRecipientAddress(id: string, address: string) {
-      const recipient = this.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.address = address
-        this._recalculate()
-      }
-    },
+    const ctx = _buildContext()
+    if (!ctx) {
+      validationError.value = 'Loading wallet...'
+      return
+    }
 
-    updateRecipientAmount(id: string, amountSats: bigint) {
-      const recipient = this.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.amountSats = amountSats
-        recipient.sendMax = false
-        this._recalculate()
-      }
-    },
+    // Estimate transaction
+    const estimate = builder.estimateTransaction(
+      ctx,
+      networkStore.currentNetwork,
+    )
 
-    setRecipientSendMax(id: string, sendMax: boolean) {
-      for (const recipient of this.recipients) {
-        if (recipient.id !== id) {
-          recipient.sendMax = false
-        }
-      }
-      const recipient = this.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.sendMax = sendMax
-        if (sendMax) {
-          recipient.amountSats = 0n
-        }
-        this._recalculate()
-      }
-    },
+    // Update state from estimate
+    estimatedFee.value = estimate.estimatedFee
+    maxSendable.value = estimate.maxSendable
+    isValid.value = estimate.valid
+    validationError.value = estimate.error
+  }
 
-    clearRecipient(id: string) {
-      const recipient = this.recipients.find(r => r.id === id)
-      if (recipient) {
-        recipient.address = ''
-        recipient.amountSats = 0n
-        recipient.sendMax = false
-        this._recalculate()
-      }
-    },
+  // === ACTIONS ===
+  // ========================================================================
+  // Primary API
+  // ========================================================================
 
-    getRecipient(id: string): DraftRecipient | undefined {
-      return this.recipients.find(r => r.id === id)
-    },
+  /**
+   * Set the recipient address and recalculate.
+   */
+  function setAddress(newAddress: string) {
+    address.value = newAddress
+    _recalculate()
+  }
 
-    // ========================================================================
-    // Options
-    // ========================================================================
+  /**
+   * Set the amount in satoshis and recalculate.
+   * Automatically disables sendMax.
+   */
+  function setAmount(newAmountSats: bigint) {
+    amountSats.value = newAmountSats
+    sendMax.value = false
+    _recalculate()
+  }
 
-    setFeeRate(rate: number) {
-      this.feeRate = Math.max(1, Math.floor(rate))
-      this._recalculate()
-    },
+  /**
+   * Enable or disable send max mode.
+   * When enabled, the amount will be calculated to send all available balance.
+   */
+  function setSendMax(enabled: boolean) {
+    sendMax.value = enabled
+    if (enabled) {
+      amountSats.value = 0n
+    }
+    _recalculate()
+  }
 
-    setSelectedUtxos(utxos: string[]) {
-      this.selectedUtxos = utxos
-      this._recalculate()
-    },
+  /**
+   * Reset the draft to initial state.
+   */
+  function reset() {
+    address.value = ''
+    amountSats.value = 0n
+    sendMax.value = false
+    feeRate.value = DEFAULT_FEE_RATE
+    selectedUtxos.value = []
+    opReturn.value = null
+    locktime.value = null
+    estimatedFee.value = 0
+    availableBalance.value = 0n
+    maxSendable.value = 0n
+    isValid.value = false
+    validationError.value = null
+    sending.value = false
+    sendError.value = null
+    lastTxid.value = null
+  }
 
-    setOpReturn(opReturn: OpReturnConfig | null) {
-      this.opReturn = opReturn
-      this._recalculate()
-    },
+  // ========================================================================
+  // Advanced API
+  // ========================================================================
 
-    setLocktime(locktime: LocktimeConfig | null) {
-      this.locktime = locktime
-      this._recalculate()
-    },
+  /**
+   * Set custom fee rate (sat/byte).
+   */
+  function setFeeRate(rate: number) {
+    feeRate.value = Math.max(1, Math.floor(rate))
+    _recalculate()
+  }
 
-    // ========================================================================
-    // Internal
-    // ========================================================================
+  /**
+   * Set selected UTXOs for coin control.
+   * Pass empty array to disable coin control (auto-select).
+   */
+  function setSelectedUtxos(outpoints: string[]) {
+    selectedUtxos.value = outpoints
+    _recalculate()
+  }
 
-    _getAvailableUtxos(): UtxoEntry[] {
-      const walletStore = useWalletStore()
-      const spendable = walletStore.getSpendableUtxos()
+  /**
+   * Set OP_RETURN data configuration.
+   */
+  function setOpReturn(config: OpReturnConfig | null) {
+    opReturn.value = config
+    _recalculate()
+  }
 
-      if (this.selectedUtxos.length > 0) {
-        return spendable.filter(utxo =>
-          this.selectedUtxos.includes(utxo.outpoint),
-        )
-      }
+  /**
+   * Set locktime configuration.
+   */
+  function setLocktime(config: LocktimeConfig | null) {
+    locktime.value = config
+    _recalculate()
+  }
 
-      return spendable
-    },
+  // ========================================================================
+  // Send
+  // ========================================================================
 
-    _buildContext(): TransactionBuildContext | null {
-      const walletStore = useWalletStore()
-      const Bitcore = getBitcore()
+  async function send(): Promise<string> {
+    const walletStore = useWalletStore()
+    const networkStore = useNetworkStore()
+    const builder = useTransactionBuilder()
+    const Bitcore = getBitcore()
 
-      // Use public API instead of private properties
-      const txContext = walletStore.getTransactionBuildContext()
-      if (!Bitcore || !txContext) return null
+    if (
+      !isChronikInitialized() ||
+      !walletStore.isReadyForSigning() ||
+      !Bitcore
+    ) {
+      throw new Error('Wallet not initialized')
+    }
 
-      const availableUtxos = this._getAvailableUtxos()
+    if (!isValid.value) {
+      throw new Error(validationError.value || 'Transaction is not valid')
+    }
 
-      return {
-        availableUtxos,
-        recipients: this.recipients.map(r => ({
-          address: r.address,
-          amountSats: r.amountSats,
-          sendMax: r.sendMax,
-        })),
-        feeRate: this.feeRate,
-        changeAddress: txContext.changeAddress,
-        script: txContext.script,
-        addressType: txContext.addressType,
-        internalPubKey: txContext.internalPubKey,
-        merkleRoot: txContext.merkleRoot,
-        opReturn: this.opReturn,
-        locktime: this.locktime,
-        selectedUtxoOutpoints:
-          this.selectedUtxos.length > 0 ? this.selectedUtxos : undefined,
-      }
-    },
+    sending.value = true
+    sendError.value = null
 
-    _recalculate() {
-      const walletStore = useWalletStore()
-      const networkStore = useNetworkStore()
-      const builder = useTransactionBuilder()
-
-      // Reset validation
-      this.isValid = false
-      this.validationError = null
-
-      const ctx = this._buildContext()
+    try {
+      const ctx = _buildContext()
       if (!ctx) {
-        this.validationError = 'Loading wallet...'
-        return
+        throw new Error('Failed to build transaction context')
       }
 
-      // Get available balance
-      const availableUtxos = this._getAvailableUtxos()
-      this.availableBalance = availableUtxos.reduce(
-        (sum, utxo) => sum + BigInt(utxo.value),
-        0n,
-      )
-      this.totalUtxoCount = availableUtxos.length
-
-      if (availableUtxos.length === 0) {
-        if (walletStore.initialized) {
-          this.validationError = 'No spendable UTXOs available'
-        } else {
-          this.validationError = 'Loading balance...'
-        }
-        this.maxSendable = 0n
-        this.outputAmount = 0n
-        this.estimatedFee = 0
-        this.changeAmount = 0n
-        this.inputAmount = 0n
-        this.selectedUtxoCount = 0
-        this.computedUtxoOutpoints = []
-        return
-      }
-
-      // Estimate transaction
+      // Estimate to get selected UTXOs
       const estimate = builder.estimateTransaction(
         ctx,
         networkStore.currentNetwork,
       )
 
-      // Update state from estimate
-      this.inputAmount = estimate.inputAmount
-      this.outputAmount = estimate.outputAmount
-      this.estimatedFee = estimate.estimatedFee
-      this.changeAmount = estimate.changeAmount
-      this.maxSendable = estimate.maxSendable
-      this.selectedUtxoCount = estimate.selectedUtxos.length
-      this.computedUtxoOutpoints = estimate.selectedUtxos.map(u => u.outpoint)
-      this.isValid = estimate.valid
-      this.validationError = estimate.error
-    },
-
-    // ========================================================================
-    // Sending
-    // ========================================================================
-
-    async send(): Promise<string> {
-      const walletStore = useWalletStore()
-      //const notificationStore = useNotificationStore()
-      const builder = useTransactionBuilder()
-      const Bitcore = getBitcore()
-
-      if (
-        !isChronikInitialized() ||
-        !walletStore.isReadyForSigning() ||
-        !Bitcore
-      ) {
-        throw new Error('Wallet not initialized')
+      if (!estimate.valid) {
+        throw new Error(estimate.error || 'Transaction estimation failed')
       }
 
-      if (!this.isValid) {
-        throw new Error(this.validationError || 'Transaction is not valid')
+      // Get UTXOs for this transaction
+      const utxosToUse: UtxoEntry[] = estimate.selectedUtxos
+        .map(utxo => {
+          const walletUtxo = walletStore.utxos.get(utxo.outpoint)
+          return walletUtxo
+            ? {
+                outpoint: utxo.outpoint,
+                value: walletUtxo.value,
+                height: walletUtxo.height,
+                isCoinbase: walletUtxo.isCoinbase,
+              }
+            : null
+        })
+        .filter((entry): entry is UtxoEntry => entry !== null)
+
+      if (utxosToUse.length === 0) {
+        throw new Error('No UTXOs selected for transaction')
       }
 
-      this.sending = true
-      this.sendError = null
+      // Build transaction
+      const tx = builder.buildTransaction(ctx, utxosToUse, estimate.maxSendable)
+      if (!tx) {
+        throw new Error('Failed to build transaction')
+      }
 
-      try {
-        // Get UTXOs for this transaction
-        const utxosToUse: UtxoEntry[] = this.computedUtxoOutpoints
-          .map(outpoint => {
-            const utxo = walletStore.utxos.get(outpoint)
-            return utxo
-              ? {
-                  outpoint,
-                  value: utxo.value,
-                  height: utxo.height,
-                  isCoinbase: utxo.isCoinbase,
-                }
-              : null
-          })
-          .filter((entry): entry is UtxoEntry => entry !== null)
+      // Apply locktime if configured
+      if (locktime.value) {
+        builder.applyLocktime(tx, locktime.value)
+      }
 
-        if (utxosToUse.length === 0) {
-          throw new Error('No UTXOs selected for transaction')
-        }
+      // Capture details for history
+      const totalOutputAmount = sendMax.value
+        ? estimate.maxSendable
+        : amountSats.value
 
-        // Build context and transaction
-        const ctx = this._buildContext()
-        if (!ctx) {
-          throw new Error('Failed to build transaction context')
-        }
+      // Sign the transaction
+      let signedTxHex: string
 
-        const tx = builder.buildTransaction(ctx, utxosToUse, this.maxSendable)
-        if (!tx) {
-          throw new Error('Failed to build transaction')
-        }
+      if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
+        const { signTransaction } = useCryptoWorker()
+        const privateKeyHex = walletStore.getPrivateKeyHex()
+        if (!privateKeyHex) throw new Error('Private key not available')
 
-        // Apply locktime
-        builder.applyLocktime(tx, this.locktime)
+        const scriptHex = walletStore.getScriptHex()
+        if (!scriptHex) throw new Error('Script not available')
 
-        // Capture details for history
-        const totalOutputAmount = this.outputAmount
-        const primaryRecipient = this.recipients.find(
-          r => r.address && r.address !== walletStore.address,
+        const utxosForSigning = utxosToUse.map(utxo => ({
+          outpoint: utxo.outpoint,
+          satoshis: Number(utxo.value),
+          scriptHex,
+        }))
+
+        const signResult = await signTransaction(
+          tx.toBuffer().toString('hex'),
+          utxosForSigning,
+          privateKeyHex,
+          walletStore.addressType,
+          walletStore.getInternalPubKeyString() ?? undefined,
+          walletStore.getMerkleRootHex() ?? undefined,
         )
-
-        // Sign the transaction
-        let signedTxHex: string
-
-        if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
-          const { signTransaction } = useCryptoWorker()
-          const privateKeyHex = walletStore.getPrivateKeyHex()
-          if (!privateKeyHex) throw new Error('Private key not available')
-
-          // Build UTXO data for worker to reconstruct input.output
-          const scriptHex = walletStore.getScriptHex()
-          if (!scriptHex) throw new Error('Script not available')
-
-          const utxosForSigning = utxosToUse.map(utxo => ({
-            outpoint: utxo.outpoint,
-            satoshis: Number(utxo.value),
-            scriptHex,
-          }))
-
-          const signResult = await signTransaction(
-            tx.toBuffer().toString('hex'),
-            utxosForSigning,
-            privateKeyHex,
-            walletStore.addressType,
-            walletStore.getInternalPubKeyString() ?? undefined,
-            walletStore.getMerkleRootHex() ?? undefined,
-          )
-          signedTxHex = signResult.signedTxHex
-        } else {
-          signedTxHex = walletStore.signTransactionHex(tx)
-        }
-
-        // Broadcast
-        const result = await broadcastTransaction(signedTxHex)
-
-        // Update wallet state
-        for (const input of tx.inputs) {
-          const outpoint = `${input.prevTxId.toString('hex')}_${
-            input.outputIndex
-          }`
-          walletStore.utxos.delete(outpoint)
-        }
-
-        const newHistoryItem = {
-          txid: result.txid,
-          timestamp: Math.floor(Date.now() / 1000).toString(),
-          blockHeight: -1,
-          isSend: true,
-          amount: totalOutputAmount.toString(),
-          address: primaryRecipient?.address || '',
-          confirmations: 0,
-        }
-        walletStore.transactionHistory.unshift(newHistoryItem)
-
-        walletStore.recalculateBalance()
-        await walletStore.saveWalletState()
-
-        this.lastTxid = result.txid
-        this.initialize()
-
-        return result.txid
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Transaction failed'
-        this.sendError = message
-        throw error
-      } finally {
-        this.sending = false
+        signedTxHex = signResult.signedTxHex
+      } else {
+        signedTxHex = walletStore.signTransactionHex(tx)
       }
-    },
-  },
+
+      // Broadcast
+      const result = await broadcastTransaction(signedTxHex)
+
+      // Update wallet state - remove spent UTXOs
+      for (const input of tx.inputs) {
+        const outpoint = `${input.prevTxId.toString('hex')}_${
+          input.outputIndex
+        }`
+        walletStore.utxos.delete(outpoint)
+      }
+
+      // Add to transaction history
+      const newHistoryItem = {
+        txid: result.txid,
+        timestamp: Math.floor(Date.now() / 1000).toString(),
+        blockHeight: -1,
+        isSend: true,
+        amount: totalOutputAmount.toString(),
+        address: address.value,
+        confirmations: 0,
+      }
+      walletStore.transactionHistory.unshift(newHistoryItem)
+
+      walletStore.recalculateBalance()
+      await walletStore.saveWalletState()
+
+      lastTxid.value = result.txid
+
+      return result.txid
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Transaction failed'
+      sendError.value = message
+      throw error
+    } finally {
+      sending.value = false
+    }
+  }
+
+  // === RETURN ===
+  return {
+    // State
+    address,
+    amountSats,
+    sendMax,
+    feeRate,
+    selectedUtxos,
+    opReturn,
+    locktime,
+    estimatedFee,
+    availableBalance,
+    maxSendable,
+    isValid,
+    validationError,
+    sending,
+    sendError,
+    lastTxid,
+    // Getters
+    canSend,
+    hasAddress,
+    hasAmount,
+    // Actions
+    setAddress,
+    setAmount,
+    setSendMax,
+    reset,
+    setFeeRate,
+    setSelectedUtxos,
+    setOpReturn,
+    setLocktime,
+    send,
+  }
 })

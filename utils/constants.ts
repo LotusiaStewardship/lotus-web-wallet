@@ -147,6 +147,9 @@ export const MAX_CONCURRENT_SESSIONS = 5
 /** Maximum transaction history items to display */
 export const MAX_HISTORY_DISPLAY = 100
 
+/** Consensus-enforced maximum output amount (2.1B XPI) */
+export const MAX_OUTPUT_AMOUNT = 2_100_000_000_1000_000n
+
 // ============================================================================
 // Address Prefixes
 // ============================================================================

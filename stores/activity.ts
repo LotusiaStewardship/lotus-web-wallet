@@ -1,251 +1,663 @@
 /**
  * Activity Store
  *
- * Unified activity aggregation from wallet, P2P, MuSig2, and contacts stores.
+ * Unified activity aggregation with persistence and read/unread tracking.
  * Provides a single view of all user activity across features.
  */
 import { defineStore } from 'pinia'
 import { useWalletStore } from './wallet'
 import { useP2PStore } from './p2p'
 import { useMuSig2Store } from './musig2'
+import { formatDateGroup } from '~/utils/formatting'
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export type ActivityType =
-  | 'transaction_sent'
-  | 'transaction_received'
-  | 'signing_request_received'
-  | 'signing_request_sent'
-  | 'signing_session_completed'
-  | 'shared_wallet_funded'
-  | 'shared_wallet_spent'
+  | 'transaction'
+  | 'signing_request'
+  | 'signing_complete'
   | 'peer_connected'
   | 'peer_disconnected'
-  | 'p2p_info'
-  | 'p2p_error'
+  | 'signer_discovered'
+  | 'wallet_created'
+  | 'wallet_funded'
+  | 'vote_received'
+  | 'system'
+
+export type ActivityStatus = 'new' | 'pending' | 'complete' | 'failed'
+
+export interface ActivityAction {
+  id: string
+  label: string
+  icon: string
+  primary?: boolean
+}
 
 export interface ActivityItem {
-  /** Unique ID */
   id: string
-  /** Activity type */
   type: ActivityType
-  /** Timestamp */
+  status: ActivityStatus
   timestamp: number
-  /** Activity data (varies by type) */
+  readAt?: number
+  contactId?: string
+  contactIds?: string[]
   data: Record<string, unknown>
-  /** Human-readable description */
-  description: string
-  /** Icon name */
-  icon: string
-  /** Color for the activity */
-  color: 'primary' | 'success' | 'warning' | 'error' | 'neutral'
+  actions?: ActivityAction[]
 }
 
 // ============================================================================
-// Store Definition
+// Constants
 // ============================================================================
 
-export const useActivityStore = defineStore('activity', {
-  state: () => ({
-    // Activity store is computed from other stores, no persistent state needed
-  }),
+const STORAGE_KEY = 'lotus:activity'
+const MAX_ITEMS = 500
 
-  getters: {
-    /**
-     * Get all activity from all sources, sorted by timestamp descending
-     */
-    allActivity(): ActivityItem[] {
-      const activities: ActivityItem[] = []
+// ============================================================================
+// Store Definition (Composition API)
+// ============================================================================
 
+export const useActivityStore = defineStore('activity', () => {
+  // === STATE ===
+  const items = ref<Map<string, ActivityItem>>(new Map())
+  const filter = ref<ActivityType | 'all'>('all')
+  const searchQuery = ref('')
+  const lastReadTimestamp = ref<number>(0)
+  const initialized = ref(false)
+
+  // === INITIALIZATION ===
+  async function initialize() {
+    if (initialized.value) return
+
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      try {
+        const data = JSON.parse(stored)
+        items.value = new Map(data.items || [])
+        lastReadTimestamp.value = data.lastReadTimestamp || 0
+      } catch (e) {
+        console.error('Failed to load activity:', e)
+      }
+    }
+
+    initialized.value = true
+  }
+
+  function persist() {
+    const data = {
+      items: Array.from(items.value.entries()),
+      lastReadTimestamp: lastReadTimestamp.value,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  }
+
+  // === LEGACY GETTERS (for backward compatibility) ===
+  // These aggregate from other stores for items not yet in our persistent store
+
+  /**
+   * Get activity items from other stores (wallet transactions, P2P events, MuSig2 sessions).
+   * These items are generated on-the-fly and use lastReadTimestamp to determine read state.
+   */
+  function getLegacyItems(): ActivityItem[] {
+    const legacyItems: ActivityItem[] = []
+
+    try {
       const walletStore = useWalletStore()
       const p2pStore = useP2PStore()
       const musig2Store = useMuSig2Store()
 
       // Wallet transactions
-      for (const tx of walletStore.transactionHistory) {
-        activities.push({
-          id: `tx_${tx.txid}`,
-          type: tx.isSend ? 'transaction_sent' : 'transaction_received',
-          timestamp: parseInt(tx.timestamp) * 1000 || Date.now(),
-          data: {
-            txid: tx.txid,
-            amount: tx.amount,
-            address: tx.address,
-            confirmations: tx.confirmations,
-          },
-          description: tx.isSend
-            ? `Sent ${(Number(tx.amount) / 1_000_000).toFixed(2)} XPI`
-            : `Received ${(Number(tx.amount) / 1_000_000).toFixed(2)} XPI`,
-          icon: tx.isSend
-            ? 'i-lucide-arrow-up-right'
-            : 'i-lucide-arrow-down-left',
-          color: tx.isSend ? 'warning' : 'success',
-        })
+      for (const tx of walletStore.transactionHistory || []) {
+        const id = `tx_${tx.txid}`
+        if (!items.value.has(id)) {
+          const timestamp = parseInt(tx.timestamp) * 1000 || Date.now()
+          legacyItems.push({
+            id,
+            type: 'transaction',
+            status: tx.confirmations > 0 ? 'complete' : 'pending',
+            timestamp,
+            // Mark as read if timestamp is before lastReadTimestamp
+            readAt:
+              timestamp <= lastReadTimestamp.value
+                ? lastReadTimestamp.value
+                : undefined,
+            data: {
+              type: 'transaction',
+              txid: tx.txid,
+              direction: tx.isSend ? 'outgoing' : 'incoming',
+              amountSats: BigInt(tx.amount || 0),
+              address: tx.address,
+              confirmations: tx.confirmations,
+            },
+          })
+        }
       }
 
       // P2P events
-      for (const event of p2pStore.activityEvents) {
-        let type: ActivityType
-        let color: ActivityItem['color']
-        let icon: string
-
-        switch (event.type) {
-          case 'peer_joined':
-            type = 'peer_connected'
-            color = 'success'
-            icon = 'i-lucide-user-plus'
-            break
-          case 'peer_left':
-            type = 'peer_disconnected'
-            color = 'neutral'
-            icon = 'i-lucide-user-minus'
-            break
-          case 'error':
-            type = 'p2p_error'
-            color = 'error'
-            icon = 'i-lucide-alert-circle'
-            break
-          default:
-            type = 'p2p_info'
-            color = 'primary'
-            icon = 'i-lucide-radio'
+      for (const event of p2pStore.activityEvents || []) {
+        if (!items.value.has(event.id)) {
+          const timestamp = event.timestamp
+          legacyItems.push({
+            id: event.id,
+            type:
+              event.type === 'peer_joined'
+                ? 'peer_connected'
+                : 'peer_disconnected',
+            status: 'complete',
+            timestamp,
+            // Mark as read if timestamp is before lastReadTimestamp
+            readAt:
+              timestamp <= lastReadTimestamp.value
+                ? lastReadTimestamp.value
+                : undefined,
+            data: {
+              type:
+                event.type === 'peer_joined'
+                  ? 'peer_connected'
+                  : 'peer_disconnected',
+              peerId: event.peerId,
+              peerName: event.nickname,
+            },
+          })
         }
-
-        activities.push({
-          id: event.id,
-          type,
-          timestamp: event.timestamp,
-          data: {
-            peerId: event.peerId,
-            nickname: event.nickname,
-            protocol: event.protocol,
-          },
-          description: event.message,
-          icon,
-          color,
-        })
       }
 
       // MuSig2 sessions
-      for (const session of musig2Store.activeSessions) {
-        let type: ActivityType
-        let description: string
-        let color: ActivityItem['color']
-
-        if (session.state === 'completed') {
-          type = 'signing_session_completed'
-          description = 'Signing session completed'
-          color = 'success'
-        } else if (session.isInitiator) {
-          type = 'signing_request_sent'
-          description = 'Signing request sent'
-          color = 'primary'
-        } else {
-          type = 'signing_request_received'
-          description = 'Signing request received'
-          color = 'warning'
-        }
-
-        activities.push({
-          id: `session_${session.id}`,
-          type,
-          timestamp: session.createdAt,
-          data: {
-            sessionId: session.id,
-            state: session.state,
-            participants: session.participants,
-          },
-          description,
-          icon: 'i-lucide-pen-tool',
-          color,
-        })
-      }
-
-      // Sort by timestamp descending
-      return activities.sort((a, b) => b.timestamp - a.timestamp)
-    },
-
-    /**
-     * Get filtered activity by type
-     */
-    filteredActivity() {
-      return (
-        filter: 'all' | 'transaction' | 'p2p' | 'musig2',
-      ): ActivityItem[] => {
-        const all = this.allActivity
-
-        if (filter === 'all') return all
-
-        return all.filter(activity => {
-          switch (filter) {
-            case 'transaction':
-              return (
-                activity.type === 'transaction_sent' ||
-                activity.type === 'transaction_received'
-              )
-            case 'p2p':
-              return (
-                activity.type === 'peer_connected' ||
-                activity.type === 'peer_disconnected' ||
-                activity.type === 'p2p_info' ||
-                activity.type === 'p2p_error'
-              )
-            case 'musig2':
-              return (
-                activity.type === 'signing_request_received' ||
-                activity.type === 'signing_request_sent' ||
-                activity.type === 'signing_session_completed' ||
-                activity.type === 'shared_wallet_funded' ||
-                activity.type === 'shared_wallet_spent'
-              )
-            default:
-              return true
-          }
-        })
-      }
-    },
-
-    /**
-     * Get recent activity (limited)
-     */
-    recentActivity(): ActivityItem[] {
-      return this.allActivity.slice(0, 20)
-    },
-
-    /**
-     * Get activity count by type
-     */
-    activityCounts(): Record<string, number> {
-      const counts: Record<string, number> = {
-        all: 0,
-        transaction: 0,
-        p2p: 0,
-        musig2: 0,
-      }
-
-      for (const activity of this.allActivity) {
-        counts.all++
-
-        if (
-          activity.type === 'transaction_sent' ||
-          activity.type === 'transaction_received'
-        ) {
-          counts.transaction++
-        } else if (
-          activity.type === 'peer_connected' ||
-          activity.type === 'peer_disconnected' ||
-          activity.type === 'p2p_info' ||
-          activity.type === 'p2p_error'
-        ) {
-          counts.p2p++
-        } else {
-          counts.musig2++
+      for (const session of musig2Store.activeSessions || []) {
+        const id = `session_${session.id}`
+        if (!items.value.has(id)) {
+          const timestamp = session.createdAt
+          legacyItems.push({
+            id,
+            type:
+              session.state === 'completed'
+                ? 'signing_complete'
+                : 'signing_request',
+            status: session.state === 'completed' ? 'complete' : 'new',
+            timestamp,
+            // Mark as read if timestamp is before lastReadTimestamp
+            readAt:
+              timestamp <= lastReadTimestamp.value
+                ? lastReadTimestamp.value
+                : undefined,
+            data: {
+              type:
+                session.state === 'completed'
+                  ? 'signing_complete'
+                  : 'signing_request',
+              sessionId: session.id,
+              walletId:
+                (session.metadata as Record<string, unknown>)?.walletId ||
+                session.id,
+              walletName:
+                (session.metadata as Record<string, unknown>)?.walletName ||
+                'Shared Wallet',
+            },
+          })
         }
       }
+    } catch (e) {
+      // Stores may not be available yet
+    }
 
-      return counts
+    return legacyItems
+  }
+
+  // === GETTERS ===
+
+  const allItems = computed(() => {
+    const persistedItems = Array.from(items.value.values())
+    const legacyItems = getLegacyItems()
+    const combined = [...persistedItems, ...legacyItems]
+    return combined.sort((a, b) => b.timestamp - a.timestamp)
+  })
+
+  const filteredItems = computed(() => {
+    let result = allItems.value
+
+    if (filter.value !== 'all') {
+      result = result.filter(item => item.type === filter.value)
+    }
+
+    if (searchQuery.value.trim()) {
+      const query = searchQuery.value.toLowerCase()
+      result = result.filter(item => matchesSearch(item, query))
+    }
+
+    return result
+  })
+
+  const unreadCount = computed(
+    () => allItems.value.filter(item => !item.readAt).length,
+  )
+
+  const needsAttention = computed(() =>
+    allItems.value.filter(
+      item => item.status === 'new' && item.actions && item.actions.length > 0,
+    ),
+  )
+
+  const pendingItems = computed(() =>
+    allItems.value.filter(item => item.status === 'pending'),
+  )
+
+  const recentItems = computed(() => allItems.value.slice(0, 5))
+
+  const recentActivity = computed(() => allItems.value.slice(0, 20))
+
+  const groupedByDate = computed(() => {
+    const groups: Map<string, ActivityItem[]> = new Map()
+
+    for (const item of filteredItems.value) {
+      const date = formatDateGroup(item.timestamp)
+      if (!groups.has(date)) {
+        groups.set(date, [])
+      }
+      groups.get(date)!.push(item)
+    }
+
+    return groups
+  })
+
+  const activityCounts = computed(() => {
+    const counts: Record<string, number> = {
+      all: 0,
+      transaction: 0,
+      signing_request: 0,
+      signing_complete: 0,
+      peer_connected: 0,
+      peer_disconnected: 0,
+      system: 0,
+    }
+
+    for (const item of allItems.value) {
+      counts.all++
+      if (counts[item.type] !== undefined) {
+        counts[item.type]++
+      }
+    }
+
+    return counts
+  })
+
+  // === ACTIONS ===
+
+  function addActivity(data: Omit<ActivityItem, 'id'>): ActivityItem {
+    const id = generateActivityId()
+    const item: ActivityItem = { ...data, id }
+
+    items.value.set(id, item)
+
+    if (items.value.size > MAX_ITEMS) {
+      pruneOldItems()
+    }
+
+    persist()
+    return item
+  }
+
+  function markAsRead(id: string) {
+    // Check if item is in persisted store
+    const item = items.value.get(id)
+    if (item) {
+      if (!item.readAt) {
+        item.readAt = Date.now()
+        persist()
+      }
+      return
+    }
+
+    // Check if it's a legacy item - if so, persist it with readAt set
+    const legacyItem = getLegacyItems().find(i => i.id === id)
+    if (legacyItem && !legacyItem.readAt) {
+      legacyItem.readAt = Date.now()
+      items.value.set(id, legacyItem)
+      persist()
+    }
+  }
+
+  function markAllAsRead() {
+    const now = Date.now()
+    items.value.forEach(item => {
+      if (!item.readAt) {
+        item.readAt = now
+      }
+    })
+    lastReadTimestamp.value = now
+    persist()
+  }
+
+  function updateStatus(id: string, status: ActivityStatus) {
+    const item = items.value.get(id)
+    if (item) {
+      item.status = status
+      persist()
+    }
+  }
+
+  function removeActivity(id: string) {
+    items.value.delete(id)
+    persist()
+  }
+
+  function clearAll() {
+    items.value.clear()
+    persist()
+  }
+
+  // === ACTIVITY SOURCE HANDLERS ===
+
+  function onTransaction(
+    tx: {
+      txid: string
+      direction: 'incoming' | 'outgoing'
+      amountSats: bigint
+      address: string
+      confirmations: number
+      timestamp: number
     },
-  },
+    contactId?: string,
+  ) {
+    const existing = findByTxid(tx.txid)
+    if (existing) {
+      if (
+        (existing.data as Record<string, unknown>).confirmations !==
+        tx.confirmations
+      ) {
+        ;(existing.data as Record<string, unknown>).confirmations =
+          tx.confirmations
+        if (tx.confirmations > 0 && existing.status === 'pending') {
+          existing.status = 'complete'
+        }
+        persist()
+      }
+      return existing
+    }
+
+    return addActivity({
+      type: 'transaction',
+      status: tx.confirmations > 0 ? 'complete' : 'pending',
+      timestamp: tx.timestamp,
+      contactId,
+      data: {
+        type: 'transaction',
+        txid: tx.txid,
+        direction: tx.direction,
+        amountSats: tx.amountSats,
+        address: tx.address,
+        confirmations: tx.confirmations,
+      },
+    })
+  }
+
+  function onSigningRequest(request: {
+    sessionId: string
+    walletId: string
+    walletName: string
+    amountSats: bigint
+    initiatorId: string
+    expiresAt: number
+  }) {
+    return addActivity({
+      type: 'signing_request',
+      status: 'new',
+      timestamp: Date.now(),
+      contactId: request.initiatorId,
+      data: {
+        type: 'signing_request',
+        ...request,
+      },
+      actions: [
+        {
+          id: 'approve',
+          label: 'Approve',
+          icon: 'i-lucide-check',
+          primary: true,
+        },
+        { id: 'reject', label: 'Reject', icon: 'i-lucide-x' },
+      ],
+    })
+  }
+
+  function onSigningComplete(session: {
+    sessionId: string
+    walletId: string
+    walletName: string
+    txid: string
+    amountSats: bigint
+  }) {
+    const request = findBySessionId(session.sessionId)
+    if (request) {
+      request.status = 'complete'
+      request.actions = undefined
+    }
+
+    return addActivity({
+      type: 'signing_complete',
+      status: 'complete',
+      timestamp: Date.now(),
+      data: {
+        type: 'signing_complete',
+        ...session,
+      },
+    })
+  }
+
+  function onPeerEvent(event: {
+    type: 'connected' | 'disconnected'
+    peerId: string
+    peerName?: string
+  }) {
+    return addActivity({
+      type: event.type === 'connected' ? 'peer_connected' : 'peer_disconnected',
+      status: 'complete',
+      timestamp: Date.now(),
+      data: {
+        type:
+          event.type === 'connected' ? 'peer_connected' : 'peer_disconnected',
+        peerId: event.peerId,
+        peerName: event.peerName,
+      },
+    })
+  }
+
+  function onSignerDiscovered(signer: {
+    publicKeyHex: string
+    nickname?: string
+  }) {
+    const existing = allItems.value.find(
+      item =>
+        (item.data as Record<string, unknown>).type === 'signer_discovered' &&
+        (item.data as Record<string, unknown>).publicKeyHex ===
+          signer.publicKeyHex,
+    )
+    if (existing) return existing
+
+    return addActivity({
+      type: 'signer_discovered',
+      status: 'new',
+      timestamp: Date.now(),
+      data: {
+        type: 'signer_discovered',
+        ...signer,
+      },
+      actions: [
+        {
+          id: 'add_contact',
+          label: 'Add to Contacts',
+          icon: 'i-lucide-user-plus',
+          primary: true,
+        },
+      ],
+    })
+  }
+
+  function onWalletCreated(wallet: {
+    walletId: string
+    walletName: string
+    participantIds: string[]
+  }) {
+    return addActivity({
+      type: 'wallet_created',
+      status: 'complete',
+      timestamp: Date.now(),
+      contactIds: wallet.participantIds,
+      data: {
+        type: 'wallet_created',
+        ...wallet,
+      },
+    })
+  }
+
+  function onWalletFunded(wallet: {
+    walletId: string
+    walletName: string
+    amountSats: bigint
+    participantIds: string[]
+  }) {
+    return addActivity({
+      type: 'wallet_funded',
+      status: 'complete',
+      timestamp: Date.now(),
+      contactIds: wallet.participantIds,
+      data: {
+        type: 'wallet_funded',
+        ...wallet,
+      },
+    })
+  }
+
+  function onVoteReceived(vote: {
+    platform: string
+    profileId: string
+    voteType: 'upvote' | 'downvote'
+    voterAddress?: string
+  }) {
+    return addActivity({
+      type: 'vote_received',
+      status: 'complete',
+      timestamp: Date.now(),
+      data: {
+        type: 'vote_received',
+        ...vote,
+      },
+    })
+  }
+
+  function addSystemNotification(notification: {
+    title: string
+    message: string
+    severity: 'info' | 'warning' | 'error'
+  }) {
+    return addActivity({
+      type: 'system',
+      status: notification.severity === 'error' ? 'failed' : 'complete',
+      timestamp: Date.now(),
+      data: {
+        type: 'system',
+        ...notification,
+      },
+    })
+  }
+
+  // === HELPERS ===
+
+  function findByTxid(txid: string): ActivityItem | undefined {
+    return allItems.value.find(
+      item => (item.data as Record<string, unknown>).txid === txid,
+    )
+  }
+
+  function findBySessionId(sessionId: string): ActivityItem | undefined {
+    return allItems.value.find(
+      item => (item.data as Record<string, unknown>).sessionId === sessionId,
+    )
+  }
+
+  function matchesSearch(item: ActivityItem, query: string): boolean {
+    const data = item.data as Record<string, unknown>
+    if (item.type.includes(query)) return true
+
+    switch (data.type) {
+      case 'transaction':
+        return (
+          String(data.txid || '').includes(query) ||
+          String(data.address || '').includes(query)
+        )
+      case 'signing_request':
+      case 'signing_complete':
+        return String(data.walletName || '')
+          .toLowerCase()
+          .includes(query)
+      case 'signer_discovered':
+        return String(data.nickname || '')
+          .toLowerCase()
+          .includes(query)
+      case 'system':
+        return (
+          String(data.title || '')
+            .toLowerCase()
+            .includes(query) ||
+          String(data.message || '')
+            .toLowerCase()
+            .includes(query)
+        )
+      default:
+        return false
+    }
+  }
+
+  function pruneOldItems() {
+    const sorted = allItems.value
+    const toRemove = sorted.slice(MAX_ITEMS)
+    toRemove.forEach(item => items.value.delete(item.id))
+  }
+
+  function generateActivityId(): string {
+    return `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  return {
+    // State
+    items,
+    filter,
+    searchQuery,
+    initialized,
+
+    // Getters
+    allItems,
+    filteredItems,
+    unreadCount,
+    needsAttention,
+    pendingItems,
+    recentItems,
+    recentActivity,
+    groupedByDate,
+    activityCounts,
+
+    // Actions
+    initialize,
+    addActivity,
+    markAsRead,
+    markAllAsRead,
+    updateStatus,
+    removeActivity,
+    clearAll,
+
+    // Source handlers
+    onTransaction,
+    onSigningRequest,
+    onSigningComplete,
+    onPeerEvent,
+    onSignerDiscovered,
+    onWalletCreated,
+    onWalletFunded,
+    onVoteReceived,
+    addSystemNotification,
+
+    // Lookups
+    findByTxid,
+    findBySessionId,
+  }
 })

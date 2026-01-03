@@ -40,43 +40,9 @@ export type {
   BootstrapHealth,
 } from '~/plugins/04.p2p.client'
 
-// Re-export functions for backward compatibility (direct imports)
-export {
-  initializeP2P,
-  stopP2P,
-  getConnectionState,
-  getPeerId,
-  getMultiaddrs,
-  getConnectedPeers,
-  connectToPeer,
-  disconnectFromPeer,
-  connectToDiscoveredPeer,
-  connectWithRetry,
-  subscribeToBootstrapPeerList,
-  getWebRTCAddress,
-  connectViaBrowserP2P,
-  getConnectionType,
-  isDHTReady,
-  getRoutingTableSize,
-  getDHTStats,
-  startPresenceAdvertising,
-  stopPresenceAdvertising,
-  discoverPeers,
-  getPresenceConfig,
-  isPresenceAdvertising,
-  getCoordinator,
-  getSDKModule,
-  isP2PInitialized,
-  getStats,
-  subscribeToEvents,
-  unsubscribeFromEvents,
-  setEventCallbacks,
-  setupConnectionStateHandlers,
-  clearConnectionStateHandlers,
-  checkBootstrapHealth,
-  getBootstrapTopics,
-  getBootstrapPeers,
-} from '~/plugins/04.p2p.client'
+// NOTE: Direct function imports from plugin are NOT re-exported here.
+// Components should use this composable for reactive access.
+// Stores should import directly from ~/plugins/04.p2p.client for non-reactive access.
 
 /**
  * P2P Coordinator Composable
@@ -250,13 +216,6 @@ export function useP2PCoordinator() {
   }
 
   /**
-   * Get the SDK module (for advanced usage)
-   */
-  function getSDKModule() {
-    return $p2p.getSDKModule()
-  }
-
-  /**
    * Get P2P statistics
    */
   function getStats() {
@@ -364,7 +323,6 @@ export function useP2PCoordinator() {
 
     // Advanced access
     getCoordinator,
-    getSDKModule,
     getStats,
 
     // Event subscription

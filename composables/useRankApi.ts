@@ -6,7 +6,7 @@
 import type {
   ScriptChunkPlatformUTF8,
   ScriptChunkSentimentUTF8,
-} from 'lotus-sdk/lib/rank'
+} from 'xpi-ts/lib/rank'
 import { useNetworkStore } from '~/stores/network'
 
 // Get RANK API URL from network store

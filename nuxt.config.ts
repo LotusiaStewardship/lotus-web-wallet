@@ -24,8 +24,8 @@ export default defineNuxtConfig({
     filename: 'sw.ts',
     registerType: 'autoUpdate',
     manifest: {
-      name: 'Lotus Web Wallet',
-      short_name: 'Lotus Wallet',
+      name: 'Lotusia',
+      short_name: 'Lotusia',
       description:
         'The key to the Lotusia ecosystem - P2P wallet with service discovery',
       theme_color: '#c6005c',
@@ -38,28 +38,17 @@ export default defineNuxtConfig({
     },
     injectManifest: {
       globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
-      maximumFileSizeToCacheInBytes: 3000000, // 3MB
+      maximumFileSizeToCacheInBytes: 4000000, // 4MB
     },
     devOptions: {
       enabled: true,
       type: 'module',
     },
-  },
-
-  // Route redirects for old routes to new navigation structure
-  routeRules: {
-    '/send': { redirect: '/transact/send' },
-    '/receive': { redirect: '/transact/receive' },
-    '/history': { redirect: '/transact/history' },
-    '/contacts': { redirect: '/people/contacts' },
-    // Phase 10 R10.5.1: Redirect P2P to Shared Wallets (unified experience)
-    '/p2p': { redirect: '/people/shared-wallets' },
-    '/discover': { redirect: '/people/shared-wallets' },
-    '/people/p2p': { redirect: '/people/shared-wallets' },
-    '/explorer': { redirect: '/explore/explorer' },
-    '/explorer/**': { redirect: '/explore/explorer/**' },
-    '/social': { redirect: '/explore/social' },
-    '/social/**': { redirect: '/explore/social/**' },
+    client: {
+      installPrompt: true,
+      periodicSyncForUpdates: 300,
+      registerPlugin: true,
+    },
   },
 
   // CSS imports - required for Tailwind CSS and Nuxt UI Pro
@@ -73,7 +62,7 @@ export default defineNuxtConfig({
   // App configuration
   app: {
     head: {
-      title: 'Lotus Web Wallet',
+      title: 'Lotusia',
       meta: [
         {
           name: 'description',
@@ -81,8 +70,19 @@ export default defineNuxtConfig({
             'The key to the Lotusia ecosystem - P2P wallet with service discovery',
         },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+        { name: 'theme-color', content: '#c6005c' },
+        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        {
+          name: 'apple-mobile-web-app-status-bar-style',
+          content: 'black-translucent',
+        },
+        { name: 'apple-mobile-web-app-title', content: 'Lotusia' },
       ],
-      link: [{ rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
+      link: [
+        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
+        { rel: 'manifest', href: '/manifest.webmanifest' },
+        { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+      ],
     },
   },
 
@@ -132,7 +132,7 @@ export default defineNuxtConfig({
         'long',
         'axios',
         'isomorphic-ws',
-        // Crypto dependencies (used by lotus-sdk/bitcore)
+        // Crypto dependencies (used by xpi-ts/bitcore)
         'elliptic',
         'bn.js',
         'brorand',

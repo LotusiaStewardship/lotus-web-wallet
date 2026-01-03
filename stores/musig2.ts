@@ -3,6 +3,12 @@
  *
  * Manages MuSig2 multi-signature state, separated from p2p.ts.
  *
+ * Access Pattern:
+ * - Uses plugin getter functions for service access (NOT composables)
+ * - Does NOT import SDK directly
+ * - Passes SignerSigningContext to plugin functions that need wallet keys
+ * - Manages application state, delegates to MuSig2 plugin for operations
+ *
  * Responsibilities:
  * - MuSig2 service lifecycle management
  * - Signer discovery state
@@ -15,6 +21,7 @@
  * - Service handles SDK interactions
  * - Events flow: SDK → Service → Store → UI
  */
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useP2PStore } from './p2p'
 import { useWalletStore } from './wallet'
@@ -22,6 +29,11 @@ import { useNetworkStore } from './network'
 import { useNotificationStore } from './notifications'
 import { useContactsStore } from './contacts'
 import { useIdentityStore } from './identity'
+import { usePeopleStore } from './people'
+import type {
+  SharedWallet as PeopleSharedWallet,
+  SharedWalletParticipant as PeopleSharedWalletParticipant,
+} from '~/types/people'
 import { useServiceWorker } from '~/composables/useServiceWorker'
 import { generateId } from '~/utils/helpers'
 import { getItem, setItem, removeItem, STORAGE_KEYS } from '~/utils/storage'
@@ -53,6 +65,7 @@ import {
   type SignerSearchCriteria,
   type SessionMetadata,
   type WalletSigningSession,
+  type SignerSigningContext,
 } from '~/plugins/05.musig2.client'
 import type { DiscoveredSigner } from '~/types/musig2'
 import { getDiscoveryCache } from '~/plugins/03.discovery-cache.client'
@@ -98,41 +111,8 @@ export interface SignerConfig {
   fee?: number
 }
 
-/**
- * Shared wallet participant
- */
-export interface SharedWalletParticipant {
-  /** Peer ID */
-  peerId: string
-  /** Public key hex */
-  publicKeyHex: string
-  /** Nickname */
-  nickname?: string
-  /** Whether this is me */
-  isMe: boolean
-}
-
-/**
- * Shared wallet (MuSig2 aggregate key)
- */
-export interface SharedWallet {
-  /** Wallet ID */
-  id: string
-  /** Display name */
-  name: string
-  /** Description */
-  description?: string
-  /** Participants */
-  participants: SharedWalletParticipant[]
-  /** Aggregated public key hex */
-  aggregatedPublicKeyHex: string
-  /** Shared address */
-  sharedAddress: string
-  /** Current balance in satoshis */
-  balanceSats: string
-  /** Created timestamp */
-  createdAt: number
-}
+// SharedWallet and SharedWalletParticipant types are now defined in types/people.ts
+// and imported as PeopleSharedWallet and PeopleSharedWalletParticipant
 
 /**
  * MuSig2 store state
@@ -150,8 +130,6 @@ export interface MuSig2State {
   signerConfig: SignerConfig | null
   /** Active signing sessions (from service) */
   activeSessions: WalletSigningSession[]
-  /** Shared wallets */
-  sharedWallets: SharedWallet[]
   /** Loading state */
   loading: boolean
   /** Signer subscription ID */
@@ -166,1250 +144,1275 @@ export interface MuSig2State {
 // Store Definition
 // ============================================================================
 
-export const useMuSig2Store = defineStore('musig2', {
-  state: (): MuSig2State => ({
-    initialized: false,
-    error: null,
-    discoveredSigners: [],
-    signerEnabled: false,
-    signerConfig: null,
-    activeSessions: [],
-    sharedWallets: [],
-    loading: false,
-    signerSubscriptionId: null,
-    lastError: null,
-    retryableOperation: null,
-  }),
+export const useMuSig2Store = defineStore('musig2', () => {
+  // === STATE ===
+  const initialized = ref(false)
+  const error = ref<string | null>(null)
+  const discoveredSigners = ref<StoreSigner[]>([])
+  const signerEnabled = ref(false)
+  const signerConfig = ref<SignerConfig | null>(null)
+  const activeSessions = ref<WalletSigningSession[]>([])
+  const loading = ref(false)
+  const signerSubscriptionId = ref<string | null>(null)
+  const lastError = ref<string | null>(null)
+  const retryableOperation = ref<(() => Promise<void>) | null>(null)
 
-  getters: {
-    /**
-     * Get online signers
-     */
-    onlineSigners(): StoreSigner[] {
-      return this.discoveredSigners.filter((s: StoreSigner) => s.isOnline)
-    },
+  // === GETTERS ===
+  /**
+   * Get online signers
+   */
+  const onlineSigners = computed((): StoreSigner[] => {
+    return discoveredSigners.value.filter((s: StoreSigner) => s.isOnline)
+  })
 
-    /**
-     * Get subscribed signers
-     */
-    subscribedSigners(): StoreSigner[] {
-      return this.discoveredSigners.filter((s: StoreSigner) => s.subscribed)
-    },
+  /**
+   * Get subscribed signers
+   */
+  const subscribedSigners = computed((): StoreSigner[] => {
+    return discoveredSigners.value.filter((s: StoreSigner) => s.subscribed)
+  })
 
-    /**
-     * Get pending sessions (waiting for participants)
-     */
-    pendingSessions(): WalletSigningSession[] {
-      return this.activeSessions.filter(
-        (s: WalletSigningSession) => s.state === 'created',
-      )
-    },
+  /**
+   * Get pending sessions (waiting for participants)
+   */
+  const pendingSessions = computed((): WalletSigningSession[] => {
+    return activeSessions.value.filter(
+      (s: WalletSigningSession) => s.state === 'created',
+    )
+  })
 
-    /**
-     * Get active signing sessions (in progress)
-     */
-    inProgressSessions(): WalletSigningSession[] {
-      return this.activeSessions.filter(
-        (s: WalletSigningSession) =>
-          s.state === 'nonce_exchange' || s.state === 'signing',
-      )
-    },
+  /**
+   * Get active signing sessions (in progress)
+   */
+  const inProgressSessions = computed((): WalletSigningSession[] => {
+    return activeSessions.value.filter(
+      (s: WalletSigningSession) =>
+        s.state === 'nonce_exchange' || s.state === 'signing',
+    )
+  })
 
-    /**
-     * Get completed sessions
-     */
-    completedSessions(): WalletSigningSession[] {
-      return this.activeSessions.filter(
-        (s: WalletSigningSession) => s.state === 'completed',
-      )
-    },
+  /**
+   * Get completed sessions
+   */
+  const completedSessions = computed((): WalletSigningSession[] => {
+    return activeSessions.value.filter(
+      (s: WalletSigningSession) => s.state === 'completed',
+    )
+  })
 
-    /**
-     * Get total shared wallet balance
-     */
-    totalSharedBalance(): bigint {
-      return this.sharedWallets.reduce(
-        (sum, w) => sum + BigInt(w.balanceSats),
-        0n,
-      )
-    },
+  /**
+   * Get shared wallets (delegated to peopleStore)
+   */
+  const sharedWallets = computed((): PeopleSharedWallet[] => {
+    const peopleStore = usePeopleStore()
+    return peopleStore.allWallets
+  })
 
-    /**
-     * Check if ready for signing
-     */
-    isReady(): boolean {
-      const p2pStore = useP2PStore()
-      return this.initialized && p2pStore.isFullyOperational
-    },
+  /**
+   * Get total shared wallet balance
+   */
+  const totalSharedBalance = computed((): bigint => {
+    const peopleStore = usePeopleStore()
+    return peopleStore.allWallets.reduce(
+      (sum: bigint, w: PeopleSharedWallet) => sum + w.balanceSats,
+      0n,
+    )
+  })
 
-    /**
-     * Check if discovery is available
-     */
-    hasDiscoveryLayer(): boolean {
-      return hasDiscovery()
-    },
+  /**
+   * Check if ready for signing
+   */
+  const isReady = computed((): boolean => {
+    const p2pStore = useP2PStore()
+    return initialized.value && p2pStore.isFullyOperational
+  })
 
-    /**
-     * Phase 10 R10.6.1: Sessions filtered by wallet
-     * Returns a function that filters sessions by wallet ID
-     */
-    sessionsForWallet(): (walletId: string) => WalletSigningSession[] {
-      return (walletId: string) => {
-        return this.activeSessions.filter(
-          (s: WalletSigningSession) => s.metadata?.walletId === walletId,
-        )
-      }
-    },
+  /**
+   * Check if discovery is available
+   */
+  const hasDiscoveryLayer = computed((): boolean => {
+    return hasDiscovery()
+  })
 
-    /**
-     * Phase 10 R10.6.2: Available signers (excluding self)
-     * Returns signers that are not the current user
-     */
-    availableSigners(): StoreSigner[] {
-      const p2pStore = useP2PStore()
-      return this.discoveredSigners.filter(
-        (s: StoreSigner) => s.peerId !== p2pStore.peerId,
-      )
-    },
+  /**
+   * Phase 10 R10.6.2: Available signers (excluding self)
+   * Returns signers that are not the current user
+   */
+  const availableSigners = computed((): StoreSigner[] => {
+    const p2pStore = useP2PStore()
+    return discoveredSigners.value.filter(
+      (s: StoreSigner) => s.peerId !== p2pStore.peerId,
+    )
+  })
 
-    /**
-     * Phase 10 R10.6.2: Pending request count for badge
-     * Returns count of incoming signing requests (where we're not the initiator)
-     */
-    pendingRequestCount(): number {
-      return this.pendingSessions.filter(
-        (s: WalletSigningSession) => !s.isInitiator,
-      ).length
-    },
-  },
+  /**
+   * Phase 10 R10.6.2: Pending request count for badge
+   * Returns count of incoming signing requests (where we're not the initiator)
+   */
+  const pendingRequestCount = computed((): number => {
+    return pendingSessions.value.filter(
+      (s: WalletSigningSession) => !s.isInitiator,
+    ).length
+  })
 
-  actions: {
-    // ========================================================================
-    // Initialization
-    // ========================================================================
+  // === PARAMETERIZED GETTERS (as functions) ===
+  /**
+   * Phase 10 R10.6.1: Sessions filtered by wallet
+   * Returns sessions for a specific wallet ID
+   */
+  function sessionsForWallet(walletId: string): WalletSigningSession[] {
+    return activeSessions.value.filter(
+      (s: WalletSigningSession) => s.metadata?.walletId === walletId,
+    )
+  }
 
-    /**
-     * Initialize MuSig2 system
-     * Initializes the MuSig2 service and sets up event handlers
-     */
-    async initialize() {
-      if (this.initialized) return
+  // === ACTIONS ===
+  // ========================================================================
+  // Initialization
+  // ========================================================================
 
-      const p2pStore = useP2PStore()
-      if (!p2pStore.initialized) {
-        throw new Error('P2P must be initialized before MuSig2')
-      }
+  /**
+   * Initialize MuSig2 system
+   * Initializes the MuSig2 service and sets up event handlers
+   */
+  async function initialize() {
+    if (initialized.value) return
 
-      this.loading = true
-      this.error = null
-      this.lastError = null
-      this.retryableOperation = null
+    const p2pStore = useP2PStore()
+    if (!p2pStore.initialized) {
+      throw new Error('P2P must be initialized before MuSig2')
+    }
 
-      try {
-        // Load saved state from storage
-        this._loadSavedState()
+    loading.value = true
+    error.value = null
+    lastError.value = null
+    retryableOperation.value = null
 
-        // Initialize the MuSig2 service with event callbacks
-        // Discovery config is optional - service uses sensible defaults
-        await initializeMuSig2(
-          {
-            onSignerDiscovered: (signer: DiscoveredSigner) => {
-              this._handleSignerDiscovered(signer)
-            },
-            onSessionCreated: (sessionId: string) => {
-              this._syncSessionsFromService()
-            },
-            onSessionComplete: (sessionId: string, _signature: Buffer) => {
-              this._syncSessionsFromService()
-            },
-            onSessionAborted: (sessionId: string, _reason: string) => {
-              this._syncSessionsFromService()
-            },
-            onNonceReceived: () => {
-              this._syncSessionsFromService()
-            },
-            onPartialSigReceived: () => {
-              this._syncSessionsFromService()
-            },
-          },
-          // Use default discovery config from service
-          // Can override specific values here if needed:
-          // { signerTTL: 60 * 60 * 1000 } // 1 hour TTL
-        )
+    try {
+      // Load saved state from storage
+      _loadSavedState()
 
-        this.initialized = true
-        console.log('[MuSig2 Store] Initialized')
-
-        // Restore cached signers from discovery cache (Phase 3)
-        this._restoreCachedSigners()
-
-        // Start periodic cleanup of expired signers (Phase 3)
-        this._startExpiryCleanupInterval()
-
-        // START SIGNER SUBSCRIPTION AUTOMATICALLY (Phase 6.2.1)
-        try {
-          await this.startSignerSubscription()
-          console.log('[MuSig2 Store] Signer subscription started')
-        } catch (subError) {
-          console.warn(
-            '[MuSig2 Store] Failed to start signer subscription:',
-            subError,
-          )
-        }
-
-        // Restore signer advertisement if previously enabled (Phase 6.2.2)
-        if (this.signerConfig) {
-          try {
-            await this.advertiseSigner(this.signerConfig)
-            console.log('[MuSig2 Store] Restored signer advertisement')
-          } catch (adError) {
-            console.warn(
-              '[MuSig2 Store] Failed to restore signer advertisement:',
-              adError,
-            )
-          }
-        }
-      } catch (error) {
-        this.error =
-          error instanceof Error ? error.message : 'Failed to initialize MuSig2'
-        this.lastError = this.error
-        this.retryableOperation = () => this.initialize()
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    /**
-     * Cleanup MuSig2 system
-     */
-    async cleanup() {
-      // Stop the expiry cleanup interval (Phase 3)
-      this._stopExpiryCleanupInterval()
-
-      // Abort all active sessions via service
-      for (const session of this.activeSessions) {
-        if (session.state !== 'completed' && session.state !== 'failed') {
-          try {
-            await serviceAbortSession(session.id, 'Cleanup')
-          } catch (e) {
-            console.warn(`Failed to abort session ${session.id}:`, e)
-          }
-        }
-      }
-
-      // Withdraw signer advertisement
-      if (this.signerEnabled) {
-        await this.withdrawSigner()
-      }
-
-      // Cleanup the service
-      await cleanupMuSig2()
-
-      this.initialized = false
-      this.activeSessions = []
-      this.discoveredSigners = []
-    },
-
-    // ========================================================================
-    // Signer Advertisement
-    // ========================================================================
-
-    /**
-     * Advertise as a signer using the dedicated MuSig2 account key
-     */
-    async advertiseSigner(config: SignerConfig) {
-      if (!this.initialized) {
-        throw new Error('MuSig2 not initialized')
-      }
-
-      const walletStore = useWalletStore()
-
-      // Phase 5: Use MuSig2 account key (not primary wallet key)
-      const publicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
-      if (!publicKeyHex) {
-        throw new Error(
-          'MuSig2 public key not available - wallet not initialized',
-        )
-      }
-
-      this.loading = true
-      this.error = null
-      this.lastError = null
-      this.retryableOperation = null
-
-      try {
-        // Service uses MuSig2 key internally (publicKeyHex is for logging only)
-        await startSignerAdvertising(publicKeyHex, {
-          transactionTypes: config.transactionTypes,
-          amountRange: config.amountRange,
-          metadata: {
-            nickname: config.nickname,
-            fee: config.fee,
-          },
-        })
-
-        this.signerConfig = config
-        this.signerEnabled = true
-        this._saveSignerConfig()
-      } catch (error) {
-        // Phase 6.3.1: Store error and retryable operation
-        this.error =
-          error instanceof Error ? error.message : 'Failed to advertise'
-        this.lastError = this.error
-        this.retryableOperation = () => this.advertiseSigner(config)
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    /**
-     * Withdraw signer advertisement
-     */
-    async withdrawSigner() {
-      if (!this.signerEnabled) return
-
-      try {
-        await stopSignerAdvertising()
-        this.signerEnabled = false
-        this.signerConfig = null
-        removeItem(STORAGE_KEYS.MUSIG2_SIGNER_CONFIG)
-      } catch (error) {
-        console.error('Failed to withdraw signer:', error)
-      }
-    },
-
-    // ========================================================================
-    // Discovery
-    // ========================================================================
-
-    /**
-     * Subscribe to a signer for updates
-     */
-    async subscribeToSigner(signerId: string) {
-      const signer = this.discoveredSigners.find(
-        (s: StoreSigner) => s.id === signerId,
-      )
-      if (!signer) return
-
-      signer.subscribed = true
-    },
-
-    /**
-     * Unsubscribe from a signer
-     */
-    async unsubscribeFromSigner(signerId: string) {
-      const signer = this.discoveredSigners.find(
-        (s: StoreSigner) => s.id === signerId,
-      )
-      if (!signer) return
-
-      signer.subscribed = false
-    },
-
-    /**
-     * Refresh discovered signers from the network
-     */
-    async refreshSigners() {
-      if (!this.initialized) return
-
-      this.loading = true
-      this.error = null
-      this.lastError = null
-      this.retryableOperation = null
-
-      try {
-        const signers = await serviceDiscoverSigners()
-
-        // Merge with existing signers, preserving subscription state
-        const existingMap = new Map(
-          this.discoveredSigners.map((s: StoreSigner) => [s.id, s]),
-        )
-
-        this.discoveredSigners = signers.map(signer => ({
-          ...signer,
-          subscribed: existingMap.get(signer.id)?.subscribed ?? false,
-          reputation: existingMap.get(signer.id)?.reputation,
-          responseTime: existingMap.get(signer.id)?.responseTime,
-        }))
-      } catch (error) {
-        // Phase 6.3.1: Store error and retryable operation
-        this.error =
-          error instanceof Error ? error.message : 'Failed to refresh signers'
-        this.lastError = this.error
-        this.retryableOperation = () => this.refreshSigners()
-        throw error
-      } finally {
-        this.loading = false
-      }
-    },
-
-    /**
-     * Start real-time signer subscription
-     */
-    async startSignerSubscription(criteria: SignerSearchCriteria = {}) {
-      if (this.signerSubscriptionId) {
-        await this.stopSignerSubscription()
-      }
-
-      this.signerSubscriptionId = await subscribeToSigners(
-        criteria,
-        (signer: DiscoveredSigner) => {
-          this._handleSignerDiscovered(signer)
+      // Initialize the MuSig2 service with event callbacks
+      await initializeMuSig2({
+        onSignerDiscovered: (signer: DiscoveredSigner) => {
+          _handleSignerDiscovered(signer)
         },
-      )
-    },
-
-    /**
-     * Stop real-time signer subscription
-     */
-    async stopSignerSubscription() {
-      if (this.signerSubscriptionId) {
-        await unsubscribeFromSigners(this.signerSubscriptionId)
-        this.signerSubscriptionId = null
-      }
-    },
-
-    // ========================================================================
-    // Sessions
-    // ========================================================================
-
-    /**
-     * Sync sessions from service to store
-     */
-    _syncSessionsFromService() {
-      this.activeSessions = getAllSessions()
-    },
-
-    /**
-     * Register a signing session with the service worker for background monitoring
-     */
-    registerSessionWithSW(sessionId: string, expiresAt: Date) {
-      if (import.meta.client) {
-        const { registerSession } = useServiceWorker()
-        registerSession({
-          id: sessionId,
-          type: 'musig2',
-          expiresAt: expiresAt.getTime(),
-          warningAt: expiresAt.getTime() - 60_000, // 1 min warning
-          data: { sessionId },
-        })
-      }
-    },
-
-    /**
-     * Unregister a session from SW monitoring
-     */
-    unregisterSessionFromSW(sessionId: string) {
-      if (import.meta.client) {
-        const { unregisterSession } = useServiceWorker()
-        unregisterSession(sessionId)
-      }
-    },
-
-    /**
-     * Handle session expiring warning from SW
-     */
-    handleSessionExpiring(payload: {
-      sessionId: string
-      sessionType: string
-      expiresIn: number
-    }) {
-      console.log(
-        `[MuSig2 Store] Session ${payload.sessionId} expiring in ${Math.round(
-          payload.expiresIn / 1000,
-        )}s`,
-      )
-      // Could trigger a notification or UI update here
-    },
-
-    /**
-     * Handle session expired notification from SW
-     */
-    handleSessionExpired(payload: { sessionId: string; sessionType: string }) {
-      console.log(`[MuSig2 Store] Session ${payload.sessionId} expired`)
-      // Sync sessions to reflect the expiry
-      this._syncSessionsFromService()
-    },
-
-    /**
-     * Abort a session
-     */
-    async abortSession(sessionId: string, reason: string) {
-      // Unregister from SW first
-      this.unregisterSessionFromSW(sessionId)
-      await serviceAbortSession(sessionId, reason)
-      this._syncSessionsFromService()
-    },
-
-    // ========================================================================
-    // Shared Wallets
-    // ========================================================================
-
-    /**
-     * Create a shared wallet with MuSig2 key aggregation
-     *
-     * Uses Taproot-based MuSig2 for:
-     * - Privacy: Multi-sig looks identical to single-sig on-chain
-     * - Efficiency: ~78% smaller transaction size vs P2SH multisig
-     * - Security: Proper MuSig2 key path spending with tweak handling
-     *
-     * MuSig2 is always n-of-n: all participants must sign.
-     *
-     * @param config.name - Display name for the wallet
-     * @param config.description - Optional description
-     * @param config.participantPublicKeys - Public keys of other participants (not including self)
-     */
-    async createSharedWallet(config: {
-      name: string
-      description?: string
-      participantPublicKeys: string[]
-    }): Promise<SharedWallet> {
-      if (!this.initialized) {
-        throw new Error('MuSig2 not initialized')
-      }
-
-      if (config.participantPublicKeys.length < 1) {
-        throw new Error('Shared wallet requires at least 2 participants')
-      }
-
-      const Bitcore = getBitcore()
-      if (!Bitcore) {
-        throw new Error('Bitcore SDK not loaded')
-      }
-
-      const { createMuSigTaprootAddress, PublicKey } = Bitcore
-      const networkStore = useNetworkStore()
-      const walletStore = useWalletStore()
-      const contactsStore = useContactsStore()
-
-      // Get my MuSig2 public key (from dedicated MUSIG2 account)
-      const myPublicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
-      if (!myPublicKeyHex) {
-        throw new Error('MuSig2 key not available - wallet not initialized')
-      }
-
-      // Collect all participant public keys (including self)
-      const allPublicKeyHexes = [...config.participantPublicKeys]
-      if (!allPublicKeyHexes.includes(myPublicKeyHex)) {
-        allPublicKeyHexes.push(myPublicKeyHex)
-      }
-
-      // MuSig2 is n-of-n: all participants must sign
-      const participantCount = allPublicKeyHexes.length
-      console.log(
-        `[MuSig2 Store] Creating ${participantCount}-of-${participantCount} wallet`,
-      )
-
-      // Convert hex strings to PublicKey objects
-      const publicKeys = allPublicKeyHexes.map(hex => new PublicKey(hex))
-
-      let aggregatedKeyHex: string
-      let sharedAddress: string
-
-      try {
-        // Create Taproot MuSig2 address using SDK
-        const taprootResult = createMuSigTaprootAddress(
-          publicKeys,
-          networkStore.currentNetwork,
-        )
-
-        aggregatedKeyHex = taprootResult.commitment.toString()
-        sharedAddress = taprootResult.address.toString()
-
-        console.log('[MuSig2 Store] Created Taproot MuSig2 address:', {
-          participants: publicKeys.length,
-          address: sharedAddress.slice(0, 30) + '...',
-        })
-      } catch (error) {
-        console.error('[MuSig2 Store] Key aggregation failed:', error)
-        throw new Error(
-          'Failed to aggregate public keys: ' + (error as Error).message,
-        )
-      }
-
-      // Build participant list with contact resolution
-      const participants: SharedWalletParticipant[] = allPublicKeyHexes.map(
-        pubKeyHex => {
-          const isMe = pubKeyHex === myPublicKeyHex
-
-          // Try to resolve contact info
-          const contact = contactsStore.findByPublicKey(pubKeyHex)
-
-          return {
-            peerId: contact?.peerId || '',
-            publicKeyHex: pubKeyHex,
-            nickname: isMe ? undefined : contact?.name,
-            isMe,
-          }
+        onSessionCreated: (_sessionId: string) => {
+          _syncSessionsFromService()
         },
-      )
-
-      // Create wallet with computed address
-      const walletId = generateId('wallet')
-      const wallet: SharedWallet = {
-        id: walletId,
-        name: config.name,
-        description: config.description,
-        participants,
-        aggregatedPublicKeyHex: aggregatedKeyHex,
-        sharedAddress,
-        balanceSats: '0',
-        createdAt: Date.now(),
-      }
-
-      this.sharedWallets.push(wallet)
-      this._saveSharedWallets()
-
-      console.log('[MuSig2 Store] Created shared wallet:', {
-        id: walletId,
-        name: config.name,
-        participants: participants.length,
-        sharedAddress: sharedAddress.slice(0, 30) + '...',
+        onSessionComplete: (_sessionId: string, _signature: Buffer) => {
+          _syncSessionsFromService()
+        },
+        onSessionAborted: (_sessionId: string, _reason: string) => {
+          _syncSessionsFromService()
+        },
+        onNonceReceived: () => {
+          _syncSessionsFromService()
+        },
+        onPartialSigReceived: () => {
+          _syncSessionsFromService()
+        },
       })
 
-      return wallet
-    },
+      initialized.value = true
+      console.log('[MuSig2 Store] Initialized')
 
-    /**
-     * Remove a shared wallet
-     */
-    removeSharedWallet(walletId: string) {
-      const index = this.sharedWallets.findIndex(w => w.id === walletId)
-      if (index !== -1) {
-        this.sharedWallets.splice(index, 1)
-        this._saveSharedWallets()
-      }
-    },
+      // Restore cached signers from discovery cache (Phase 3)
+      _restoreCachedSigners()
 
-    /**
-     * Delete a shared wallet (alias for removeSharedWallet)
-     */
-    deleteSharedWallet(walletId: string) {
-      this.removeSharedWallet(walletId)
-    },
+      // Start periodic cleanup of expired signers (Phase 3)
+      _startExpiryCleanupInterval()
 
-    /**
-     * Refresh shared wallet balances from Chronik
-     */
-    async refreshSharedWalletBalances() {
-      // TODO: Implement actual balance fetching via Chronik service
-      this.loading = true
+      // START SIGNER SUBSCRIPTION AUTOMATICALLY (Phase 6.2.1)
       try {
-        await new Promise(resolve => setTimeout(resolve, 500))
-      } finally {
-        this.loading = false
+        await startSignerSubscription()
+        console.log('[MuSig2 Store] Signer subscription started')
+      } catch (subError) {
+        console.warn(
+          '[MuSig2 Store] Failed to start signer subscription:',
+          subError,
+        )
       }
-    },
 
-    // ========================================================================
-    // Internal Methods
-    // ========================================================================
+      // Restore signer advertisement if previously enabled (Phase 6.2.2)
+      if (signerConfig.value) {
+        try {
+          await advertiseSigner(signerConfig.value)
+          console.log('[MuSig2 Store] Restored signer advertisement')
+        } catch (adError) {
+          console.warn(
+            '[MuSig2 Store] Failed to restore signer advertisement:',
+            adError,
+          )
+        }
+      }
+    } catch (err) {
+      error.value =
+        err instanceof Error ? err.message : 'Failed to initialize MuSig2'
+      lastError.value = error.value
+      retryableOperation.value = () => initialize()
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
 
-    /**
-     * Handle discovered signer from service
-     *
-     * Deduplicates by publicKey (not by id) to handle re-advertisements.
-     * This ensures the same signer doesn't appear multiple times if they
-     * re-advertise with a new advertisement ID.
-     */
-    _handleSignerDiscovered(signer: DiscoveredSigner) {
-      // Deduplicate by publicKey (not by id)
-      const existingIndex = this.discoveredSigners.findIndex(
-        (s: StoreSigner) => s.publicKey === signer.publicKey,
+  /**
+   * Cleanup MuSig2 system
+   */
+  async function cleanup() {
+    // Stop the expiry cleanup interval (Phase 3)
+    _stopExpiryCleanupInterval()
+
+    // Abort all active sessions via service
+    for (const session of activeSessions.value) {
+      if (session.state !== 'completed' && session.state !== 'failed') {
+        try {
+          await serviceAbortSession(session.id, 'Cleanup')
+        } catch (e) {
+          console.warn(`Failed to abort session ${session.id}:`, e)
+        }
+      }
+    }
+
+    // Withdraw signer advertisement
+    if (signerEnabled.value) {
+      await withdrawSigner()
+    }
+
+    // Cleanup the service
+    await cleanupMuSig2()
+
+    initialized.value = false
+    activeSessions.value = []
+    discoveredSigners.value = []
+  }
+
+  // ========================================================================
+  // Signer Advertisement
+  // ========================================================================
+
+  /**
+   * Advertise as a signer using the dedicated MuSig2 account key
+   */
+  async function advertiseSigner(config: SignerConfig) {
+    if (!initialized.value) {
+      throw new Error('MuSig2 not initialized')
+    }
+
+    const walletStore = useWalletStore()
+
+    // Get MuSig2 signing context (private and public keys)
+    const privateKeyHex = walletStore.getPrivateKeyHex(AccountPurpose.MUSIG2)
+    const publicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
+    if (!privateKeyHex || !publicKeyHex) {
+      throw new Error(
+        'MuSig2 signing keys not available - wallet not initialized',
+      )
+    }
+
+    const signingContext: SignerSigningContext = {
+      privateKeyHex,
+      publicKeyHex,
+    }
+
+    loading.value = true
+    error.value = null
+    lastError.value = null
+    retryableOperation.value = null
+
+    try {
+      // Pass signing context to plugin for advertisement
+      await startSignerAdvertising(signingContext, {
+        transactionTypes: config.transactionTypes,
+        amountRange: config.amountRange,
+        metadata: {
+          nickname: config.nickname,
+          fee: config.fee,
+        },
+      })
+
+      signerConfig.value = config
+      signerEnabled.value = true
+      _saveSignerConfig()
+    } catch (err) {
+      // Phase 6.3.1: Store error and retryable operation
+      error.value = err instanceof Error ? err.message : 'Failed to advertise'
+      lastError.value = error.value
+      retryableOperation.value = () => advertiseSigner(config)
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * Withdraw signer advertisement
+   */
+  async function withdrawSigner() {
+    if (!signerEnabled.value) return
+
+    try {
+      await stopSignerAdvertising()
+      signerEnabled.value = false
+      signerConfig.value = null
+      removeItem(STORAGE_KEYS.MUSIG2_SIGNER_CONFIG)
+    } catch (err) {
+      console.error('Failed to withdraw signer:', err)
+    }
+  }
+
+  // ========================================================================
+  // Discovery
+  // ========================================================================
+
+  /**
+   * Subscribe to a signer for updates
+   */
+  async function subscribeToSigner(signerId: string) {
+    const signer = discoveredSigners.value.find(
+      (s: StoreSigner) => s.id === signerId,
+    )
+    if (!signer) return
+
+    signer.subscribed = true
+  }
+
+  /**
+   * Unsubscribe from a signer
+   */
+  async function unsubscribeFromSigner(signerId: string) {
+    const signer = discoveredSigners.value.find(
+      (s: StoreSigner) => s.id === signerId,
+    )
+    if (!signer) return
+
+    signer.subscribed = false
+  }
+
+  /**
+   * Refresh discovered signers from the network
+   */
+  async function refreshSigners() {
+    if (!initialized.value) return
+
+    loading.value = true
+    error.value = null
+    lastError.value = null
+    retryableOperation.value = null
+
+    try {
+      const signers = await serviceDiscoverSigners()
+
+      // Merge with existing signers, preserving subscription state
+      const existingMap = new Map(
+        discoveredSigners.value.map((s: StoreSigner) => [s.id, s]),
       )
 
-      if (existingIndex >= 0) {
-        const existing = this.discoveredSigners[existingIndex]
+      discoveredSigners.value = signers.map(signer => ({
+        ...signer,
+        subscribed: existingMap.get(signer.id)?.subscribed ?? false,
+        reputation: existingMap.get(signer.id)?.reputation,
+        responseTime: existingMap.get(signer.id)?.responseTime,
+      }))
+    } catch (err) {
+      // Phase 6.3.1: Store error and retryable operation
+      error.value =
+        err instanceof Error ? err.message : 'Failed to refresh signers'
+      lastError.value = error.value
+      retryableOperation.value = () => refreshSigners()
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
 
-        // Only update if newer advertisement (use discoveredAt as timestamp)
-        if (signer.discoveredAt > (existing.discoveredAt || 0)) {
-          console.log(
-            '[MuSig2 Store] Updating existing signer:',
-            signer.publicKey.slice(0, 16) + '...',
-          )
+  /**
+   * Start real-time signer subscription
+   */
+  async function startSignerSubscription(criteria: SignerSearchCriteria = {}) {
+    if (signerSubscriptionId.value) {
+      await stopSignerSubscription()
+    }
 
-          this.discoveredSigners[existingIndex] = {
-            ...signer,
-            subscribed: existing.subscribed,
-            reputation: existing.reputation,
-            responseTime: existing.responseTime,
-          }
+    signerSubscriptionId.value = await subscribeToSigners(
+      criteria,
+      (signer: DiscoveredSigner) => {
+        _handleSignerDiscovered(signer)
+      },
+    )
+  }
+
+  /**
+   * Stop real-time signer subscription
+   */
+  async function stopSignerSubscription() {
+    if (signerSubscriptionId.value) {
+      await unsubscribeFromSigners(signerSubscriptionId.value)
+      signerSubscriptionId.value = null
+    }
+  }
+
+  // ========================================================================
+  // Sessions
+  // ========================================================================
+
+  /**
+   * Sync sessions from service to store
+   */
+  function _syncSessionsFromService() {
+    activeSessions.value = getAllSessions()
+  }
+
+  /**
+   * Register a signing session with the service worker for background monitoring
+   */
+  function registerSessionWithSW(sessionId: string, expiresAt: Date) {
+    if (import.meta.client) {
+      const { registerSession } = useServiceWorker()
+      registerSession({
+        id: sessionId,
+        type: 'musig2',
+        expiresAt: expiresAt.getTime(),
+        warningAt: expiresAt.getTime() - 60_000, // 1 min warning
+        data: { sessionId },
+      })
+    }
+  }
+
+  /**
+   * Unregister a session from SW monitoring
+   */
+  function unregisterSessionFromSW(sessionId: string) {
+    if (import.meta.client) {
+      const { unregisterSession } = useServiceWorker()
+      unregisterSession(sessionId)
+    }
+  }
+
+  /**
+   * Handle session expiring warning from SW
+   */
+  function handleSessionExpiring(payload: {
+    sessionId: string
+    sessionType: string
+    expiresIn: number
+  }) {
+    console.log(
+      `[MuSig2 Store] Session ${payload.sessionId} expiring in ${Math.round(
+        payload.expiresIn / 1000,
+      )}s`,
+    )
+  }
+
+  /**
+   * Handle session expired notification from SW
+   */
+  function handleSessionExpired(payload: {
+    sessionId: string
+    sessionType: string
+  }) {
+    console.log(`[MuSig2 Store] Session ${payload.sessionId} expired`)
+    // Sync sessions to reflect the expiry
+    _syncSessionsFromService()
+  }
+
+  /**
+   * Abort a session
+   */
+  async function abortSession(sessionId: string, reason: string) {
+    // Unregister from SW first
+    unregisterSessionFromSW(sessionId)
+    await serviceAbortSession(sessionId, reason)
+    _syncSessionsFromService()
+  }
+
+  // ========================================================================
+  // Shared Wallets
+  // ========================================================================
+
+  /**
+   * Create a shared wallet with MuSig2 key aggregation
+   *
+   * Uses Taproot-based MuSig2 for:
+   * - Privacy: Multi-sig looks identical to single-sig on-chain
+   * - Efficiency: ~78% smaller transaction size vs P2SH multisig
+   * - Security: Proper MuSig2 key path spending with tweak handling
+   *
+   * MuSig2 is always n-of-n: all participants must sign.
+   */
+  async function createSharedWallet(config: {
+    name: string
+    description?: string
+    participantPublicKeys: string[]
+  }): Promise<PeopleSharedWallet> {
+    // Wallet creation only requires Bitcore SDK, not full P2P initialization
+    if (config.participantPublicKeys.length < 1) {
+      throw new Error('Shared wallet requires at least 2 participants')
+    }
+
+    const Bitcore = getBitcore()
+    if (!Bitcore) {
+      throw new Error('Bitcore SDK not loaded')
+    }
+
+    const { createMuSigTaprootAddress, PublicKey } = Bitcore
+    const networkStore = useNetworkStore()
+    const walletStore = useWalletStore()
+    const peopleStore = usePeopleStore()
+
+    // Ensure peopleStore is initialized
+    await peopleStore.initialize()
+
+    // Get my MuSig2 public key (from dedicated MUSIG2 account)
+    const myPublicKeyHex = walletStore.getPublicKeyHex(AccountPurpose.MUSIG2)
+    if (!myPublicKeyHex) {
+      throw new Error('MuSig2 key not available - wallet not initialized')
+    }
+
+    // Collect all participant public keys (including self)
+    const allPublicKeyHexes = [...config.participantPublicKeys]
+    if (!allPublicKeyHexes.includes(myPublicKeyHex)) {
+      allPublicKeyHexes.push(myPublicKeyHex)
+    }
+
+    // MuSig2 is n-of-n: all participants must sign
+    const participantCount = allPublicKeyHexes.length
+    console.log(
+      `[MuSig2 Store] Creating ${participantCount}-of-${participantCount} wallet`,
+    )
+
+    // Convert hex strings to PublicKey objects
+    const publicKeys = allPublicKeyHexes.map(hex => new PublicKey(hex))
+
+    let aggregatedKeyHex: string
+    let sharedAddress: string
+
+    try {
+      // Create Taproot MuSig2 address using SDK
+      const taprootResult = createMuSigTaprootAddress(
+        publicKeys,
+        networkStore.currentNetwork,
+      )
+
+      aggregatedKeyHex = taprootResult.commitment.toString()
+      sharedAddress = taprootResult.address.toString()
+
+      console.log('[MuSig2 Store] Created Taproot MuSig2 address:', {
+        participants: publicKeys.length,
+        address: sharedAddress.slice(0, 30) + '...',
+      })
+    } catch (err) {
+      console.error('[MuSig2 Store] Key aggregation failed:', err)
+      throw new Error(
+        'Failed to aggregate public keys: ' + (err as Error).message,
+      )
+    }
+
+    // Build participant list with Person ID resolution
+    const participants: PeopleSharedWalletParticipant[] = allPublicKeyHexes.map(
+      pubKeyHex => {
+        const isMe = pubKeyHex === myPublicKeyHex
+
+        // Try to resolve Person ID from peopleStore
+        const person = peopleStore.getByPublicKey(pubKeyHex)
+
+        return {
+          personId: isMe ? 'self' : person?.id || '',
+          publicKeyHex: pubKeyHex,
+          isMe,
         }
-      } else {
+      },
+    )
+
+    // Delegate wallet creation to peopleStore (single source of truth)
+    const wallet = peopleStore.addSharedWallet({
+      name: config.name,
+      description: config.description,
+      address: sharedAddress,
+      aggregatedPublicKeyHex: aggregatedKeyHex,
+      participants,
+      threshold: participantCount, // MuSig2 is always n-of-n
+      balanceSats: 0n,
+      transactionCount: 0,
+      status: 'active',
+    })
+
+    console.log('[MuSig2 Store] Created shared wallet via peopleStore:', {
+      id: wallet.id,
+      name: config.name,
+      participants: participants.length,
+      address: sharedAddress.slice(0, 30) + '...',
+    })
+
+    return wallet
+  }
+
+  /**
+   * Remove a shared wallet (delegated to peopleStore)
+   */
+  function removeSharedWallet(walletId: string) {
+    const peopleStore = usePeopleStore()
+    peopleStore.removeSharedWallet(walletId)
+  }
+
+  /**
+   * Delete a shared wallet (alias for removeSharedWallet)
+   */
+  function deleteSharedWallet(walletId: string) {
+    removeSharedWallet(walletId)
+  }
+
+  /**
+   * Refresh shared wallet balances from Chronik
+   */
+  async function refreshSharedWalletBalances() {
+    // TODO: Implement actual balance fetching via Chronik service
+    loading.value = true
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500))
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ========================================================================
+  // Internal Methods
+  // ========================================================================
+
+  /**
+   * Handle discovered signer from service
+   *
+   * Deduplicates by publicKey (not by id) to handle re-advertisements.
+   */
+  function _handleSignerDiscovered(signer: DiscoveredSigner) {
+    // Deduplicate by publicKey (not by id)
+    const existingIndex = discoveredSigners.value.findIndex(
+      (s: StoreSigner) => s.publicKey === signer.publicKey,
+    )
+
+    if (existingIndex >= 0) {
+      const existing = discoveredSigners.value[existingIndex]
+
+      // Only update if newer advertisement (use discoveredAt as timestamp)
+      if (signer.discoveredAt > (existing.discoveredAt || 0)) {
         console.log(
-          '[MuSig2 Store] Discovered new signer:',
+          '[MuSig2 Store] Updating existing signer:',
           signer.publicKey.slice(0, 16) + '...',
         )
 
-        this.discoveredSigners.push({
+        discoveredSigners.value[existingIndex] = {
           ...signer,
-          subscribed: false,
-        })
+          subscribed: existing.subscribed,
+          reputation: existing.reputation,
+          responseTime: existing.responseTime,
+        }
       }
-
-      // Phase 2: Update identity store with signer discovery
-      const identityStore = useIdentityStore()
-      identityStore.updateFromSignerDiscovery({
-        publicKeyHex: signer.publicKey,
-        peerId: signer.peerId,
-        nickname: signer.nickname,
-        capabilities: signer.capabilities,
-      })
-
-      // Cleanup expired signers after each discovery
-      this._cleanupExpiredSigners()
-
-      // Update the discovery cache
-      this._updateDiscoveryCache(signer)
-    },
-
-    /**
-     * Remove expired signers from the list
-     *
-     * Uses isOnline flag and lastSeen timestamp to determine expiry.
-     * A signer is considered expired if:
-     * - isOnline is false AND lastSeen is older than 30 minutes
-     */
-    _cleanupExpiredSigners() {
-      const now = Date.now()
-      const EXPIRY_THRESHOLD = 30 * 60 * 1000 // 30 minutes
-      const before = this.discoveredSigners.length
-
-      this.discoveredSigners = this.discoveredSigners.filter(
-        (s: StoreSigner) => {
-          // Keep online signers
-          if (s.isOnline) return true
-
-          // Remove signers not seen in the last 30 minutes
-          if (s.lastSeen && now - s.lastSeen > EXPIRY_THRESHOLD) {
-            console.log(
-              '[MuSig2 Store] Removing expired signer:',
-              s.publicKey.slice(0, 16) + '...',
-            )
-            return false
-          }
-          return true
-        },
+    } else {
+      console.log(
+        '[MuSig2 Store] Discovered new signer:',
+        signer.publicKey.slice(0, 16) + '...',
       )
 
-      const removed = before - this.discoveredSigners.length
-      if (removed > 0) {
-        console.log(`[MuSig2 Store] Cleaned up ${removed} expired signers`)
-      }
-    },
+      discoveredSigners.value.push({
+        ...signer,
+        subscribed: false,
+      })
+    }
 
-    /**
-     * Update the discovery cache with a signer
-     */
-    _updateDiscoveryCache(signer: DiscoveredSigner) {
-      try {
-        const cache = getDiscoveryCache()
+    // Phase 2: Update identity store with signer discovery
+    const identityStore = useIdentityStore()
+    identityStore.updateFromSignerDiscovery({
+      publicKeyHex: signer.publicKey,
+      peerId: signer.peerId,
+      nickname: signer.nickname,
+      capabilities: signer.capabilities,
+    })
 
-        cache.upsert({
-          id: signer.id,
-          peerId: signer.peerId,
-          publicKey: signer.publicKey,
-          walletAddress: signer.walletAddress,
-          nickname: signer.nickname,
-          createdAt: signer.discoveredAt,
-          expiresAt: signer.lastSeen + 30 * 60 * 1000, // 30 min from last seen
-          addedAt: Date.now(),
-          lastAccess: Date.now(),
-          accessCount: 1,
-          source: 'gossipsub',
-        })
-      } catch (error) {
-        // Cache update is non-critical, just log
-        console.warn('[MuSig2 Store] Failed to update discovery cache:', error)
-      }
-    },
+    // Cleanup expired signers after each discovery
+    _cleanupExpiredSigners()
 
-    /**
-     * Restore cached signers from the discovery cache
-     * Called on initialization to populate signers from previous sessions
-     */
-    _restoreCachedSigners() {
-      try {
-        const cache = getDiscoveryCache()
+    // Update the discovery cache
+    _updateDiscoveryCache(signer)
+  }
 
-        const cachedSigners = cache.getValidSigners()
-        console.log(
-          `[MuSig2 Store] Restoring ${cachedSigners.length} cached signers`,
+  /**
+   * Remove expired signers from the list
+   */
+  function _cleanupExpiredSigners() {
+    const now = Date.now()
+    const EXPIRY_THRESHOLD = 30 * 60 * 1000 // 30 minutes
+    const before = discoveredSigners.value.length
+
+    discoveredSigners.value = discoveredSigners.value.filter(
+      (s: StoreSigner) => {
+        // Keep online signers
+        if (s.isOnline) return true
+
+        // Remove signers not seen in the last 30 minutes
+        if (s.lastSeen && now - s.lastSeen > EXPIRY_THRESHOLD) {
+          console.log(
+            '[MuSig2 Store] Removing expired signer:',
+            s.publicKey.slice(0, 16) + '...',
+          )
+          return false
+        }
+        return true
+      },
+    )
+
+    const removed = before - discoveredSigners.value.length
+    if (removed > 0) {
+      console.log(`[MuSig2 Store] Cleaned up ${removed} expired signers`)
+    }
+  }
+
+  /**
+   * Update the discovery cache with a signer
+   */
+  function _updateDiscoveryCache(signer: DiscoveredSigner) {
+    try {
+      const cache = getDiscoveryCache()
+
+      cache.upsert({
+        id: signer.id,
+        peerId: signer.peerId,
+        publicKey: signer.publicKey,
+        walletAddress: signer.walletAddress,
+        nickname: signer.nickname,
+        createdAt: signer.discoveredAt,
+        expiresAt: signer.lastSeen + 30 * 60 * 1000, // 30 min from last seen
+        addedAt: Date.now(),
+        lastAccess: Date.now(),
+        accessCount: 1,
+        source: 'gossipsub',
+      })
+    } catch (err) {
+      // Cache update is non-critical, just log
+      console.warn('[MuSig2 Store] Failed to update discovery cache:', err)
+    }
+  }
+
+  /**
+   * Restore cached signers from the discovery cache
+   */
+  function _restoreCachedSigners() {
+    try {
+      const cache = getDiscoveryCache()
+
+      const cachedSigners = cache.getValidSigners()
+      console.log(
+        `[MuSig2 Store] Restoring ${cachedSigners.length} cached signers`,
+      )
+
+      for (const cached of cachedSigners) {
+        // Check if already in discovered signers
+        const exists = discoveredSigners.value.some(
+          (s: StoreSigner) => s.publicKey === cached.publicKey,
         )
 
-        for (const cached of cachedSigners) {
-          // Check if already in discovered signers
-          const exists = this.discoveredSigners.some(
-            (s: StoreSigner) => s.publicKey === cached.publicKey,
-          )
-
-          if (!exists) {
-            // Convert cached signer to DiscoveredSigner format
-            this.discoveredSigners.push({
-              id: cached.id,
-              peerId: cached.peerId,
-              publicKey: cached.publicKey,
-              walletAddress: cached.walletAddress || '',
-              nickname: cached.nickname,
-              avatar: undefined,
-              capabilities: {
-                standardTx: true,
-                rankVoting: false,
-                tokenTx: false,
-                opReturn: false,
-              },
-              discoveredAt: cached.createdAt,
-              lastSeen: cached.lastAccess,
-              isOnline: false, // Cached signers start as offline until we hear from them
-              subscribed: false,
-            })
-          }
+        if (!exists) {
+          // Convert cached signer to DiscoveredSigner format
+          discoveredSigners.value.push({
+            id: cached.id,
+            peerId: cached.peerId,
+            publicKey: cached.publicKey,
+            walletAddress: cached.walletAddress || '',
+            nickname: cached.nickname,
+            avatar: undefined,
+            capabilities: {
+              standardTx: true,
+              rankVoting: false,
+              tokenTx: false,
+              opReturn: false,
+            },
+            discoveredAt: cached.createdAt,
+            lastSeen: cached.lastAccess,
+            isOnline: false, // Cached signers start as offline until we hear from them
+            subscribed: false,
+          })
         }
-      } catch (error) {
-        console.warn('[MuSig2 Store] Failed to restore cached signers:', error)
       }
-    },
+    } catch (err) {
+      console.warn('[MuSig2 Store] Failed to restore cached signers:', err)
+    }
+  }
 
-    /**
-     * Start periodic cleanup of expired signers
-     */
-    _startExpiryCleanupInterval() {
-      // Run cleanup every 5 minutes
-      const CLEANUP_INTERVAL = 5 * 60 * 1000
+  /**
+   * Start periodic cleanup of expired signers
+   */
+  function _startExpiryCleanupInterval() {
+    // Run cleanup every 5 minutes
+    const CLEANUP_INTERVAL = 5 * 60 * 1000
 
-      // Store interval ID on the store for cleanup
-      if (typeof window !== 'undefined') {
-        // Clear any existing interval
-        const existingInterval = (window as unknown as Record<string, unknown>)
-          .__musig2CleanupInterval as ReturnType<typeof setInterval> | undefined
-        if (existingInterval) {
-          clearInterval(existingInterval)
-        }
+    // Store interval ID on the store for cleanup
+    if (typeof window !== 'undefined') {
+      // Clear any existing interval
+      const existingInterval = (window as unknown as Record<string, unknown>)
+        .__musig2CleanupInterval as ReturnType<typeof setInterval> | undefined
+      if (existingInterval) {
+        clearInterval(existingInterval)
+      }
 
-        // Start new interval
-        const intervalId = setInterval(() => {
-          this._cleanupExpiredSigners()
-        }, CLEANUP_INTERVAL)
+      // Start new interval
+      const intervalId = setInterval(() => {
+        _cleanupExpiredSigners()
+      }, CLEANUP_INTERVAL)
 
+      ;(window as unknown as Record<string, unknown>).__musig2CleanupInterval =
+        intervalId
+
+      console.log('[MuSig2 Store] Started expiry cleanup interval')
+    }
+  }
+
+  /**
+   * Stop the expiry cleanup interval
+   */
+  function _stopExpiryCleanupInterval() {
+    if (typeof window !== 'undefined') {
+      const intervalId = (window as unknown as Record<string, unknown>)
+        .__musig2CleanupInterval as ReturnType<typeof setInterval> | undefined
+      if (intervalId) {
+        clearInterval(intervalId)
         ;(
           window as unknown as Record<string, unknown>
-        ).__musig2CleanupInterval = intervalId
-
-        console.log('[MuSig2 Store] Started expiry cleanup interval')
+        ).__musig2CleanupInterval = undefined
+        console.log('[MuSig2 Store] Stopped expiry cleanup interval')
       }
-    },
+    }
+  }
 
-    /**
-     * Stop the expiry cleanup interval
-     */
-    _stopExpiryCleanupInterval() {
-      if (typeof window !== 'undefined') {
-        const intervalId = (window as unknown as Record<string, unknown>)
-          .__musig2CleanupInterval as ReturnType<typeof setInterval> | undefined
-        if (intervalId) {
-          clearInterval(intervalId)
-          ;(
-            window as unknown as Record<string, unknown>
-          ).__musig2CleanupInterval = undefined
-          console.log('[MuSig2 Store] Stopped expiry cleanup interval')
-        }
+  /**
+   * Load saved state from storage service
+   */
+  function _loadSavedState() {
+    // Load signer config
+    const savedConfig = getItem<SignerConfig | null>(
+      STORAGE_KEYS.MUSIG2_SIGNER_CONFIG,
+      null,
+    )
+    if (savedConfig) {
+      signerConfig.value = savedConfig
+      // Note: signerEnabled will be set when we actually advertise
+    }
+  }
+
+  /**
+   * Save signer config to storage service
+   */
+  function _saveSignerConfig() {
+    if (signerConfig.value) {
+      setItem(STORAGE_KEYS.MUSIG2_SIGNER_CONFIG, signerConfig.value)
+    }
+  }
+
+  /**
+   * Retry the last failed operation (Phase 6.3.1)
+   */
+  async function retryLastOperation() {
+    if (retryableOperation.value) {
+      error.value = null
+      lastError.value = null
+      try {
+        await retryableOperation.value()
+        retryableOperation.value = null
+      } catch (err) {
+        // Error handling is done in the retried operation itself
+        console.error('[MuSig2 Store] Retry failed:', err)
       }
-    },
+    }
+  }
 
-    /**
-     * Load saved state from storage service
-     */
-    _loadSavedState() {
-      // Load signer config
-      const savedConfig = getItem<SignerConfig | null>(
-        STORAGE_KEYS.MUSIG2_SIGNER_CONFIG,
-        null,
-      )
-      if (savedConfig) {
-        this.signerConfig = savedConfig
-        // Note: signerEnabled will be set when we actually advertise
-      }
+  /**
+   * Clear the last error and retryable operation
+   */
+  function clearError() {
+    error.value = null
+    lastError.value = null
+    retryableOperation.value = null
+  }
 
-      // Load shared wallets
-      const savedWallets = getItem<SharedWallet[]>(
-        STORAGE_KEYS.MUSIG2_SHARED_WALLETS,
-        [],
-      )
-      this.sharedWallets = savedWallets
-    },
+  /**
+   * Check if there's a retryable operation available
+   */
+  function hasRetryableOperation(): boolean {
+    return retryableOperation.value !== null
+  }
 
-    /**
-     * Save signer config to storage service
-     */
-    _saveSignerConfig() {
-      if (this.signerConfig) {
-        setItem(STORAGE_KEYS.MUSIG2_SIGNER_CONFIG, this.signerConfig)
-      }
-    },
+  // ========================================================================
+  // Signing Request Actions (Phase 6)
+  // ========================================================================
 
-    /**
-     * Save shared wallets to storage service
-     */
-    _saveSharedWallets() {
-      setItem(STORAGE_KEYS.MUSIG2_SHARED_WALLETS, this.sharedWallets)
-    },
+  /**
+   * Propose a spend from a shared wallet
+   */
+  async function proposeSpend(params: {
+    walletId: string
+    recipient: string
+    amount: bigint
+    fee: bigint
+    purpose?: string
+  }): Promise<{ sessionId: string }> {
+    const wallet = sharedWallets.value.find(w => w.id === params.walletId)
+    if (!wallet) {
+      throw new Error('Shared wallet not found')
+    }
 
-    /**
-     * Retry the last failed operation (Phase 6.3.1)
-     */
-    async retryLastOperation() {
-      if (this.retryableOperation) {
-        this.error = null
-        this.lastError = null
-        try {
-          await this.retryableOperation()
-          this.retryableOperation = null
-        } catch (error) {
-          // Error handling is done in the retried operation itself
-          console.error('[MuSig2 Store] Retry failed:', error)
-        }
-      }
-    },
+    const sessionId = generateId('session')
 
-    /**
-     * Clear the last error and retryable operation
-     */
-    clearError() {
-      this.error = null
-      this.lastError = null
-      this.retryableOperation = null
-    },
+    // TODO: Create actual signing session via service
+    // For now, register with SW for monitoring
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000) // 5 min timeout
+    registerSessionWithSW(sessionId, expiresAt)
 
-    /**
-     * Check if there's a retryable operation available
-     */
-    hasRetryableOperation(): boolean {
-      return this.retryableOperation !== null
-    },
+    // Notify other participants
+    _notifySpendProposed(wallet, params.purpose)
 
-    // ========================================================================
-    // Signing Request Actions (Phase 6)
-    // ========================================================================
+    return { sessionId }
+  }
 
-    /**
-     * Propose a spend from a shared wallet
-     * Creates a signing session and notifies participants
-     */
-    async proposeSpend(params: {
-      walletId: string
-      recipient: string
-      amount: bigint
-      fee: bigint
-      purpose?: string
-    }): Promise<{ sessionId: string }> {
-      const wallet = this.sharedWallets.find(w => w.id === params.walletId)
-      if (!wallet) {
-        throw new Error('Shared wallet not found')
-      }
+  /**
+   * Accept an incoming signing request
+   */
+  async function acceptRequest(requestId: string) {
+    // TODO: Implement actual request acceptance via service
+    console.log('[MuSig2 Store] Accepting request:', requestId)
 
-      const sessionId = generateId('session')
+    // Notify requester of acceptance
+    _notifyRequestAccepted(requestId)
 
-      // TODO: Create actual signing session via service
-      // For now, register with SW for monitoring
-      const expiresAt = new Date(Date.now() + 5 * 60 * 1000) // 5 min timeout
-      this.registerSessionWithSW(sessionId, expiresAt)
+    _syncSessionsFromService()
+  }
 
-      // Notify other participants
-      this._notifySpendProposed(wallet, params.purpose)
+  /**
+   * Reject an incoming signing request
+   */
+  async function rejectRequest(requestId: string) {
+    // TODO: Implement actual request rejection via service
+    console.log('[MuSig2 Store] Rejecting request:', requestId)
 
-      return { sessionId }
-    },
+    // Notify requester of rejection
+    _notifyRequestRejected(requestId)
 
-    /**
-     * Accept an incoming signing request
-     */
-    async acceptRequest(requestId: string) {
-      // TODO: Implement actual request acceptance via service
-      console.log('[MuSig2 Store] Accepting request:', requestId)
+    _syncSessionsFromService()
+  }
 
-      // Notify requester of acceptance
-      this._notifyRequestAccepted(requestId)
+  /**
+   * Cancel an outgoing signing request
+   */
+  async function cancelRequest(requestId: string) {
+    await abortSession(requestId, 'Cancelled by sender')
+  }
 
-      this._syncSessionsFromService()
-    },
+  // ========================================================================
+  // Notification Helpers (Phase 6.3)
+  // ========================================================================
 
-    /**
-     * Reject an incoming signing request
-     */
-    async rejectRequest(requestId: string) {
-      // TODO: Implement actual request rejection via service
-      console.log('[MuSig2 Store] Rejecting request:', requestId)
+  /**
+   * Get display name for a peer
+   */
+  function _getPeerDisplayName(peerId: string): string {
+    const contactsStore = useContactsStore()
+    const contact = contactsStore.contacts.find(c => c.peerId === peerId)
+    if (contact) return contact.name
+    return `${peerId.slice(0, 8)}...`
+  }
 
-      // Notify requester of rejection
-      this._notifyRequestRejected(requestId)
+  /**
+   * Notify when a signing request is received
+   */
+  function notifyIncomingRequest(request: {
+    id: string
+    fromPeerId: string
+    walletId?: string
+  }) {
+    const notificationStore = useNotificationStore()
+    const fromName = _getPeerDisplayName(request.fromPeerId)
 
-      this._syncSessionsFromService()
-    },
+    notificationStore.addNotification({
+      type: 'signing_request',
+      title: 'Signing Request',
+      message: `${fromName} is requesting your signature`,
+      actionUrl: '/people/p2p?tab=requests',
+      actionLabel: 'View Request',
+      data: { requestId: request.id, fromPeerId: request.fromPeerId },
+    })
+  }
 
-    /**
-     * Cancel an outgoing signing request
-     */
-    async cancelRequest(requestId: string) {
-      await this.abortSession(requestId, 'Cancelled by sender')
-    },
+  /**
+   * Notify when a signing session is completed
+   */
+  function notifySessionComplete(session: { id: string; txid?: string }) {
+    const notificationStore = useNotificationStore()
 
-    // ========================================================================
-    // Notification Helpers (Phase 6.3)
-    // ========================================================================
+    notificationStore.addNotification({
+      type: 'signing_request',
+      title: 'Signing Complete',
+      message: 'Transaction signed and broadcast successfully',
+      actionUrl: session.txid
+        ? `/explore/explorer/tx/${session.txid}`
+        : '/people/p2p?tab=sessions',
+      actionLabel: session.txid ? 'View Transaction' : 'View Sessions',
+      data: { sessionId: session.id, txid: session.txid },
+    })
 
-    /**
-     * Get display name for a peer
-     */
-    _getPeerDisplayName(peerId: string): string {
-      const contactsStore = useContactsStore()
-      const contact = contactsStore.contacts.find(c => c.peerId === peerId)
-      if (contact) return contact.name
-      return `${peerId.slice(0, 8)}...`
-    },
+    // Unregister from SW monitoring
+    unregisterSessionFromSW(session.id)
+  }
 
-    /**
-     * Notify when a signing request is received
-     */
-    notifyIncomingRequest(request: {
-      id: string
-      fromPeerId: string
-      walletId?: string
-    }) {
-      const notificationStore = useNotificationStore()
-      const fromName = this._getPeerDisplayName(request.fromPeerId)
+  /**
+   * Notify when a shared wallet is created
+   */
+  function notifyWalletCreated(wallet: PeopleSharedWallet) {
+    const notificationStore = useNotificationStore()
 
-      notificationStore.addNotification({
-        type: 'signing_request',
-        title: 'Signing Request',
-        message: `${fromName} is requesting your signature`,
-        actionUrl: '/people/p2p?tab=requests',
-        actionLabel: 'View Request',
-        data: { requestId: request.id, fromPeerId: request.fromPeerId },
-      })
-    },
+    notificationStore.addNotification({
+      type: 'system',
+      title: 'Shared Wallet Created',
+      message: `"${wallet.name}" is ready to use`,
+      actionUrl: `/people/wallets/${wallet.id}`,
+      actionLabel: 'View Wallet',
+      data: { walletId: wallet.id },
+    })
+  }
 
-    /**
-     * Notify when a signing session is completed
-     */
-    notifySessionComplete(session: { id: string; txid?: string }) {
-      const notificationStore = useNotificationStore()
+  /**
+   * Notify when a shared wallet receives funds
+   */
+  function notifyWalletFunded(wallet: PeopleSharedWallet, amount: bigint) {
+    const notificationStore = useNotificationStore()
 
-      notificationStore.addNotification({
-        type: 'signing_request',
-        title: 'Signing Complete',
-        message: 'Transaction signed and broadcast successfully',
-        actionUrl: session.txid
-          ? `/explore/explorer/tx/${session.txid}`
-          : '/people/p2p?tab=sessions',
-        actionLabel: session.txid ? 'View Transaction' : 'View Sessions',
-        data: { sessionId: session.id, txid: session.txid },
-      })
+    notificationStore.addNotification({
+      type: 'transaction',
+      title: 'Shared Wallet Funded',
+      message: `Received funds in "${wallet.name}"`,
+      actionUrl: `/people/wallets/${wallet.id}`,
+      actionLabel: 'View Wallet',
+      data: { walletId: wallet.id, amount: amount.toString() },
+    })
+  }
 
-      // Unregister from SW monitoring
-      this.unregisterSessionFromSW(session.id)
-    },
+  /**
+   * Internal: Notify when spend is proposed
+   */
+  function _notifySpendProposed(wallet: PeopleSharedWallet, purpose?: string) {
+    const notificationStore = useNotificationStore()
 
-    /**
-     * Notify when a shared wallet is created
-     */
-    notifyWalletCreated(wallet: SharedWallet) {
-      const notificationStore = useNotificationStore()
+    notificationStore.addNotification({
+      type: 'signing_request',
+      title: 'Spend Proposed',
+      message: purpose
+        ? `Spend proposed from "${wallet.name}": ${purpose}`
+        : `Spend proposed from "${wallet.name}"`,
+      actionUrl: `/people/wallets/${wallet.id}`,
+      actionLabel: 'Review',
+      data: { walletId: wallet.id },
+    })
+  }
 
-      notificationStore.addNotification({
-        type: 'system',
-        title: 'Shared Wallet Created',
-        message: `"${wallet.name}" is ready to use`,
-        actionUrl: `/people/shared-wallets/${wallet.id}`,
-        actionLabel: 'View Wallet',
-        data: { walletId: wallet.id },
-      })
-    },
+  /**
+   * Internal: Notify when request is accepted
+   */
+  function _notifyRequestAccepted(requestId: string) {
+    const notificationStore = useNotificationStore()
 
-    /**
-     * Notify when a shared wallet receives funds
-     */
-    notifyWalletFunded(wallet: SharedWallet, amount: bigint) {
-      const notificationStore = useNotificationStore()
+    notificationStore.addNotification({
+      type: 'signing_request',
+      title: 'Request Accepted',
+      message: 'A participant has accepted your signing request',
+      actionUrl: '/people/p2p?tab=sessions',
+      actionLabel: 'View Session',
+      data: { requestId },
+    })
+  }
 
-      notificationStore.addNotification({
-        type: 'transaction',
-        title: 'Shared Wallet Funded',
-        message: `Received funds in "${wallet.name}"`,
-        actionUrl: `/people/shared-wallets/${wallet.id}`,
-        actionLabel: 'View Wallet',
-        data: { walletId: wallet.id, amount: amount.toString() },
-      })
-    },
+  /**
+   * Internal: Notify when request is rejected
+   */
+  function _notifyRequestRejected(requestId: string) {
+    const notificationStore = useNotificationStore()
 
-    /**
-     * Internal: Notify when spend is proposed
-     */
-    _notifySpendProposed(wallet: SharedWallet, purpose?: string) {
-      const notificationStore = useNotificationStore()
+    notificationStore.addNotification({
+      type: 'signing_request',
+      title: 'Request Rejected',
+      message: 'A participant has rejected your signing request',
+      actionUrl: '/people/p2p?tab=requests',
+      actionLabel: 'View Details',
+      data: { requestId },
+    })
+  }
 
-      notificationStore.addNotification({
-        type: 'signing_request',
-        title: 'Spend Proposed',
-        message: purpose
-          ? `Spend proposed from "${wallet.name}": ${purpose}`
-          : `Spend proposed from "${wallet.name}"`,
-        actionUrl: `/people/shared-wallets/${wallet.id}`,
-        actionLabel: 'Review',
-        data: { walletId: wallet.id },
-      })
-    },
+  // ========================================================================
+  // Phase 4: Session Connectivity Management
+  // ========================================================================
 
-    /**
-     * Internal: Notify when request is accepted
-     */
-    _notifyRequestAccepted(requestId: string) {
-      const notificationStore = useNotificationStore()
+  /**
+   * Update participant connection status in a session
+   */
+  function updateSessionParticipantStatus(
+    sessionId: string,
+    peerId: string,
+    status: 'connected' | 'disconnected' | 'connecting',
+  ): void {
+    const sessionIndex = activeSessions.value.findIndex(s => s.id === sessionId)
+    if (sessionIndex < 0) return
 
-      notificationStore.addNotification({
-        type: 'signing_request',
-        title: 'Request Accepted',
-        message: 'A participant has accepted your signing request',
-        actionUrl: '/people/p2p?tab=sessions',
-        actionLabel: 'View Session',
-        data: { requestId },
-      })
-    },
+    const session = activeSessions.value[sessionIndex]
+    const participantIndex = session.participants.findIndex(
+      p => p.peerId === peerId,
+    )
+    if (participantIndex < 0) return
 
-    /**
-     * Internal: Notify when request is rejected
-     */
-    _notifyRequestRejected(requestId: string) {
-      const notificationStore = useNotificationStore()
+    // Create updated participant with connection status
+    const updatedParticipant = {
+      ...session.participants[participantIndex],
+      connectionStatus: status,
+    }
 
-      notificationStore.addNotification({
-        type: 'signing_request',
-        title: 'Request Rejected',
-        message: 'A participant has rejected your signing request',
-        actionUrl: '/people/p2p?tab=requests',
-        actionLabel: 'View Details',
-        data: { requestId },
-      })
-    },
+    // Create updated session with new participant
+    const updatedSession = {
+      ...session,
+      participants: [
+        ...session.participants.slice(0, participantIndex),
+        updatedParticipant,
+        ...session.participants.slice(participantIndex + 1),
+      ],
+    }
 
-    // ========================================================================
-    // Phase 4: Session Connectivity Management
-    // ========================================================================
+    // Update the session in the array
+    activeSessions.value = [
+      ...activeSessions.value.slice(0, sessionIndex),
+      updatedSession,
+      ...activeSessions.value.slice(sessionIndex + 1),
+    ]
+  }
 
-    /**
-     * Update participant connection status in a session
-     *
-     * @param sessionId - The session ID
-     * @param peerId - The participant's peer ID
-     * @param status - The new connection status
-     */
-    updateSessionParticipantStatus(
-      sessionId: string,
-      peerId: string,
-      status: 'connected' | 'disconnected' | 'connecting',
-    ): void {
-      const sessionIndex = this.activeSessions.findIndex(
-        s => s.id === sessionId,
-      )
-      if (sessionIndex < 0) return
+  /**
+   * Get session with participant connection info
+   */
+  function getSessionWithConnectivity(
+    sessionId: string,
+  ): WalletSigningSession | null {
+    const session = activeSessions.value.find(s => s.id === sessionId)
+    if (!session) return null
 
-      const session = this.activeSessions[sessionIndex]
-      const participantIndex = session.participants.findIndex(
-        p => p.peerId === peerId,
-      )
-      if (participantIndex < 0) return
+    const p2pStore = useP2PStore()
 
-      // Create updated participant with connection status
-      const updatedParticipant = {
-        ...session.participants[participantIndex],
-        connectionStatus: status,
-      }
-
-      // Create updated session with new participant
-      const updatedSession = {
-        ...session,
-        participants: [
-          ...session.participants.slice(0, participantIndex),
-          updatedParticipant,
-          ...session.participants.slice(participantIndex + 1),
-        ],
-      }
-
-      // Update the session in the array
-      this.activeSessions = [
-        ...this.activeSessions.slice(0, sessionIndex),
-        updatedSession,
-        ...this.activeSessions.slice(sessionIndex + 1),
-      ]
-    },
-
-    /**
-     * Get session with participant connection info
-     *
-     * @param sessionId - The session ID
-     * @returns Session with connectivity info or null
-     */
-    getSessionWithConnectivity(sessionId: string): WalletSigningSession | null {
-      const session = this.activeSessions.find(s => s.id === sessionId)
-      if (!session) return null
-
-      const p2pStore = useP2PStore()
-
-      const participantsWithConnectivity = session.participants.map(p => {
-        const peer = p2pStore.onlinePeers.find(op => op.peerId === p.peerId)
-        return {
-          ...p,
-          connectionStatus: peer?.connectionStatus || 'disconnected',
-          connectionType: peer?.connectionType,
-        }
-      })
-
+    const participantsWithConnectivity = session.participants.map(p => {
+      const peer = p2pStore.onlinePeers.find(op => op.peerId === p.peerId)
       return {
-        ...session,
-        participants: participantsWithConnectivity,
+        ...p,
+        connectionStatus: peer?.connectionStatus || 'disconnected',
+        connectionType: peer?.connectionType,
       }
-    },
+    })
 
-    /**
-     * Check if all participants in a session are connected
-     *
-     * @param sessionId - The session ID
-     * @returns True if all participants are connected
-     */
-    areAllParticipantsConnected(sessionId: string): boolean {
-      const session = this.getSessionWithConnectivity(sessionId)
-      if (!session) return false
+    return {
+      ...session,
+      participants: participantsWithConnectivity,
+    }
+  }
 
-      const p2pStore = useP2PStore()
+  /**
+   * Check if all participants in a session are connected
+   */
+  function areAllParticipantsConnected(sessionId: string): boolean {
+    const session = getSessionWithConnectivity(sessionId)
+    if (!session) return false
 
-      return session.participants.every(
+    const p2pStore = useP2PStore()
+
+    return session.participants.every(
+      p =>
+        p.peerId === p2pStore.peerId ||
+        (p as { connectionStatus?: string }).connectionStatus === 'connected',
+    )
+  }
+
+  /**
+   * Get disconnected participants for a session
+   */
+  function getDisconnectedParticipants(sessionId: string): string[] {
+    const session = getSessionWithConnectivity(sessionId)
+    if (!session) return []
+
+    const p2pStore = useP2PStore()
+
+    return session.participants
+      .filter(
         p =>
-          p.peerId === p2pStore.peerId ||
-          (p as { connectionStatus?: string }).connectionStatus === 'connected',
+          p.peerId !== p2pStore.peerId &&
+          (p as { connectionStatus?: string }).connectionStatus !== 'connected',
       )
-    },
+      .map(p => p.peerId)
+  }
 
-    /**
-     * Get disconnected participants for a session
-     *
-     * @param sessionId - The session ID
-     * @returns Array of disconnected participant peer IDs
-     */
-    getDisconnectedParticipants(sessionId: string): string[] {
-      const session = this.getSessionWithConnectivity(sessionId)
-      if (!session) return []
+  // ========================================================================
+  // Return all state, getters, and actions
+  // ========================================================================
+  return {
+    // State
+    initialized,
+    error,
+    discoveredSigners,
+    signerEnabled,
+    signerConfig,
+    activeSessions,
+    loading,
+    signerSubscriptionId,
+    lastError,
+    retryableOperation,
 
-      const p2pStore = useP2PStore()
+    // Getters
+    onlineSigners,
+    subscribedSigners,
+    pendingSessions,
+    inProgressSessions,
+    completedSessions,
+    sharedWallets,
+    totalSharedBalance,
+    isReady,
+    hasDiscoveryLayer,
+    availableSigners,
+    pendingRequestCount,
 
-      return session.participants
-        .filter(
-          p =>
-            p.peerId !== p2pStore.peerId &&
-            (p as { connectionStatus?: string }).connectionStatus !==
-              'connected',
-        )
-        .map(p => p.peerId)
-    },
-  },
+    // Parameterized getters (functions)
+    sessionsForWallet,
+
+    // Actions
+    initialize,
+    cleanup,
+    advertiseSigner,
+    withdrawSigner,
+    subscribeToSigner,
+    unsubscribeFromSigner,
+    refreshSigners,
+    startSignerSubscription,
+    stopSignerSubscription,
+    registerSessionWithSW,
+    unregisterSessionFromSW,
+    handleSessionExpiring,
+    handleSessionExpired,
+    abortSession,
+    createSharedWallet,
+    removeSharedWallet,
+    deleteSharedWallet,
+    refreshSharedWalletBalances,
+    retryLastOperation,
+    clearError,
+    hasRetryableOperation,
+    proposeSpend,
+    acceptRequest,
+    rejectRequest,
+    cancelRequest,
+    notifyIncomingRequest,
+    notifySessionComplete,
+    notifyWalletCreated,
+    notifyWalletFunded,
+    updateSessionParticipantStatus,
+    getSessionWithConnectivity,
+    areAllParticipantsConnected,
+    getDisconnectedParticipants,
+  }
 })

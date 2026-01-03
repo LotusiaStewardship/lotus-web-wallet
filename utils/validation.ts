@@ -5,6 +5,7 @@
  * These functions return boolean or validation result objects.
  */
 
+import { Address } from 'xpi-ts/lib/bitcore'
 import {
   LOTUS_PREFIX,
   MAINNET_CHAR,
@@ -31,7 +32,7 @@ export interface ValidationResult {
  * Check if a string is a valid Lotus address format
  * Note: This only checks format, not checksum validity
  */
-export function isValidAddressFormat(address: string): boolean {
+export function isValidAddressString(address: string): boolean {
   if (!address || typeof address !== 'string') return false
   if (!address.startsWith(LOTUS_PREFIX)) return false
   if (address.length < 40 || address.length > 60) return false
@@ -44,6 +45,14 @@ export function isValidAddressFormat(address: string): boolean {
   return true
 }
 
+/**
+ * Validates the Lotus address string, then validates with Bitcore library.
+ */
+export function isValidAddress(address: string): boolean {
+  if (!isValidAddressString(address)) return false
+  if (!Address.isValid(address)) return false
+  return true
+}
 /**
  * Validate a Lotus address with detailed error message
  */
@@ -91,10 +100,9 @@ export function isAddressForNetwork(
   address: string,
   network: 'livenet' | 'testnet',
 ): boolean {
-  if (!isValidAddressFormat(address)) return false
-  const networkChar = address.charAt(5)
-  const expectedChar = network === 'livenet' ? MAINNET_CHAR : TESTNET_CHAR
-  return networkChar === expectedChar
+  if (!isValidAddressString(address)) return false
+  if (Address.fromString(address).network.name !== network) return false
+  return true
 }
 
 // ============================================================================
@@ -209,49 +217,6 @@ export function validateRecipientCount(count: number): ValidationResult {
       valid: false,
       error: `Maximum ${MAX_RECIPIENTS} recipients allowed`,
     }
-  }
-
-  return { valid: true }
-}
-
-// ============================================================================
-// Seed Phrase Validation
-// ============================================================================
-
-/**
- * Check if a seed phrase has valid length (12 or 24 words)
- */
-export function isValidSeedPhraseLength(phrase: string): boolean {
-  if (!phrase || typeof phrase !== 'string') return false
-  const words = phrase.trim().split(/\s+/)
-  return words.length === 12 || words.length === 24
-}
-
-/**
- * Validate a seed phrase with detailed error message
- */
-export function validateSeedPhrase(phrase: string): ValidationResult {
-  if (!phrase || typeof phrase !== 'string') {
-    return { valid: false, error: 'Seed phrase is required' }
-  }
-
-  const words = phrase.trim().split(/\s+/)
-
-  if (words.length !== 12 && words.length !== 24) {
-    return {
-      valid: false,
-      error: 'Seed phrase must be 12 or 24 words',
-    }
-  }
-
-  // Check for empty words
-  if (words.some(w => w === '')) {
-    return { valid: false, error: 'Invalid seed phrase format' }
-  }
-
-  // Check for non-alphabetic characters
-  if (words.some(w => !/^[a-z]+$/i.test(w))) {
-    return { valid: false, error: 'Seed phrase contains invalid characters' }
   }
 
   return { valid: true }

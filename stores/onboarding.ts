@@ -9,6 +9,7 @@
  * - Feature hints
  * - Backup reminders
  */
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
 
@@ -109,384 +110,420 @@ const ONBOARDING_STEPS: OnboardingStep[] = [
 // Store Definition
 // ============================================================================
 
-export const useOnboardingStore = defineStore('onboarding', {
-  state: (): OnboardingState => ({
-    isFirstTime: true,
-    onboardingComplete: false,
-    currentStep: null,
-    completedSteps: [],
-    dismissedHints: [],
-    backupComplete: false,
-    backupRemindedAt: null,
-    skipped: false,
-    checklist: {
-      backup: false,
-      addContact: false,
-      receiveFirst: false,
-      sendFirst: false,
-    },
-    firstVisit: null,
-  }),
+export const useOnboardingStore = defineStore('onboarding', () => {
+  // === STATE ===
+  const isFirstTime = ref(true)
+  const onboardingComplete = ref(false)
+  const currentStep = ref<OnboardingStep | null>(null)
+  const completedSteps = ref<OnboardingStep[]>([])
+  const dismissedHints = ref<FeatureHint[]>([])
+  const backupComplete = ref(false)
+  const backupRemindedAt = ref<number | null>(null)
+  const skipped = ref(false)
+  const checklist = ref<ChecklistState>({
+    backup: false,
+    addContact: false,
+    receiveFirst: false,
+    sendFirst: false,
+  })
+  const firstVisit = ref<number | null>(null)
 
-  getters: {
-    /**
-     * Get progress percentage
-     */
-    progressPercent(): number {
-      if (this.onboardingComplete) return 100
-      const totalSteps = ONBOARDING_STEPS.length - 1 // Exclude 'complete'
-      return Math.round((this.completedSteps.length / totalSteps) * 100)
-    },
+  // === GETTERS ===
+  /**
+   * Get progress percentage
+   */
+  const progressPercent = computed(() => {
+    if (onboardingComplete.value) return 100
+    const totalSteps = ONBOARDING_STEPS.length - 1 // Exclude 'complete'
+    return Math.round((completedSteps.value.length / totalSteps) * 100)
+  })
 
-    /**
-     * Check if a step is completed
-     */
-    isStepCompleted(): (step: OnboardingStep) => boolean {
-      return (step: OnboardingStep) => this.completedSteps.includes(step)
-    },
-
-    /**
-     * Get next step to complete
-     */
-    nextStep(): OnboardingStep | null {
-      if (this.onboardingComplete) return null
-      for (const step of ONBOARDING_STEPS) {
-        if (!this.completedSteps.includes(step)) {
-          return step
-        }
+  /**
+   * Get next step to complete
+   */
+  const nextStep = computed((): OnboardingStep | null => {
+    if (onboardingComplete.value) return null
+    for (const step of ONBOARDING_STEPS) {
+      if (!completedSteps.value.includes(step)) {
+        return step
       }
-      return null
-    },
+    }
+    return null
+  })
 
-    /**
-     * Check if should show backup reminder
-     */
-    shouldShowBackupReminder(): boolean {
-      if (this.backupComplete) return false
-      if (this.skipped) return false
-      if (!this.backupRemindedAt) return true
-      return Date.now() - this.backupRemindedAt > BACKUP_REMINDER_INTERVAL
-    },
+  /**
+   * Check if should show backup reminder
+   */
+  const shouldShowBackupReminder = computed(() => {
+    if (backupComplete.value) return false
+    if (skipped.value) return false
+    if (!backupRemindedAt.value) return true
+    return Date.now() - backupRemindedAt.value > BACKUP_REMINDER_INTERVAL
+  })
 
-    /**
-     * Check if a hint should be shown
-     */
-    shouldShowHint(): (hint: FeatureHint) => boolean {
-      return (hint: FeatureHint) => {
-        if (this.dismissedHints.includes(hint)) return false
-        // Only show hints after onboarding or if skipped
-        return this.onboardingComplete || this.skipped
+  /**
+   * Check if onboarding is in progress
+   */
+  const isOnboarding = computed(() => {
+    return (
+      !onboardingComplete.value && !skipped.value && currentStep.value !== null
+    )
+  })
+
+  /**
+   * Check if onboarding modal should be shown
+   * Used by onboarding/Modal.vue
+   */
+  const shouldShowOnboarding = computed(() => {
+    return isFirstTime.value && !onboardingComplete.value && !skipped.value
+  })
+
+  /**
+   * Get checklist progress
+   */
+  const checklistProgress = computed(() => {
+    const items = Object.values(checklist.value)
+    const completed = items.filter(Boolean).length
+    return { completed, total: items.length }
+  })
+
+  /**
+   * Check if checklist is complete
+   */
+  const isChecklistComplete = computed(() => {
+    return Object.values(checklist.value).every(Boolean)
+  })
+
+  /**
+   * Alias for backupComplete (for plan compatibility)
+   */
+  const backupVerified = computed(() => backupComplete.value)
+
+  // === PARAMETERIZED GETTERS (as functions) ===
+  /**
+   * Check if a step is completed
+   */
+  function isStepCompleted(step: OnboardingStep): boolean {
+    return completedSteps.value.includes(step)
+  }
+
+  /**
+   * Check if a hint should be shown
+   */
+  function shouldShowHint(hint: FeatureHint): boolean {
+    if (dismissedHints.value.includes(hint)) return false
+    // Only show hints after onboarding or if skipped
+    return onboardingComplete.value || skipped.value
+  }
+
+  /**
+   * Check if a hint should be shown (string-based version)
+   * Accepts any string ID for flexibility with new hints
+   */
+  function shouldShowHintById(hintId: string): boolean {
+    // Check if it's a known FeatureHint
+    const knownHints: string[] = [
+      'address_copy',
+      'qr_code',
+      'transaction_details',
+      'coin_control',
+      'contacts',
+      'p2p_network',
+      'musig2_signing',
+      'explorer',
+      'settings',
+    ]
+    if (knownHints.includes(hintId)) {
+      return shouldShowHint(hintId as FeatureHint)
+    }
+    // For unknown hints, check dismissedHints array as strings
+    if ((dismissedHints.value as string[]).includes(hintId)) return false
+    return onboardingComplete.value || skipped.value
+  }
+
+  // === ACTIONS ===
+  // ========================================================================
+  // Initialization
+  // ========================================================================
+
+  /**
+   * Initialize onboarding state from storage
+   */
+  function initialize() {
+    const saved = getItem<Partial<OnboardingState>>(
+      STORAGE_KEYS.ONBOARDING_STATE,
+      {},
+    )
+
+    if (Object.keys(saved).length > 0) {
+      isFirstTime.value = saved.isFirstTime ?? true
+      onboardingComplete.value = saved.onboardingComplete ?? false
+      currentStep.value = saved.currentStep ?? null
+      completedSteps.value = saved.completedSteps ?? []
+      dismissedHints.value = saved.dismissedHints ?? []
+      backupComplete.value = saved.backupComplete ?? false
+      backupRemindedAt.value = saved.backupRemindedAt ?? null
+      skipped.value = saved.skipped ?? false
+      checklist.value = saved.checklist ?? {
+        backup: false,
+        addContact: false,
+        receiveFirst: false,
+        sendFirst: false,
       }
-    },
+      firstVisit.value = saved.firstVisit ?? null
+    } else {
+      // First time user - record first visit
+      firstVisit.value = Date.now()
+      _save()
+    }
+  }
 
-    /**
-     * Check if onboarding is in progress
-     */
-    isOnboarding(): boolean {
-      return (
-        !this.onboardingComplete && !this.skipped && this.currentStep !== null
-      )
-    },
+  // ========================================================================
+  // Onboarding Flow
+  // ========================================================================
 
-    /**
-     * Check if onboarding modal should be shown
-     * Used by onboarding/Modal.vue
-     */
-    shouldShowOnboarding(): boolean {
-      return this.isFirstTime && !this.onboardingComplete && !this.skipped
-    },
+  /**
+   * Start onboarding flow
+   */
+  function startOnboarding() {
+    isFirstTime.value = false
+    currentStep.value = 'welcome'
+    completedSteps.value = []
+    skipped.value = false
+    _save()
+  }
 
-    /**
-     * Get checklist progress
-     */
-    checklistProgress(): { completed: number; total: number } {
-      const items = Object.values(this.checklist)
-      const completed = items.filter(Boolean).length
-      return { completed, total: items.length }
-    },
+  /**
+   * Complete a step and advance to next
+   */
+  function completeStep(step: OnboardingStep) {
+    if (!completedSteps.value.includes(step)) {
+      completedSteps.value.push(step)
+    }
 
-    /**
-     * Check if checklist is complete
-     */
-    isChecklistComplete(): boolean {
-      return Object.values(this.checklist).every(Boolean)
-    },
+    // Find next step
+    const currentIndex = ONBOARDING_STEPS.indexOf(step)
+    if (currentIndex < ONBOARDING_STEPS.length - 1) {
+      currentStep.value = ONBOARDING_STEPS[currentIndex + 1]
+    }
 
-    /**
-     * Alias for backupComplete (for plan compatibility)
-     */
-    backupVerified(): boolean {
-      return this.backupComplete
-    },
+    // Check if complete
+    if (
+      step === 'complete' ||
+      completedSteps.value.length >= ONBOARDING_STEPS.length - 1
+    ) {
+      onboardingComplete.value = true
+      currentStep.value = null
+    }
 
-    /**
-     * Check if a hint should be shown (string-based version)
-     * Accepts any string ID for flexibility with new hints
-     */
-    shouldShowHintById(): (hintId: string) => boolean {
-      return (hintId: string) => {
-        // Check if it's a known FeatureHint
-        const knownHints: string[] = [
-          'address_copy',
-          'qr_code',
-          'transaction_details',
-          'coin_control',
-          'contacts',
-          'p2p_network',
-          'musig2_signing',
-          'explorer',
-          'settings',
-        ]
-        if (knownHints.includes(hintId)) {
-          return this.shouldShowHint(hintId as FeatureHint)
-        }
-        // For unknown hints, check dismissedHints array as strings
-        if ((this.dismissedHints as string[]).includes(hintId)) return false
-        return this.onboardingComplete || this.skipped
+    _save()
+  }
+
+  /**
+   * Go to a specific step
+   */
+  function goToStep(step: OnboardingStep) {
+    currentStep.value = step
+    _save()
+  }
+
+  /**
+   * Skip onboarding
+   */
+  function skipOnboarding() {
+    skipped.value = true
+    currentStep.value = null
+    isFirstTime.value = false
+    _save()
+  }
+
+  /**
+   * Skip a specific step (mark as complete and advance)
+   * Used when user wants to skip backup or other optional steps
+   */
+  function skipStep(step: OnboardingStep) {
+    // Track skipped backup attempts
+    if (step === 'backup_seed' || step === 'verify_backup') {
+      // Don't mark backup as complete when skipping
+    }
+    // Complete the step and advance
+    completeStep(step)
+  }
+
+  /**
+   * Reset onboarding (for testing or re-onboarding)
+   */
+  function resetOnboarding() {
+    isFirstTime.value = true
+    onboardingComplete.value = false
+    currentStep.value = null
+    completedSteps.value = []
+    skipped.value = false
+    _save()
+  }
+
+  // ========================================================================
+  // Feature Hints
+  // ========================================================================
+
+  /**
+   * Dismiss a feature hint
+   */
+  function dismissHint(hint: FeatureHint) {
+    if (!dismissedHints.value.includes(hint)) {
+      dismissedHints.value.push(hint)
+      _save()
+    }
+  }
+
+  /**
+   * Dismiss a hint by string ID (for flexibility with new hints)
+   * Used by onboarding/ContextualHint.vue
+   */
+  function dismissHintById(hintId: string) {
+    // Check if it's a known FeatureHint
+    const knownHints: FeatureHint[] = [
+      'address_copy',
+      'qr_code',
+      'transaction_details',
+      'coin_control',
+      'contacts',
+      'p2p_network',
+      'musig2_signing',
+      'explorer',
+      'settings',
+    ]
+    if (knownHints.includes(hintId as FeatureHint)) {
+      dismissHint(hintId as FeatureHint)
+    } else {
+      // For unknown hints, store as string (cast to any for flexibility)
+      if (!(dismissedHints.value as string[]).includes(hintId)) {
+        ;(dismissedHints.value as string[]).push(hintId)
+        _save()
       }
-    },
-  },
+    }
+  }
 
-  actions: {
-    // ========================================================================
-    // Initialization
-    // ========================================================================
+  /**
+   * Reset all hints (show them again)
+   */
+  function resetHints() {
+    dismissedHints.value = []
+    _save()
+  }
 
-    /**
-     * Initialize onboarding state from storage
-     */
-    initialize() {
-      const saved = getItem<Partial<OnboardingState>>(
-        STORAGE_KEYS.ONBOARDING_STATE,
-        {},
-      )
+  // ========================================================================
+  // Backup
+  // ========================================================================
 
-      if (Object.keys(saved).length > 0) {
-        this.isFirstTime = saved.isFirstTime ?? true
-        this.onboardingComplete = saved.onboardingComplete ?? false
-        this.currentStep = saved.currentStep ?? null
-        this.completedSteps = saved.completedSteps ?? []
-        this.dismissedHints = saved.dismissedHints ?? []
-        this.backupComplete = saved.backupComplete ?? false
-        this.backupRemindedAt = saved.backupRemindedAt ?? null
-        this.skipped = saved.skipped ?? false
-        this.checklist = saved.checklist ?? {
-          backup: false,
-          addContact: false,
-          receiveFirst: false,
-          sendFirst: false,
-        }
-        this.firstVisit = saved.firstVisit ?? null
-      } else {
-        // First time user - record first visit
-        this.firstVisit = Date.now()
-        this._save()
-      }
-    },
+  /**
+   * Mark backup as complete
+   */
+  function markBackupComplete() {
+    backupComplete.value = true
+    checklist.value.backup = true
+    _save()
+  }
 
-    // ========================================================================
-    // Onboarding Flow
-    // ========================================================================
+  // ========================================================================
+  // Checklist
+  // ========================================================================
 
-    /**
-     * Start onboarding flow
-     */
-    startOnboarding() {
-      this.isFirstTime = false
-      this.currentStep = 'welcome'
-      this.completedSteps = []
-      this.skipped = false
-      this._save()
-    },
+  /**
+   * Complete a checklist item
+   */
+  function completeChecklistItem(item: keyof ChecklistState) {
+    checklist.value[item] = true
+    _save()
+  }
 
-    /**
-     * Complete a step and advance to next
-     */
-    completeStep(step: OnboardingStep) {
-      if (!this.completedSteps.includes(step)) {
-        this.completedSteps.push(step)
-      }
+  /**
+   * Alias for markBackupComplete (for plan compatibility)
+   */
+  function verifyBackup() {
+    markBackupComplete()
+  }
 
-      // Find next step
-      const currentIndex = ONBOARDING_STEPS.indexOf(step)
-      if (currentIndex < ONBOARDING_STEPS.length - 1) {
-        this.currentStep = ONBOARDING_STEPS[currentIndex + 1]
-      }
+  /**
+   * Snooze backup reminder
+   */
+  function snoozeBackupReminder() {
+    backupRemindedAt.value = Date.now()
+    _save()
+  }
 
-      // Check if complete
-      if (
-        step === 'complete' ||
-        this.completedSteps.length >= ONBOARDING_STEPS.length - 1
-      ) {
-        this.onboardingComplete = true
-        this.currentStep = null
-      }
+  /**
+   * Reset backup status (e.g., after wallet restore)
+   */
+  function resetBackupStatus() {
+    backupComplete.value = false
+    backupRemindedAt.value = null
+    _save()
+  }
 
-      this._save()
-    },
+  // ========================================================================
+  // Persistence
+  // ========================================================================
 
-    /**
-     * Go to a specific step
-     */
-    goToStep(step: OnboardingStep) {
-      this.currentStep = step
-      this._save()
-    },
+  /**
+   * Save state to localStorage
+   */
+  function _save() {
+    setItem(STORAGE_KEYS.ONBOARDING_STATE, {
+      isFirstTime: isFirstTime.value,
+      onboardingComplete: onboardingComplete.value,
+      currentStep: currentStep.value,
+      completedSteps: completedSteps.value,
+      dismissedHints: dismissedHints.value,
+      backupComplete: backupComplete.value,
+      backupRemindedAt: backupRemindedAt.value,
+      skipped: skipped.value,
+      checklist: checklist.value,
+      firstVisit: firstVisit.value,
+    })
+  }
 
-    /**
-     * Skip onboarding
-     */
-    skipOnboarding() {
-      this.skipped = true
-      this.currentStep = null
-      this.isFirstTime = false
-      this._save()
-    },
-
-    /**
-     * Skip a specific step (mark as complete and advance)
-     * Used when user wants to skip backup or other optional steps
-     */
-    skipStep(step: OnboardingStep) {
-      // Track skipped backup attempts
-      if (step === 'backup_seed' || step === 'verify_backup') {
-        // Don't mark backup as complete when skipping
-      }
-      // Complete the step and advance
-      this.completeStep(step)
-    },
-
-    /**
-     * Reset onboarding (for testing or re-onboarding)
-     */
-    resetOnboarding() {
-      this.isFirstTime = true
-      this.onboardingComplete = false
-      this.currentStep = null
-      this.completedSteps = []
-      this.skipped = false
-      this._save()
-    },
-
-    // ========================================================================
-    // Feature Hints
-    // ========================================================================
-
-    /**
-     * Dismiss a feature hint
-     */
-    dismissHint(hint: FeatureHint) {
-      if (!this.dismissedHints.includes(hint)) {
-        this.dismissedHints.push(hint)
-        this._save()
-      }
-    },
-
-    /**
-     * Dismiss a hint by string ID (for flexibility with new hints)
-     * Used by onboarding/ContextualHint.vue
-     */
-    dismissHintById(hintId: string) {
-      // Check if it's a known FeatureHint
-      const knownHints: FeatureHint[] = [
-        'address_copy',
-        'qr_code',
-        'transaction_details',
-        'coin_control',
-        'contacts',
-        'p2p_network',
-        'musig2_signing',
-        'explorer',
-        'settings',
-      ]
-      if (knownHints.includes(hintId as FeatureHint)) {
-        this.dismissHint(hintId as FeatureHint)
-      } else {
-        // For unknown hints, store as string (cast to any for flexibility)
-        if (!(this.dismissedHints as string[]).includes(hintId)) {
-          ;(this.dismissedHints as string[]).push(hintId)
-          this._save()
-        }
-      }
-    },
-
-    /**
-     * Reset all hints (show them again)
-     */
-    resetHints() {
-      this.dismissedHints = []
-      this._save()
-    },
-
-    // ========================================================================
-    // Backup
-    // ========================================================================
-
-    /**
-     * Mark backup as complete
-     */
-    markBackupComplete() {
-      this.backupComplete = true
-      this.checklist.backup = true
-      this._save()
-    },
-
-    // ========================================================================
-    // Checklist
-    // ========================================================================
-
-    /**
-     * Complete a checklist item
-     */
-    completeChecklistItem(item: keyof ChecklistState) {
-      this.checklist[item] = true
-      this._save()
-    },
-
-    /**
-     * Alias for markBackupComplete (for plan compatibility)
-     */
-    verifyBackup() {
-      this.markBackupComplete()
-    },
-
-    /**
-     * Snooze backup reminder
-     */
-    snoozeBackupReminder() {
-      this.backupRemindedAt = Date.now()
-      this._save()
-    },
-
-    /**
-     * Reset backup status (e.g., after wallet restore)
-     */
-    resetBackupStatus() {
-      this.backupComplete = false
-      this.backupRemindedAt = null
-      this._save()
-    },
-
-    // ========================================================================
-    // Persistence
-    // ========================================================================
-
-    /**
-     * Save state to localStorage
-     */
-    _save() {
-      setItem(STORAGE_KEYS.ONBOARDING_STATE, {
-        isFirstTime: this.isFirstTime,
-        onboardingComplete: this.onboardingComplete,
-        currentStep: this.currentStep,
-        completedSteps: this.completedSteps,
-        dismissedHints: this.dismissedHints,
-        backupComplete: this.backupComplete,
-        backupRemindedAt: this.backupRemindedAt,
-        skipped: this.skipped,
-        checklist: this.checklist,
-        firstVisit: this.firstVisit,
-      })
-    },
-  },
+  // === RETURN ===
+  return {
+    // State
+    isFirstTime,
+    onboardingComplete,
+    currentStep,
+    completedSteps,
+    dismissedHints,
+    backupComplete,
+    backupRemindedAt,
+    skipped,
+    checklist,
+    firstVisit,
+    // Getters
+    progressPercent,
+    nextStep,
+    shouldShowBackupReminder,
+    isOnboarding,
+    shouldShowOnboarding,
+    checklistProgress,
+    isChecklistComplete,
+    backupVerified,
+    // Parameterized getters (functions)
+    isStepCompleted,
+    shouldShowHint,
+    shouldShowHintById,
+    // Actions
+    initialize,
+    startOnboarding,
+    completeStep,
+    goToStep,
+    skipOnboarding,
+    skipStep,
+    resetOnboarding,
+    dismissHint,
+    dismissHintById,
+    resetHints,
+    markBackupComplete,
+    completeChecklistItem,
+    verifyBackup,
+    snoozeBackupReminder,
+    resetBackupStatus,
+  }
 })

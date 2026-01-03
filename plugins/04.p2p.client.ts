@@ -4,10 +4,13 @@
  * Provides the P2P coordinator for peer-to-peer networking.
  * This plugin manages the P2P connection lifecycle and peer management.
  *
- * Pattern:
- * - Plugin provides singleton coordinator and exported functions
- * - Composable (useP2PCoordinator) provides reactive wrapper
- * - Stores use the composable for P2P operations
+ * Access Patterns:
+ * - Components: useP2PCoordinator() composable
+ * - Stores: Import getter functions directly from this plugin
+ * - Workers: Not available (use static imports in worker)
+ *
+ * Dependencies:
+ * - None (base networking layer)
  *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
@@ -30,6 +33,7 @@ import {
   removeItem,
   STORAGE_KEYS,
 } from '~/utils/storage'
+import * as XpiP2P from 'xpi-p2p-ts'
 
 // ============================================================================
 // Types
@@ -99,13 +103,9 @@ export interface BootstrapHealth {
 // Module-level State (Singleton)
 // ============================================================================
 
-type P2PCoordinatorType = InstanceType<
-  typeof import('lotus-sdk').P2P.P2PCoordinator
->
-type SDKModuleType = typeof import('lotus-sdk')
+type P2PCoordinatorType = XpiP2P.P2PCoordinator
 
 let coordinator: P2PCoordinatorType | null = null
-let sdkModule: SDKModuleType | null = null
 let eventCallbacks: P2PEventCallbacks = {}
 let presenceConfig: PresenceConfig | null = null
 let connectionStateHandlers: ConnectionStateHandlerCallbacks[] = []
@@ -122,14 +122,10 @@ const DEFAULT_BOOTSTRAP_HEALTH_URL = 'https://dht.lotusia.org:6971'
 // ============================================================================
 
 async function getOrCreatePrivateKey(): Promise<
-  ReturnType<typeof import('lotus-sdk').P2P.generateP2PPrivateKey>
+  ReturnType<typeof XpiP2P.generateP2PPrivateKey>
 > {
-  if (!sdkModule) {
-    throw new Error('SDK not loaded')
-  }
-
   const { generateP2PPrivateKey, restoreP2PPrivateKey, getP2PPrivateKeyBytes } =
-    sdkModule.P2P
+    XpiP2P
 
   const savedKey = getRawItem(STORAGE_KEYS.P2P_PRIVATE_KEY)
   if (savedKey) {
@@ -402,8 +398,7 @@ export async function initializeP2P(
 
   eventCallbacks = callbacks
 
-  sdkModule = await import('lotus-sdk')
-  const { P2PCoordinator } = sdkModule.P2P
+  const { P2PCoordinator } = XpiP2P
 
   const privateKey = await getOrCreatePrivateKey()
 
@@ -932,13 +927,6 @@ export function getCoordinator(): P2PCoordinatorType | null {
 }
 
 /**
- * Get the SDK module (for advanced usage)
- */
-export function getSDKModule(): SDKModuleType | null {
-  return sdkModule
-}
-
-/**
  * Check if P2P is initialized
  */
 export function isP2PInitialized(): boolean {
@@ -1202,7 +1190,6 @@ export default defineNuxtPlugin({
           getPresenceConfig,
           isPresenceAdvertising,
           getCoordinator,
-          getSDKModule,
           isInitialized: isP2PInitialized,
           getStats,
           subscribeToEvents,
@@ -1249,7 +1236,6 @@ declare module '#app' {
       getPresenceConfig: typeof getPresenceConfig
       isPresenceAdvertising: typeof isPresenceAdvertising
       getCoordinator: typeof getCoordinator
-      getSDKModule: typeof getSDKModule
       isInitialized: typeof isP2PInitialized
       getStats: typeof getStats
       subscribeToEvents: typeof subscribeToEvents
@@ -1290,7 +1276,6 @@ declare module 'vue' {
       getPresenceConfig: typeof getPresenceConfig
       isPresenceAdvertising: typeof isPresenceAdvertising
       getCoordinator: typeof getCoordinator
-      getSDKModule: typeof getSDKModule
       isInitialized: typeof isP2PInitialized
       getStats: typeof getStats
       subscribeToEvents: typeof subscribeToEvents

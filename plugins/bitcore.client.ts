@@ -1,79 +1,49 @@
 /**
  * Bitcore SDK Plugin
  *
- * Initializes the Lotus SDK (Bitcore) once at app startup and provides
+ * Initializes the Bitcore SDK from xpi-ts once at app startup and provides
  * it globally via Nuxt's provide/inject pattern.
  *
- * This ensures the SDK is loaded before any component tries to use it,
- * eliminating race conditions and the need for workaround functions.
+ * Uses static imports for clean, synchronous access to the SDK.
+ * The SDK is loaded before any component renders, eliminating race conditions.
  *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
-import type * as BitcoreTypes from 'lotus-sdk/lib/bitcore'
-
-// SDK state - module-level singleton
-let sdkInstance: typeof BitcoreTypes | null = null
-let sdkLoading: Promise<typeof BitcoreTypes> | null = null
-
-/**
- * Load the Bitcore SDK from lotus-sdk
- * Returns cached instance if already loaded
- */
-async function loadBitcoreSDK(): Promise<typeof BitcoreTypes> {
-  // Return cached instance
-  if (sdkInstance) {
-    return sdkInstance
-  }
-
-  // Return existing loading promise to prevent duplicate loads
-  if (sdkLoading) {
-    return sdkLoading
-  }
-
-  // Start loading
-  sdkLoading = (async () => {
-    const { Bitcore } = await import('lotus-sdk')
-    sdkInstance = Bitcore as typeof BitcoreTypes
-    return sdkInstance
-  })()
-
-  return sdkLoading
-}
+import { Bitcore } from 'xpi-ts'
 
 /**
  * Get the Bitcore SDK instance synchronously
- * Returns null if not yet loaded
  */
-export function getBitcore(): typeof BitcoreTypes | null {
-  return sdkInstance
+export function getBitcore() {
+  return Bitcore
 }
 
 /**
- * Check if the SDK is loaded
+ * Check if the SDK is loaded (always true with static imports)
  */
 export function isBitcoreLoaded(): boolean {
-  return sdkInstance !== null
+  return true
 }
 
 /**
- * Ensure the SDK is loaded, loading it if necessary
+ * Ensure the SDK is loaded
  * This is the primary way to access the SDK
  */
-export async function ensureBitcore(): Promise<typeof BitcoreTypes> {
-  return loadBitcoreSDK()
+export async function ensureBitcore() {
+  return Bitcore
 }
 
 // Nuxt plugin definition
-export default defineNuxtPlugin(async () => {
-  // Load SDK during plugin initialization (before app renders)
-  const Bitcore = await loadBitcoreSDK()
+export default defineNuxtPlugin({
+  name: 'bitcore',
+  setup() {
+    console.log('[Bitcore Plugin] SDK loaded successfully')
 
-  console.log('[Bitcore Plugin] SDK loaded successfully')
-
-  // Provide the SDK instance to the app
-  return {
-    provide: {
-      bitcore: Bitcore,
-    },
-  }
+    // Provide the SDK instance to the app
+    return {
+      provide: {
+        bitcore: Bitcore,
+      },
+    }
+  },
 })

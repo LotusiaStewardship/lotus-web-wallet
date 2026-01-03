@@ -10,6 +10,7 @@
  * - Command palette state
  * - Theme preferences
  */
+import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
   getItem,
@@ -104,370 +105,403 @@ const DEFAULT_TOAST_DURATION = 5000
 // Store Definition
 // ============================================================================
 
-export const useUIStore = defineStore('ui', {
-  state: (): UIState => ({
-    sidebar: {
-      collapsed: false,
-      mobileOpen: false,
-    },
-    activeModal: null,
-    modalStack: [],
-    commandPaletteOpen: false,
-    globalLoading: false,
-    globalLoadingMessage: null,
-    toasts: [],
-    theme: 'system',
-    isMobile: false,
-    notificationCount: 0,
-  }),
+export const useUIStore = defineStore('ui', () => {
+  // === STATE ===
+  const sidebar = ref<SidebarState>({
+    collapsed: false,
+    mobileOpen: false,
+  })
+  const activeModal = ref<ModalConfig | null>(null)
+  const modalStack = ref<ModalConfig[]>([])
+  const commandPaletteOpen = ref(false)
+  const globalLoading = ref(false)
+  const globalLoadingMessage = ref<string | null>(null)
+  const toasts = ref<ToastConfig[]>([])
+  const theme = ref<'light' | 'dark' | 'system'>('system')
+  const isMobile = ref(false)
+  const notificationCount = ref(0)
 
-  getters: {
-    /**
-     * Check if any modal is open
-     */
-    hasActiveModal(): boolean {
-      return this.activeModal !== null
-    },
+  // === GETTERS ===
+  /**
+   * Check if any modal is open
+   */
+  const hasActiveModal = computed(() => activeModal.value !== null)
 
-    /**
-     * Get current modal name
-     */
-    currentModalName(): string | null {
-      return this.activeModal?.name || null
-    },
+  /**
+   * Get current modal name
+   */
+  const currentModalName = computed(() => activeModal.value?.name || null)
 
-    /**
-     * Get current modal data
-     */
-    currentModalData(): Record<string, unknown> {
-      return this.activeModal?.data || {}
-    },
+  /**
+   * Get current modal data
+   */
+  const currentModalData = computed(() => activeModal.value?.data || {})
 
-    /**
-     * Check if sidebar is visible
-     */
-    sidebarVisible(): boolean {
-      if (this.isMobile) {
-        return this.sidebar.mobileOpen
+  /**
+   * Check if sidebar is visible
+   */
+  const sidebarVisible = computed(() => {
+    if (isMobile.value) {
+      return sidebar.value.mobileOpen
+    }
+    return !sidebar.value.collapsed
+  })
+
+  /**
+   * Get visible toasts (limited)
+   */
+  const visibleToasts = computed(() => toasts.value.slice(0, MAX_TOASTS))
+
+  /**
+   * Check if has notifications
+   */
+  const hasNotifications = computed(() => notificationCount.value > 0)
+
+  // === ACTIONS ===
+  // ========================================================================
+  // Initialization
+  // ========================================================================
+
+  /**
+   * Initialize UI store from saved preferences
+   */
+  function initialize() {
+    // Load sidebar state
+    const savedSidebar = getItem<{ collapsed?: boolean }>(
+      STORAGE_KEYS.SIDEBAR,
+      {},
+    )
+    if (savedSidebar.collapsed !== undefined) {
+      sidebar.value.collapsed = savedSidebar.collapsed
+    }
+
+    // Load theme preference
+    const savedTheme = getRawItem(STORAGE_KEYS.THEME)
+    if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
+      theme.value = savedTheme as 'light' | 'dark' | 'system'
+    }
+
+    // Detect mobile
+    _detectMobile()
+
+    // Listen for resize
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', _detectMobile)
+    }
+  }
+
+  /**
+   * Cleanup listeners
+   */
+  function cleanup() {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('resize', _detectMobile)
+    }
+  }
+
+  // ========================================================================
+  // Sidebar
+  // ========================================================================
+
+  /**
+   * Toggle sidebar collapsed state
+   */
+  function toggleSidebar() {
+    if (isMobile.value) {
+      sidebar.value.mobileOpen = !sidebar.value.mobileOpen
+    } else {
+      sidebar.value.collapsed = !sidebar.value.collapsed
+      _saveSidebarState()
+    }
+  }
+
+  /**
+   * Set sidebar collapsed state
+   */
+  function setSidebarCollapsed(collapsed: boolean) {
+    sidebar.value.collapsed = collapsed
+    _saveSidebarState()
+  }
+
+  /**
+   * Open mobile sidebar
+   */
+  function openMobileSidebar() {
+    sidebar.value.mobileOpen = true
+  }
+
+  /**
+   * Close mobile sidebar
+   */
+  function closeMobileSidebar() {
+    sidebar.value.mobileOpen = false
+  }
+
+  // ========================================================================
+  // Modals
+  // ========================================================================
+
+  /**
+   * Open a modal
+   */
+  function openModal(
+    name: string,
+    data?: Record<string, unknown>,
+    options?: { dismissible?: boolean; onClose?: () => void },
+  ) {
+    // Push current modal to stack if exists
+    if (activeModal.value) {
+      modalStack.value.push(activeModal.value)
+    }
+
+    activeModal.value = {
+      name,
+      data,
+      dismissible: options?.dismissible ?? true,
+      onClose: options?.onClose,
+    }
+
+    // Close mobile sidebar when opening modal
+    sidebar.value.mobileOpen = false
+  }
+
+  /**
+   * Close current modal
+   */
+  function closeModal() {
+    if (activeModal.value?.onClose) {
+      activeModal.value.onClose()
+    }
+
+    // Pop from stack if available
+    if (modalStack.value.length > 0) {
+      activeModal.value = modalStack.value.pop() || null
+    } else {
+      activeModal.value = null
+    }
+  }
+
+  /**
+   * Close all modals
+   */
+  function closeAllModals() {
+    while (activeModal.value) {
+      closeModal()
+    }
+    modalStack.value = []
+  }
+
+  /**
+   * Check if a specific modal is open
+   */
+  function isModalOpen(name: string): boolean {
+    return activeModal.value?.name === name
+  }
+
+  // ========================================================================
+  // Command Palette
+  // ========================================================================
+
+  /**
+   * Open command palette
+   */
+  function openCommandPalette() {
+    commandPaletteOpen.value = true
+  }
+
+  /**
+   * Close command palette
+   */
+  function closeCommandPalette() {
+    commandPaletteOpen.value = false
+  }
+
+  /**
+   * Toggle command palette
+   */
+  function toggleCommandPalette() {
+    commandPaletteOpen.value = !commandPaletteOpen.value
+  }
+
+  // ========================================================================
+  // Global Loading
+  // ========================================================================
+
+  /**
+   * Set global loading state
+   */
+  function setGlobalLoading(loading: boolean, message?: string) {
+    globalLoading.value = loading
+    globalLoadingMessage.value = message || null
+  }
+
+  /**
+   * Start global loading
+   */
+  function startLoading(message?: string) {
+    setGlobalLoading(true, message)
+  }
+
+  /**
+   * Stop global loading
+   */
+  function stopLoading() {
+    setGlobalLoading(false)
+  }
+
+  // ========================================================================
+  // Toasts
+  // ========================================================================
+
+  /**
+   * Add a toast notification
+   */
+  function addToast(config: Omit<ToastConfig, 'id' | 'timestamp'>) {
+    const toast: ToastConfig = {
+      ...config,
+      id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      timestamp: Date.now(),
+      duration: config.duration ?? DEFAULT_TOAST_DURATION,
+    }
+
+    toasts.value.push(toast)
+
+    // Auto-remove after duration
+    if (toast.duration && toast.duration > 0) {
+      setTimeout(() => {
+        removeToast(toast.id)
+      }, toast.duration)
+    }
+
+    // Limit total toasts
+    while (toasts.value.length > MAX_TOASTS * 2) {
+      toasts.value.shift()
+    }
+  }
+
+  /**
+   * Remove a toast by ID
+   */
+  function removeToast(id: string) {
+    const index = toasts.value.findIndex(t => t.id === id)
+    if (index !== -1) {
+      toasts.value.splice(index, 1)
+    }
+  }
+
+  /**
+   * Clear all toasts
+   */
+  function clearToasts() {
+    toasts.value = []
+  }
+
+  // ========================================================================
+  // Theme
+  // ========================================================================
+
+  /**
+   * Set theme preference
+   */
+  function setTheme(newTheme: 'light' | 'dark' | 'system') {
+    theme.value = newTheme
+    setRawItem(STORAGE_KEYS.THEME, newTheme)
+  }
+
+  // ========================================================================
+  // Notifications
+  // ========================================================================
+
+  /**
+   * Set notification count
+   */
+  function setNotificationCount(count: number) {
+    notificationCount.value = Math.max(0, count)
+  }
+
+  /**
+   * Increment notification count
+   */
+  function incrementNotifications(amount: number = 1) {
+    notificationCount.value += amount
+  }
+
+  /**
+   * Clear notifications
+   */
+  function clearNotifications() {
+    notificationCount.value = 0
+  }
+
+  // ========================================================================
+  // Internal Methods
+  // ========================================================================
+
+  /**
+   * Detect if in mobile view
+   */
+  function _detectMobile() {
+    if (typeof window !== 'undefined') {
+      isMobile.value = window.innerWidth < 768
+      // Auto-close mobile sidebar on desktop
+      if (!isMobile.value) {
+        sidebar.value.mobileOpen = false
       }
-      return !this.sidebar.collapsed
-    },
+    }
+  }
 
-    /**
-     * Get visible toasts (limited)
-     */
-    visibleToasts(): ToastConfig[] {
-      return this.toasts.slice(0, MAX_TOASTS)
-    },
+  /**
+   * Save sidebar state to localStorage
+   */
+  function _saveSidebarState() {
+    setItem(STORAGE_KEYS.SIDEBAR, {
+      collapsed: sidebar.value.collapsed,
+    })
+  }
 
-    /**
-     * Check if has notifications
-     */
-    hasNotifications(): boolean {
-      return this.notificationCount > 0
-    },
-  },
-
-  actions: {
-    // ========================================================================
-    // Initialization
-    // ========================================================================
-
-    /**
-     * Initialize UI store from saved preferences
-     */
-    initialize() {
-      // Load sidebar state
-      const savedSidebar = getItem<{ collapsed?: boolean }>(
-        STORAGE_KEYS.SIDEBAR,
-        {},
-      )
-      if (savedSidebar.collapsed !== undefined) {
-        this.sidebar.collapsed = savedSidebar.collapsed
-      }
-
-      // Load theme preference
-      const savedTheme = getRawItem(STORAGE_KEYS.THEME)
-      if (savedTheme && ['light', 'dark', 'system'].includes(savedTheme)) {
-        this.theme = savedTheme as 'light' | 'dark' | 'system'
-      }
-
-      // Detect mobile
-      this._detectMobile()
-
-      // Listen for resize
-      if (typeof window !== 'undefined') {
-        window.addEventListener('resize', this._detectMobile.bind(this))
-      }
-    },
-
-    /**
-     * Cleanup listeners
-     */
-    cleanup() {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('resize', this._detectMobile.bind(this))
-      }
-    },
-
-    // ========================================================================
-    // Sidebar
-    // ========================================================================
-
-    /**
-     * Toggle sidebar collapsed state
-     */
-    toggleSidebar() {
-      if (this.isMobile) {
-        this.sidebar.mobileOpen = !this.sidebar.mobileOpen
-      } else {
-        this.sidebar.collapsed = !this.sidebar.collapsed
-        this._saveSidebarState()
-      }
-    },
-
-    /**
-     * Set sidebar collapsed state
-     */
-    setSidebarCollapsed(collapsed: boolean) {
-      this.sidebar.collapsed = collapsed
-      this._saveSidebarState()
-    },
-
-    /**
-     * Open mobile sidebar
-     */
-    openMobileSidebar() {
-      this.sidebar.mobileOpen = true
-    },
-
-    /**
-     * Close mobile sidebar
-     */
-    closeMobileSidebar() {
-      this.sidebar.mobileOpen = false
-    },
-
-    // ========================================================================
-    // Modals
-    // ========================================================================
-
-    /**
-     * Open a modal
-     */
-    openModal(
-      name: string,
-      data?: Record<string, unknown>,
-      options?: { dismissible?: boolean; onClose?: () => void },
-    ) {
-      // Push current modal to stack if exists
-      if (this.activeModal) {
-        this.modalStack.push(this.activeModal)
-      }
-
-      this.activeModal = {
-        name,
-        data,
-        dismissible: options?.dismissible ?? true,
-        onClose: options?.onClose,
-      }
-
-      // Close mobile sidebar when opening modal
-      this.sidebar.mobileOpen = false
-    },
-
-    /**
-     * Close current modal
-     */
-    closeModal() {
-      if (this.activeModal?.onClose) {
-        this.activeModal.onClose()
-      }
-
-      // Pop from stack if available
-      if (this.modalStack.length > 0) {
-        this.activeModal = this.modalStack.pop() || null
-      } else {
-        this.activeModal = null
-      }
-    },
-
-    /**
-     * Close all modals
-     */
-    closeAllModals() {
-      while (this.activeModal) {
-        this.closeModal()
-      }
-      this.modalStack = []
-    },
-
-    /**
-     * Check if a specific modal is open
-     */
-    isModalOpen(name: string): boolean {
-      return this.activeModal?.name === name
-    },
-
-    // ========================================================================
-    // Command Palette
-    // ========================================================================
-
-    /**
-     * Open command palette
-     */
-    openCommandPalette() {
-      this.commandPaletteOpen = true
-    },
-
-    /**
-     * Close command palette
-     */
-    closeCommandPalette() {
-      this.commandPaletteOpen = false
-    },
-
-    /**
-     * Toggle command palette
-     */
-    toggleCommandPalette() {
-      this.commandPaletteOpen = !this.commandPaletteOpen
-    },
-
-    // ========================================================================
-    // Global Loading
-    // ========================================================================
-
-    /**
-     * Set global loading state
-     */
-    setGlobalLoading(loading: boolean, message?: string) {
-      this.globalLoading = loading
-      this.globalLoadingMessage = message || null
-    },
-
-    /**
-     * Start global loading
-     */
-    startLoading(message?: string) {
-      this.setGlobalLoading(true, message)
-    },
-
-    /**
-     * Stop global loading
-     */
-    stopLoading() {
-      this.setGlobalLoading(false)
-    },
-
-    // ========================================================================
-    // Toasts
-    // ========================================================================
-
-    /**
-     * Add a toast notification
-     */
-    addToast(config: Omit<ToastConfig, 'id' | 'timestamp'>) {
-      const toast: ToastConfig = {
-        ...config,
-        id: `toast-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        timestamp: Date.now(),
-        duration: config.duration ?? DEFAULT_TOAST_DURATION,
-      }
-
-      this.toasts.push(toast)
-
-      // Auto-remove after duration
-      if (toast.duration && toast.duration > 0) {
-        setTimeout(() => {
-          this.removeToast(toast.id)
-        }, toast.duration)
-      }
-
-      // Limit total toasts
-      while (this.toasts.length > MAX_TOASTS * 2) {
-        this.toasts.shift()
-      }
-    },
-
-    /**
-     * Remove a toast by ID
-     */
-    removeToast(id: string) {
-      const index = this.toasts.findIndex(t => t.id === id)
-      if (index !== -1) {
-        this.toasts.splice(index, 1)
-      }
-    },
-
-    /**
-     * Clear all toasts
-     */
-    clearToasts() {
-      this.toasts = []
-    },
-
-    // ========================================================================
-    // Theme
-    // ========================================================================
-
-    /**
-     * Set theme preference
-     */
-    setTheme(theme: 'light' | 'dark' | 'system') {
-      this.theme = theme
-      setRawItem(STORAGE_KEYS.THEME, theme)
-    },
-
-    // ========================================================================
-    // Notifications
-    // ========================================================================
-
-    /**
-     * Set notification count
-     */
-    setNotificationCount(count: number) {
-      this.notificationCount = Math.max(0, count)
-    },
-
-    /**
-     * Increment notification count
-     */
-    incrementNotifications(amount: number = 1) {
-      this.notificationCount += amount
-    },
-
-    /**
-     * Clear notifications
-     */
-    clearNotifications() {
-      this.notificationCount = 0
-    },
-
-    // ========================================================================
-    // Internal Methods
-    // ========================================================================
-
-    /**
-     * Detect if in mobile view
-     */
-    _detectMobile() {
-      if (typeof window !== 'undefined') {
-        this.isMobile = window.innerWidth < 768
-        // Auto-close mobile sidebar on desktop
-        if (!this.isMobile) {
-          this.sidebar.mobileOpen = false
-        }
-      }
-    },
-
-    /**
-     * Save sidebar state to localStorage
-     */
-    _saveSidebarState() {
-      setItem(STORAGE_KEYS.SIDEBAR, {
-        collapsed: this.sidebar.collapsed,
-      })
-    },
-  },
+  // === RETURN ===
+  return {
+    // State
+    sidebar,
+    activeModal,
+    modalStack,
+    commandPaletteOpen,
+    globalLoading,
+    globalLoadingMessage,
+    toasts,
+    theme,
+    isMobile,
+    notificationCount,
+    // Getters
+    hasActiveModal,
+    currentModalName,
+    currentModalData,
+    sidebarVisible,
+    visibleToasts,
+    hasNotifications,
+    // Actions
+    initialize,
+    cleanup,
+    toggleSidebar,
+    setSidebarCollapsed,
+    openMobileSidebar,
+    closeMobileSidebar,
+    openModal,
+    closeModal,
+    closeAllModals,
+    isModalOpen,
+    openCommandPalette,
+    closeCommandPalette,
+    toggleCommandPalette,
+    setGlobalLoading,
+    startLoading,
+    stopLoading,
+    addToast,
+    removeToast,
+    clearToasts,
+    setTheme,
+    setNotificationCount,
+    incrementNotifications,
+    clearNotifications,
+  }
 })

@@ -49,6 +49,7 @@ export type {
 } from '~/plugins/05.musig2.client'
 
 // Re-export functions for backward compatibility (direct imports)
+// NOTE: Some functions now require additional context parameters - see plugin for details
 export {
   initializeMuSig2,
   cleanupMuSig2,
@@ -68,8 +69,8 @@ export {
   canFinalizeSession,
   finalizeSession,
   abortSession,
-  getMuSig2SigningKey,
-  getMuSig2PrivateKey,
+  createPrivateKey,
+  createPublicKey,
   isMuSig2Initialized,
   hasDiscovery,
   getMuSig2Coordinator,
@@ -81,6 +82,24 @@ export {
   handleSessionConnectionFailure,
   monitorSessionConnections,
 } from '~/plugins/05.musig2.client'
+
+// Import new types needed for the updated API
+import type {
+  SignerSigningContext,
+  PeerContext,
+  SessionInitContext,
+  SessionConnectionCallbacks,
+  SessionMonitorContext,
+} from '~/plugins/05.musig2.client'
+
+// Re-export new types
+export type {
+  SignerSigningContext,
+  PeerContext,
+  SessionInitContext,
+  SessionConnectionCallbacks,
+  SessionMonitorContext,
+}
 
 /**
  * MuSig2 Coordinator Composable
@@ -129,12 +148,14 @@ export function useMuSig2Coordinator() {
 
   /**
    * Start advertising as an available signer
+   * @param signingContext - Signing keys (privateKeyHex, publicKeyHex)
+   * @param options - Advertising options
    */
   async function startSignerAdvertising(
-    publicKey: PublicKeyType | string,
+    signingContext: SignerSigningContext,
     options?: SignerAdvertisingOptions,
   ): Promise<string> {
-    return $musig2.startSignerAdvertising(publicKey, options)
+    return $musig2.startSignerAdvertising(signingContext, options)
   }
 
   /**
@@ -263,17 +284,17 @@ export function useMuSig2Coordinator() {
   }
 
   /**
-   * Get the MuSig2 signing key for the current wallet
+   * Create a PrivateKey object from hex string
    */
-  async function getMuSig2SigningKey() {
-    return $musig2.getMuSig2SigningKey()
+  function createPrivateKey(privateKeyHex: string): PrivateKeyType {
+    return $musig2.createPrivateKey(privateKeyHex)
   }
 
   /**
-   * Get the MuSig2 private key as a PrivateKey object
+   * Create a PublicKey object from hex string
    */
-  async function getMuSig2PrivateKey() {
-    return $musig2.getMuSig2PrivateKey()
+  function createPublicKey(publicKeyHex: string): PublicKeyType {
+    return $musig2.createPublicKey(publicKeyHex)
   }
 
   /**
@@ -299,22 +320,36 @@ export function useMuSig2Coordinator() {
 
   /**
    * Ensure all session participants are connected
+   * @param participantPeerIds - Array of participant peer IDs
+   * @param peerContext - Current peer context (from store)
    */
-  async function ensureParticipantsConnected(participantPeerIds: string[]) {
-    return $musig2.ensureParticipantsConnected(participantPeerIds)
+  async function ensureParticipantsConnected(
+    participantPeerIds: string[],
+    peerContext: PeerContext,
+  ) {
+    return $musig2.ensureParticipantsConnected(participantPeerIds, peerContext)
   }
 
   /**
    * Pre-flight check before starting a signing session
+   * @param sharedWallet - Shared wallet with participants
+   * @param peerContext - Current peer context (from store)
    */
-  async function preflightSigningSession(sharedWallet: {
-    participants: Array<{ peerId?: string; nickname?: string }>
-  }): Promise<PreflightResult> {
-    return $musig2.preflightSigningSession(sharedWallet)
+  async function preflightSigningSession(
+    sharedWallet: {
+      participants: Array<{ peerId?: string; nickname?: string }>
+    },
+    peerContext: PeerContext,
+  ): Promise<PreflightResult> {
+    return $musig2.preflightSigningSession(sharedWallet, peerContext)
   }
 
   /**
    * Initiate a MuSig2 signing session with connectivity check
+   * @param sharedWallet - Shared wallet for the session
+   * @param message - Message/transaction to sign
+   * @param initContext - Session initialization context (signing keys and peer info)
+   * @param options - Session options
    */
   async function initiateSigningSession(
     sharedWallet: {
@@ -326,29 +361,51 @@ export function useMuSig2Coordinator() {
       }>
     },
     message: Buffer,
+    initContext: SessionInitContext,
     options?: {
       skipConnectivityCheck?: boolean
       metadata?: SessionMetadata
     },
   ) {
-    return $musig2.initiateSigningSession(sharedWallet, message, options)
+    return $musig2.initiateSigningSession(
+      sharedWallet,
+      message,
+      initContext,
+      options,
+    )
   }
 
   /**
    * Handle connection failure during active session
+   * @param sessionId - Session ID
+   * @param failedPeerId - Peer ID that failed
+   * @param peerContext - Current peer context
+   * @param callbacks - Callbacks to notify store of status changes
    */
   async function handleSessionConnectionFailure(
     sessionId: string,
     failedPeerId: string,
+    peerContext: PeerContext,
+    callbacks: SessionConnectionCallbacks,
   ): Promise<void> {
-    return $musig2.handleSessionConnectionFailure(sessionId, failedPeerId)
+    return $musig2.handleSessionConnectionFailure(
+      sessionId,
+      failedPeerId,
+      peerContext,
+      callbacks,
+    )
   }
 
   /**
    * Monitor session participant connections
+   * @param sessionId - Session ID to monitor
+   * @param monitorContext - Context providing session and peer state
    */
-  function monitorSessionConnections(sessionId: string): () => void {
-    return $musig2.monitorSessionConnections(sessionId)
+  function monitorSessionConnections(
+    sessionId: string,
+    monitorContext: SessionMonitorContext,
+  ): () => void {
+    return $musig2.monitorSessionConnections(sessionId, monitorContext)
   }
 
   // ============================================================================
@@ -390,8 +447,8 @@ export function useMuSig2Coordinator() {
     abortSession,
 
     // Utility
-    getMuSig2SigningKey,
-    getMuSig2PrivateKey,
+    createPrivateKey,
+    createPublicKey,
     getCoordinator,
 
     // Event subscription

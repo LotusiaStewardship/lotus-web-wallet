@@ -8,17 +8,22 @@
  * 1. LocalStorageDiscoveryCache - Wallet-side cache for UI display
  * 2. SDKDiscoveryCacheAdapter - SDK-compatible cache implementing IDiscoveryCache
  *
+ * Access Patterns:
+ * - Components: Use via $discoveryCache from useNuxtApp()
+ * - Stores: Import getter functions directly from this plugin
+ * - Workers: Not available (localStorage not accessible in workers)
+ *
+ * Dependencies:
+ * - None (independent caching layer)
+ *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
-import type { P2P } from 'lotus-sdk'
+import type { IDiscoveryCache, DiscoveryCacheEntry } from 'xpi-p2p-ts'
 import { STORAGE_KEYS } from '~/utils/storage'
 
 // ============================================================================
 // Types
 // ============================================================================
-
-type IDiscoveryCache = P2P.IDiscoveryCache
-type DiscoveryCacheEntry = P2P.DiscoveryCacheEntry
 
 /**
  * Cached signer entry

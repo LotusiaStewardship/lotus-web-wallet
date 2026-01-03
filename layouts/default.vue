@@ -1,25 +1,48 @@
 <script setup lang="ts">
+/**
+ * Default Layout
+ *
+ * Human-centric layout using Nuxt UI 3 Pro dashboard components.
+ * Uses UDashboardGroup, UDashboardSidebar, and UDashboardPanel for proper layout.
+ * Modal management is handled by useModals composable via useOverlay.
+ */
 import { useWalletStore } from '~/stores/wallet'
 import { useNetworkStore } from '~/stores/network'
-import { useMuSig2Store } from '~/stores/musig2'
-import type { NavItem } from '~/components/layout/MobileBottomNav.vue'
+import { useActivityStore } from '~/stores/activity'
+import { useSettingsStore } from '~/stores/settings'
+import { resetForChaining, type ScanModalResult } from '~/composables/useOverlays'
 
 const walletStore = useWalletStore()
 const networkStore = useNetworkStore()
-const musig2Store = useMuSig2Store()
+const activityStore = useActivityStore()
+const settingsStore = useSettingsStore()
 const route = useRoute()
+const router = useRouter()
 
-// Command palette state
-const commandPaletteOpen = ref(false)
+// Overlay management via useOverlays
+const {
+  openSendModal,
+  openReceiveModal,
+  openScanModal,
+  openActionSheet,
+  openKeyboardShortcutsModal,
+  openAddContactModal,
+  openCreateWalletModal,
+} = useOverlays()
 
-// Keyboard shortcuts help modal
-const keyboardShortcutsOpen = ref(false)
+// Watch for send query param globally and open modal
+watch(() => route.query, async (query) => {
+  if (query.send) {
+    const address = query.send as string
+    const amount = query.amount ? Number(query.amount) : undefined
 
-// Mobile detection - use useMediaQuery for SSR-safe detection
-const isMobile = ref(true) // Default to mobile for SSR
+    // Open modal and wait for result
+    await openSendModal({ initialRecipient: address, initialAmount: amount }, true)
+  }
+}, { immediate: true })
 
-// Sidebar open state (for mobile slideover) - start closed on mobile
-const sidebarOpen = ref(false)
+// Mobile detection
+const isMobile = ref(true)
 
 onMounted(() => {
   networkStore.initialize()
@@ -32,150 +55,116 @@ onUnmounted(() => {
 })
 
 function checkMobile() {
-  const wasMobile = isMobile.value
   isMobile.value = window.innerWidth < 768
-  // Close sidebar when switching to mobile, open when switching to desktop
-  if (isMobile.value !== wasMobile) {
-    sidebarOpen.value = !isMobile.value
-  }
 }
 
-// Keyboard shortcut for command palette (Cmd+K)
-onKeyStroke('k', (e) => {
-  if (e.metaKey || e.ctrlKey) {
-    e.preventDefault()
-    commandPaletteOpen.value = true
-  }
+// Get page title from route
+const pageTitle = computed(() => {
+  const pathParts = route.path.split('/').filter(Boolean)
+  if (pathParts.length === 0) return 'Home'
+  const lastPart = pathParts[pathParts.length - 1]
+  return lastPart.charAt(0).toUpperCase() + lastPart.slice(1).replace(/-/g, ' ')
 })
 
-// Keyboard shortcuts for navigation
-onKeyStroke('s', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
-    e.preventDefault()
-    navigateTo('/transact/send')
-  }
-})
-
-onKeyStroke('r', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
-    e.preventDefault()
-    navigateTo('/transact/receive')
-  }
-})
-
-onKeyStroke('h', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
-    e.preventDefault()
-    navigateTo('/transact/history')
-  }
-})
-
-// Keyboard shortcut for help (Cmd+/)
-onKeyStroke('/', (e) => {
-  if ((e.metaKey || e.ctrlKey) && !isInputFocused()) {
-    e.preventDefault()
-    keyboardShortcutsOpen.value = true
-  }
-})
-
-function isInputFocused(): boolean {
-  const active = document.activeElement
-  return active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA'
-}
-
-// Simplified navigation items (5 groups instead of 9)
-const navigationItems = computed<NavItem[]>(() => [
-  {
-    label: 'Home',
-    icon: 'i-lucide-home',
-    to: '/',
-    active: route.path === '/',
-  },
-  {
-    label: 'Transact',
-    icon: 'i-lucide-arrow-left-right',
-    to: '/transact',
-    active: route.path.startsWith('/transact') ||
-      route.path === '/send' ||
-      route.path === '/receive' ||
-      route.path === '/history',
-  },
-  {
-    label: 'People',
-    icon: 'i-lucide-users',
-    to: '/people',
-    active: route.path.startsWith('/people') ||
-      route.path === '/contacts' ||
-      route.path === '/p2p',
-    badge: musig2Store.pendingSessions.length || undefined,
-  },
-  {
-    label: 'Explore',
-    icon: 'i-lucide-compass',
-    to: '/explore',
-    active: route.path.startsWith('/explore') ||
-      route.path.startsWith('/explorer') ||
-      route.path.startsWith('/social'),
-  },
-  {
-    label: 'Settings',
-    icon: 'i-lucide-settings',
-    to: '/settings',
-    active: route.path.startsWith('/settings'),
-  },
+// Navigation items for sidebar
+const navigationItems = computed(() => [
+  [
+    {
+      label: 'Home',
+      icon: 'i-lucide-home',
+      to: '/',
+      active: route.path === '/',
+    },
+    {
+      label: 'People',
+      icon: 'i-lucide-users',
+      to: '/people',
+      active: route.path.startsWith('/people'),
+    },
+    {
+      label: 'Activity',
+      icon: 'i-lucide-bell',
+      to: '/activity',
+      active: route.path.startsWith('/activity'),
+      badge: activityStore.unreadCount > 0 ? activityStore.unreadCount : undefined,
+    },
+    {
+      label: 'Explore',
+      icon: 'i-lucide-compass',
+      to: '/explore',
+      active: route.path.startsWith('/explore'),
+    },
+    {
+      label: 'Settings',
+      icon: 'i-lucide-settings',
+      to: '/settings',
+      active: route.path.startsWith('/settings'),
+    },
+  ],
 ])
 
-// Breadcrumb items based on route
-const breadcrumbItems = computed(() => {
-  const items: { label: string; to?: string }[] = []
-  const pathParts = route.path.split('/').filter(Boolean)
+// Handle action sheet - open and process result
+async function handleActionSheet() {
+  const action = await openActionSheet()
+  if (!action) return
 
-  // Build breadcrumb from path
-  let currentPath = ''
-  for (const part of pathParts) {
-    currentPath += `/${part}`
-    items.push({
-      label: formatBreadcrumbLabel(part),
-      to: currentPath,
-    })
+  // Reset overlay state so the next modal can properly take over the history entry
+  resetForChaining()
+
+  switch (action) {
+    case 'send':
+      await openSendModal()
+      break
+    case 'receive':
+      await openReceiveModal()
+      break
+    case 'scan':
+      await handleScanFlow()
+      break
+    case 'wallet':
+      await openCreateWalletModal(undefined, true)
+      break
   }
-
-  // If empty, show Home
-  if (items.length === 0) {
-    items.push({ label: 'Home' })
-  }
-
-  return items
-})
-
-function formatBreadcrumbLabel(part: string): string {
-  // Handle dynamic routes like [txid] or [address]
-  if (part.startsWith('[')) {
-    const paramName = part.slice(1, -1)
-    return (route.params[paramName] as string)?.slice(0, 12) + '...' || part
-  }
-  // Capitalize and format
-  return part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' ')
 }
 
-// Connection status
-const connectionStatus = computed(() => {
-  if (!walletStore.sdkReady) return 'loading' as const
-  if (!walletStore.connected && !walletStore.initialized) return 'connecting' as const
-  if (!walletStore.connected) return 'disconnected' as const
-  return 'connected' as const
-})
+// Handle scan flow - open scan modal and process result
+async function handleScanFlow() {
+  const result = await openScanModal() as ScanModalResult | { manualEntry: true } | undefined
+
+  if (!result) return
+
+  // Reset overlay state so the next modal can properly take over the history entry
+  resetForChaining()
+
+  // Handle manual entry request
+  if ('manualEntry' in result && result.manualEntry) {
+    await openSendModal()
+    return
+  }
+
+  // Handle scan results
+  const scanResult = result as ScanModalResult
+
+  if (scanResult.type === 'contact' && scanResult.contact) {
+    await openAddContactModal({
+      initialAddress: scanResult.contact.address,
+      initialName: scanResult.contact.name,
+      initialPublicKey: scanResult.contact.publicKeyHex,
+    })
+  } else if (scanResult.type === 'address' || scanResult.type === 'payment') {
+    await openSendModal({
+      initialRecipient: scanResult.address,
+      initialAmount: scanResult.amount,
+    })
+  }
+}
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gray-950">
-    <!-- Accessibility: Skip to main content link -->
-    <CommonSkipLinks />
-
+  <div>
     <UDashboardGroup>
-      <!-- Desktop Sidebar (slideover on mobile, but we use our own bottom nav) -->
-      <UDashboardSidebar v-model:open="sidebarOpen" collapsible :toggle="isMobile ? false : undefined"
-        class="hidden md:flex">
+      <!-- Desktop Sidebar -->
+      <UDashboardSidebar v-if="!isMobile" collapsible>
         <template #header="{ collapsed }">
           <NuxtLink to="/" class="flex items-center gap-2">
             <UIcon name="i-lucide-flower-2" class="w-8 h-8 text-primary shrink-0" />
@@ -188,72 +177,100 @@ const connectionStatus = computed(() => {
         </template>
 
         <template #footer="{ collapsed }">
-          <LayoutSidebarFooter :collapsed="collapsed ?? false" :connection-status="connectionStatus" />
+          <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-sm">
+            <span class="w-2 h-2 rounded-full shrink-0" :class="networkStore.initialized ? 'bg-success' : 'bg-error'" />
+            <span v-if="!collapsed" class="text-gray-600 dark:text-gray-400 truncate">
+              {{ networkStore.config.displayName }}
+            </span>
+          </div>
         </template>
       </UDashboardSidebar>
 
-      <!-- Main Content -->
+      <!-- Main Panel -->
       <UDashboardPanel grow>
-        <!-- Mobile Header (simplified - no hamburger, just title + actions) -->
-        <header v-if="isMobile"
-          class="md:hidden sticky top-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-          <div class="flex items-center justify-between h-14 px-4">
-            <!-- Left: Page title only -->
-            <span class="font-semibold truncate">{{ breadcrumbItems[breadcrumbItems.length - 1]?.label || 'Lotus'
-              }}</span>
+        <!-- Desktop Navbar -->
+        <template #header>
+          <UDashboardNavbar v-if="!isMobile">
+            <template #leading>
+              <span class="text-lg font-semibold">{{ pageTitle }}</span>
+            </template>
 
-            <!-- Right: Search + Notifications -->
-            <div class="flex items-center gap-1">
-              <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-search"
-                @click="commandPaletteOpen = true" />
-              <LayoutNotificationCenter />
-            </div>
-          </div>
-        </header>
-
-        <!-- Desktop Header (full) -->
-        <UDashboardNavbar v-else class="hidden md:flex">
-          <template #leading>
-            <UBreadcrumb :items="breadcrumbItems" />
-          </template>
-          <template #trailing>
-            <LayoutNavbarActions :connection-status="connectionStatus"
-              @open-command-palette="commandPaletteOpen = true" />
-          </template>
-        </UDashboardNavbar>
-
-        <div class="flex-1 overflow-auto">
-          <!-- Network Banner (non-production networks) -->
-          <LayoutNetworkBanner v-if="!networkStore.isProduction" />
-
-          <!-- Main Content Area with max-width constraint -->
-          <div id="main-content" class="p-4 md:p-6 pb-24 md:pb-6">
-            <div class="max-w-3xl mx-auto">
-              <!-- SDK Loading State -->
-              <div v-if="walletStore.loading && !walletStore.sdkReady"
-                class="flex flex-col items-center justify-center min-h-[50vh] gap-4">
-                <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
-                <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading wallet...' }}</p>
+            <template #trailing>
+              <div class="flex items-center gap-3">
+                <!-- Network indicator (non-production) -->
+                <UBadge v-if="!networkStore.isProduction" color="warning" variant="subtle">
+                  <UIcon name="i-lucide-alert-triangle" class="w-3 h-3 mr-1" />
+                  {{ networkStore.config.displayName }}
+                </UBadge>
+                <!-- Connection status -->
+                <UTooltip
+                  :text="walletStore.connected ? 'Connected to Chronik blockchain server' : 'Disconnected from blockchain server'">
+                  <NuxtLink to="/settings"
+                    class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors cursor-pointer">
+                    <span class="w-2 h-2 rounded-full" :class="walletStore.connected ? 'bg-success' : 'bg-gray-400'" />
+                    <span>{{ walletStore.connected ? 'Connected' : 'Offline' }}</span>
+                  </NuxtLink>
+                </UTooltip>
               </div>
+            </template>
+          </UDashboardNavbar>
 
-              <!-- Page Content -->
-              <slot v-else />
+          <!-- Mobile Header -->
+          <div v-else
+            class="flex items-center justify-between h-14 px-4 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+            <!-- Left: Balance and network indicator -->
+            <div class="flex items-center gap-2">
+              <NuxtLink to="/" class="flex items-center gap-2">
+                <UIcon name="i-lucide-flower-2" class="w-5 h-5 text-primary" />
+                <span class="font-semibold text-sm">
+                  {{ !settingsStore.shouldHideBalance ? walletStore.formattedBalance : '(hidden)' }} XPI
+                </span>
+              </NuxtLink>
+              <!-- Network indicator (non-production) -->
+              <UBadge v-if="!networkStore.isProduction" color="warning" variant="subtle" size="xs">
+                {{ networkStore.config.displayName }}
+              </UBadge>
+              <!-- Connection indicator -->
+              <UTooltip :text="walletStore.connected ? 'Connected' : 'Offline'">
+                <span class="w-2 h-2 rounded-full" :class="walletStore.connected ? 'bg-success' : 'bg-gray-400'" />
+              </UTooltip>
+            </div>
+            <!-- Right: Search and Explore buttons -->
+            <div class="flex items-center gap-2">
+              <!-- <UButton variant="ghost" size="md" icon="i-lucide-search" to="/explore" /> -->
+              <UButton variant="ghost" size="md" icon="i-lucide-compass" to="/explore" />
             </div>
           </div>
-        </div>
+        </template>
+
+        <!-- Page Content -->
+        <template #body>
+          <!-- SDK Loading State -->
+          <div v-if="walletStore.loading && !walletStore.sdkReady"
+            class="flex flex-col items-center justify-center min-h-[50vh] gap-4">
+            <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
+            <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading wallet...' }}</p>
+          </div>
+
+          <!-- Page Content with bottom padding for mobile nav -->
+          <div v-else id="main-content" :class="isMobile ? 'pb-20' : ''">
+            <div class="max-w-3xl mx-auto">
+              <slot />
+            </div>
+          </div>
+        </template>
       </UDashboardPanel>
 
-      <!-- Command Palette -->
-      <LayoutCommandPalette v-model:open="commandPaletteOpen" />
-
-      <!-- Keyboard Shortcuts Help Modal -->
-      <CommonKeyboardShortcutsModal v-model:open="keyboardShortcutsOpen" />
+      <!-- Mobile Bottom Navigation -->
+      <NavigationBottomNav v-if="isMobile" @action="handleActionSheet" />
     </UDashboardGroup>
 
-    <!-- Mobile Bottom Navigation - Outside UDashboardGroup for proper positioning -->
-    <LayoutMobileBottomNav v-if="isMobile" :items="navigationItems" />
+    <!-- All overlays (modals/slideovers) are managed by useOverlays composable -->
+    <!-- No overlay components needed in template! -->
 
-    <!-- Offline Indicator -->
-    <CommonOfflineIndicator />
+    <!-- Accessibility & Polish Components -->
+    <A11ySkipLinks />
+    <UiNetworkErrorBanner />
+    <UiOfflineIndicator />
   </div>
 </template>

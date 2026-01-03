@@ -41,6 +41,7 @@ export const STORAGE_KEYS = {
   // UI
   THEME: 'lotus-wallet-theme',
   SIDEBAR: 'lotus-wallet-sidebar',
+  UI_SETTINGS: 'lotus-wallet-ui-settings',
 
   // Onboarding
   ONBOARDING_COMPLETED: 'lotus-wallet-onboarding-completed',
