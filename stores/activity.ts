@@ -8,44 +8,6 @@ import { defineStore } from 'pinia'
 import { useWalletStore } from './wallet'
 import { useP2PStore } from './p2p'
 import { useMuSig2Store } from './musig2'
-import { formatDateGroup } from '~/utils/formatting'
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export type ActivityType =
-  | 'transaction'
-  | 'signing_request'
-  | 'signing_complete'
-  | 'peer_connected'
-  | 'peer_disconnected'
-  | 'signer_discovered'
-  | 'wallet_created'
-  | 'wallet_funded'
-  | 'vote_received'
-  | 'system'
-
-export type ActivityStatus = 'new' | 'pending' | 'complete' | 'failed'
-
-export interface ActivityAction {
-  id: string
-  label: string
-  icon: string
-  primary?: boolean
-}
-
-export interface ActivityItem {
-  id: string
-  type: ActivityType
-  status: ActivityStatus
-  timestamp: number
-  readAt?: number
-  contactId?: string
-  contactIds?: string[]
-  data: Record<string, unknown>
-  actions?: ActivityAction[]
-}
 
 // ============================================================================
 // Constants
@@ -168,32 +130,46 @@ export const useActivityStore = defineStore('activity', () => {
         const id = `session_${session.id}`
         if (!items.value.has(id)) {
           const timestamp = session.createdAt
+          const type: ActivityType =
+            session.state === 'completed'
+              ? 'signing_complete'
+              : 'signing_request'
+          const status: ActivityStatus =
+            session.state === 'completed' ? 'complete' : 'new'
+          const data: SigningRequestActivityData | SigningCompleteActivityData =
+            session.state === 'completed'
+              ? {
+                  type: 'signing_complete',
+                  sessionId: session.id,
+                  walletId:
+                    (session.metadata?.walletId as string) || session.id,
+                  walletName:
+                    (session.metadata?.walletName as string) || 'Shared Wallet',
+                  txid: session.metadata?.txid as string,
+                  amountSats: session.metadata?.amountSats as bigint,
+                }
+              : {
+                  type: 'signing_request',
+                  sessionId: session.id,
+                  walletId:
+                    (session.metadata?.walletId as string) || session.id,
+                  walletName:
+                    (session.metadata?.walletName as string) || 'Shared Wallet',
+                  amountSats: session.metadata?.amountSats as bigint,
+                  initiatorId: session.metadata?.initiatorId as string,
+                  expiresAt: session.metadata?.expiresAt as number,
+                }
           legacyItems.push({
             id,
-            type:
-              session.state === 'completed'
-                ? 'signing_complete'
-                : 'signing_request',
-            status: session.state === 'completed' ? 'complete' : 'new',
+            type,
+            status,
             timestamp,
             // Mark as read if timestamp is before lastReadTimestamp
             readAt:
               timestamp <= lastReadTimestamp.value
                 ? lastReadTimestamp.value
                 : undefined,
-            data: {
-              type:
-                session.state === 'completed'
-                  ? 'signing_complete'
-                  : 'signing_request',
-              sessionId: session.id,
-              walletId:
-                (session.metadata as Record<string, unknown>)?.walletId ||
-                session.id,
-              walletName:
-                (session.metadata as Record<string, unknown>)?.walletName ||
-                'Shared Wallet',
-            },
+            data,
           })
         }
       }
@@ -361,12 +337,9 @@ export const useActivityStore = defineStore('activity', () => {
   ) {
     const existing = findByTxid(tx.txid)
     if (existing) {
-      if (
-        (existing.data as Record<string, unknown>).confirmations !==
-        tx.confirmations
-      ) {
-        ;(existing.data as Record<string, unknown>).confirmations =
-          tx.confirmations
+      const data = existing.data as TransactionActivityData
+      if (data.confirmations !== tx.confirmations) {
+        data.confirmations = tx.confirmations
         if (tx.confirmations > 0 && existing.status === 'pending') {
           existing.status = 'complete'
         }
@@ -462,16 +435,25 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Record a signer discovery activity.
+   * Called when a new MuSig2 signer is discovered on the P2P network.
+   * Deduplicates by publicKeyHex to avoid duplicate activity entries.
+   *
+   * @param signer - The discovered signer information
+   * @param signer.publicKeyHex - The signer's public key in hex format
+   * @param signer.nickname - Optional display name for the signer
+   * @returns The existing or newly created activity item
+   */
   function onSignerDiscovered(signer: {
     publicKeyHex: string
     nickname?: string
   }) {
-    const existing = allItems.value.find(
-      item =>
-        (item.data as Record<string, unknown>).type === 'signer_discovered' &&
-        (item.data as Record<string, unknown>).publicKeyHex ===
-          signer.publicKeyHex,
-    )
+    const existing = allItems.value.find(item => {
+      if (item.data.type === 'signer_discovered') {
+        return item.data.publicKeyHex === signer.publicKeyHex
+      }
+    })
     if (existing) return existing
 
     return addActivity({
@@ -564,42 +546,45 @@ export const useActivityStore = defineStore('activity', () => {
   // === HELPERS ===
 
   function findByTxid(txid: string): ActivityItem | undefined {
-    return allItems.value.find(
-      item => (item.data as Record<string, unknown>).txid === txid,
-    )
+    return allItems.value.find(item => {
+      if (item.data.type === 'transaction') {
+        return item.data.txid === txid
+      }
+    })
   }
 
   function findBySessionId(sessionId: string): ActivityItem | undefined {
-    return allItems.value.find(
-      item => (item.data as Record<string, unknown>).sessionId === sessionId,
-    )
+    return allItems.value.find(item => {
+      if (item.data.type === 'signing_request') {
+        return item.data.sessionId === sessionId
+      }
+    })
   }
 
   function matchesSearch(item: ActivityItem, query: string): boolean {
-    const data = item.data as Record<string, unknown>
     if (item.type.includes(query)) return true
 
-    switch (data.type) {
+    switch (item.data.type) {
       case 'transaction':
         return (
-          String(data.txid || '').includes(query) ||
-          String(data.address || '').includes(query)
+          String(item.data.txid || '').includes(query) ||
+          String(item.data.address || '').includes(query)
         )
       case 'signing_request':
       case 'signing_complete':
-        return String(data.walletName || '')
+        return String(item.data.walletName || '')
           .toLowerCase()
           .includes(query)
       case 'signer_discovered':
-        return String(data.nickname || '')
+        return String(item.data.nickname || '')
           .toLowerCase()
           .includes(query)
       case 'system':
         return (
-          String(data.title || '')
+          String(item.data.title || '')
             .toLowerCase()
             .includes(query) ||
-          String(data.message || '')
+          String(item.data.message || '')
             .toLowerCase()
             .includes(query)
         )

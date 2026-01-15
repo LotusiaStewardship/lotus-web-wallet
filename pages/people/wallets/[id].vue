@@ -22,7 +22,6 @@ const peopleStore = usePeopleStore()
 // Load shared wallets on mount (from peopleStore - single source of truth)
 onMounted(async () => {
   await peopleStore.initialize()
-  await activityStore.initialize()
 })
 
 const walletId = computed(() => route.params.id as string)
@@ -68,7 +67,7 @@ const pendingRequests = computed(() =>
 const recentTransactions = computed(() =>
   activityStore.allItems
     .filter(item => {
-      const data = item.data as Record<string, unknown>
+      const data = item.data as ActivityData
       return data.type === 'transaction' ||
         (data.type === 'signing_complete' && data.walletId === walletId.value)
     })

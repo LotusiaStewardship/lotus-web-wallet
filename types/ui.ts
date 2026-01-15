@@ -2,6 +2,8 @@
  * UI Types
  *
  * Type definitions for UI state management.
+ *
+ * 1/10/26: This file is completely unused
  */
 
 // ============================================================================

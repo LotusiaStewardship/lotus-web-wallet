@@ -1,92 +1,14 @@
 /**
  * Wallet Store
  * Manages wallet state, UTXO cache, and blockchain interactions
- *
- * NOTE: This store uses the centralized Bitcore SDK provider from
- * ~/plugins/bitcore.client.ts which is initialized at app startup.
- * The SDK is guaranteed to be available before any component renders.
  */
 import { defineStore } from 'pinia'
-import { computed, ref, markRaw } from 'vue'
-import { useNetworkStore, type NetworkType } from './network'
+import { useNetworkStore } from './network'
 import { useNotificationStore } from './notifications'
-import {
-  getBitcore,
-  ensureBitcore,
-  isBitcoreLoaded,
-} from '~/plugins/bitcore.client'
-import { getRawItem, setRawItem, STORAGE_KEYS } from '~/utils/storage'
-import {
-  initializeChronik as initializeChronikService,
-  connectWebSocket,
-  disconnectWebSocket,
-  fetchBlockchainInfo,
-  fetchUtxos,
-  fetchTransactionHistory as serviceFetchHistory,
-  fetchTransaction,
-  fetchBlock,
-  broadcastTransaction,
-  isChronikInitialized,
-  subscribeToMultipleScripts,
-  type ChronikScriptType,
-  type ChronikSubscription,
-} from '~/plugins/02.chronik.client'
-import type * as BitcoreTypes from 'xpi-ts/lib/bitcore'
-import { USE_CRYPTO_WORKER } from '~/utils/constants'
-
-// =========================================================================
-// Transaction Building API Types (Phase 1: Encapsulation Fix)
-// =========================================================================
-
-/**
- * Context needed to build a transaction without exposing internal private properties.
- * This is the public API for transaction building.
- */
-export interface WalletTransactionBuildContext {
-  script: InstanceType<typeof BitcoreTypes.Script>
-  addressType: AddressType
-  changeAddress: string
-  internalPubKey?: InstanceType<typeof BitcoreTypes.PublicKey>
-  merkleRoot?: Buffer
-}
-import {
-  AccountPurpose,
-  DEFAULT_ACCOUNTS,
-  buildDerivationPath,
-  type AccountState,
-  type DerivedAddress,
-} from '~/types/accounts'
-
-// Types
-export interface WalletBalance {
-  total: string
-  spendable: string
-}
-
-export interface UtxoData {
-  value: string
-  height: number
-  isCoinbase: boolean
-}
-
-export interface TransactionHistoryItem {
-  txid: string
-  timestamp: string
-  blockHeight: number
-  isSend: boolean
-  amount: string // in sats
-  address: string // counterparty address
-  confirmations: number
-}
+import type { ChronikSubscription } from '~/plugins/02.chronik.client'
+import type * as Bitcore from 'xpi-ts/lib/bitcore'
 
 // Note: ParsedTransaction type is available from ~/composables/useExplorerApi
-
-/**
- * Address type for wallet generation
- * - 'p2pkh': Pay-to-Public-Key-Hash (legacy, smaller addresses)
- * - 'p2tr-commitment': Pay-to-Taproot (modern, enhanced privacy and script capabilities)
- */
-export type AddressType = 'p2pkh' | 'p2tr-commitment'
 
 /**
  * Runtime key data for an account (not persisted)
@@ -97,48 +19,6 @@ export interface RuntimeKeyData {
   script: any
   internalPubKey?: any
   merkleRoot?: Buffer
-}
-
-/**
- * Per-account UTXO and balance state
- */
-export interface AccountUtxoState {
-  utxos: Map<string, UtxoData>
-  balance: WalletBalance
-}
-
-export interface WalletState {
-  initialized: boolean
-  /** SDK is loaded and wallet can be used locally (address, signing, etc.) */
-  sdkReady: boolean
-  loading: boolean
-  loadingMessage: string
-  seedPhrase: string
-  /** The type of address currently in use */
-  addressType: AddressType
-  tipHeight: number
-  tipHash: string
-  connected: boolean
-  transactionHistory: TransactionHistoryItem[]
-  /** Parsed transactions from Explorer API (richer data) */
-  parsedTransactions: any[] // ParsedTransaction[] - using any to avoid circular import
-  historyLoading: boolean
-
-  // Multi-account state
-  /** Account states keyed by AccountPurpose */
-  accounts: Map<AccountPurpose, AccountState>
-  /** Per-account UTXO and balance state */
-  accountUtxos: Map<AccountPurpose, AccountUtxoState>
-
-  // Legacy compatibility (derived from PRIMARY account)
-  /** @deprecated Use getAddress(AccountPurpose.PRIMARY) instead */
-  address: string
-  /** @deprecated Use accounts.get(PRIMARY).primaryAddress.scriptPayload instead */
-  scriptPayload: string
-  /** @deprecated Use getAccountBalance(AccountPurpose.PRIMARY) instead */
-  balance: WalletBalance
-  /** @deprecated Use accountUtxos.get(PRIMARY).utxos instead */
-  utxos: Map<string, UtxoData>
 }
 
 // Duplicate notification prevention
@@ -154,32 +34,6 @@ function shouldNotify(txid: string): boolean {
   return true
 }
 
-/**
- * Get the Bitcore SDK instance
- * Throws if not loaded (should never happen after plugin initialization)
- */
-const getBitcoreSDK = (): typeof BitcoreTypes => {
-  const sdk = getBitcore()
-  if (!sdk) {
-    throw new Error('Bitcore SDK not loaded. This should not happen.')
-  }
-  return sdk
-}
-
-// Convenience getters for commonly used Bitcore classes
-// These are functions to ensure we always get the current SDK instance
-const getMnemonic = () => getBitcoreSDK().Mnemonic
-const getHDPrivateKey = () => getBitcoreSDK().HDPrivateKey
-const getPrivateKey = () => getBitcoreSDK().PrivateKey
-const getAddress = () => getBitcoreSDK().Address
-const getScript = () => getBitcoreSDK().Script
-const getTransaction = () => getBitcoreSDK().Transaction
-const getMessage = () => getBitcoreSDK().Message
-const getNetworks = () => getBitcoreSDK().Networks
-const getTweakPublicKey = () => getBitcoreSDK().tweakPublicKey
-const getTweakPrivateKey = () => getBitcoreSDK().tweakPrivateKey
-const getBuildPayToTaproot = () => getBitcoreSDK().buildPayToTaproot
-
 // Utility functions
 export const toLotusUnits = (sats: string | number) => Number(sats) / 1_000_000
 export const toSatoshiUnits = (xpi: string | number) =>
@@ -194,6 +48,8 @@ export const toXPI = (sats: string | number) => {
 }
 
 export const useWalletStore = defineStore('wallet', () => {
+  // Nuxt plugin instances
+  const { $bitcore, $chronik, $cryptoWorker } = useNuxtApp()
   // =========================================================================
   // Private runtime state (not serializable, not exposed)
   // =========================================================================
@@ -208,7 +64,6 @@ export const useWalletStore = defineStore('wallet', () => {
   // Reactive State
   // =========================================================================
   const initialized = ref(false)
-  const sdkReady = ref(false)
   const loading = ref(false)
   const loadingMessage = ref('')
   const seedPhrase = ref('')
@@ -217,7 +72,6 @@ export const useWalletStore = defineStore('wallet', () => {
   const tipHash = ref('')
   const connected = ref(false)
   const transactionHistory = ref<TransactionHistoryItem[]>([])
-  const parsedTransactions = ref<any[]>([])
   const historyLoading = ref(false)
 
   // Multi-account state
@@ -230,7 +84,11 @@ export const useWalletStore = defineStore('wallet', () => {
   /** @deprecated Use getScriptHex(AccountPurpose.PRIMARY) instead */
   const scriptPayload = ref('')
   /** @deprecated Use getAccountBalance(AccountPurpose.PRIMARY) instead */
-  const balance = ref<WalletBalance>({ total: '0', spendable: '0' })
+  const balance = ref<WalletBalance>({
+    total: '0',
+    spendable: '0',
+    utxoCount: 0,
+  })
   /** @deprecated Use getAccountUtxos(AccountPurpose.PRIMARY) instead */
   const utxos = ref(new Map<string, UtxoData>())
 
@@ -253,24 +111,24 @@ export const useWalletStore = defineStore('wallet', () => {
   function getSpendableUtxos(): Array<{
     outpoint: string
     value: string
-    height: number
+    blockHeight: number
     isCoinbase: boolean
   }> {
     const result: Array<{
       outpoint: string
       value: string
-      height: number
+      blockHeight: number
       isCoinbase: boolean
     }> = []
     for (const [outpoint, utxo] of utxos.value) {
       if (utxo.isCoinbase) {
         const confirmations =
-          utxo.height > 0 ? tipHeight.value - utxo.height + 1 : 0
+          utxo.blockHeight > 0 ? tipHeight.value - utxo.blockHeight + 1 : 0
         if (confirmations >= 100) {
-          result.push({ outpoint, ...utxo })
+          result.push({ ...utxo, outpoint })
         }
       } else {
-        result.push({ outpoint, ...utxo })
+        result.push({ ...utxo, outpoint })
       }
     }
     return result
@@ -304,13 +162,12 @@ export const useWalletStore = defineStore('wallet', () => {
     loadingMessage.value = 'Loading...'
 
     try {
-      // Ensure Bitcore SDK is loaded (should already be loaded by plugin)
-      await ensureBitcore()
-
       loadingMessage.value = 'Initializing wallet...'
 
       // Check for existing wallet in storage
       const savedState = getRawItem(STORAGE_KEYS.WALLET_STATE)
+
+      console.log('[Wallet] Saved state:', savedState)
 
       if (savedState) {
         await loadWallet(JSON.parse(savedState))
@@ -319,8 +176,7 @@ export const useWalletStore = defineStore('wallet', () => {
         await createNewWallet()
       }
 
-      // SDK is ready - wallet can be used locally now
-      sdkReady.value = true
+      // Wallet is loaded
       loading.value = false
       loadingMessage.value = ''
 
@@ -328,6 +184,7 @@ export const useWalletStore = defineStore('wallet', () => {
       initializeChronik()
         .then(() => {
           initialized.value = true
+          console.log('[Wallet] initialized successfully')
         })
         .catch((err: unknown) => {
           console.error('Failed to connect to network:', err)
@@ -349,14 +206,12 @@ export const useWalletStore = defineStore('wallet', () => {
 
     let mnemonic: string
 
-    if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
+    if (USE_CRYPTO_WORKER) {
       // Use crypto worker for mnemonic generation (non-blocking)
-      const { generateMnemonic } = useCryptoWorker()
-      mnemonic = await generateMnemonic()
+      mnemonic = await $cryptoWorker.generateMnemonic()
     } else {
       // Fallback to main thread
-      const Mnemonic = getMnemonic()
-      mnemonic = new Mnemonic().toString()
+      mnemonic = new $bitcore.Mnemonic().toString()
     }
 
     await buildWalletFromMnemonic(mnemonic)
@@ -369,12 +224,10 @@ export const useWalletStore = defineStore('wallet', () => {
   async function restoreWallet(phrase: string) {
     // Validate mnemonic
     let isValid: boolean
-    if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
-      const { validateMnemonic } = useCryptoWorker()
-      isValid = await validateMnemonic(phrase)
+    if (USE_CRYPTO_WORKER) {
+      isValid = await $cryptoWorker.validateMnemonic(phrase)
     } else {
-      const Mnemonic = getMnemonic()
-      isValid = Mnemonic.isValid(phrase)
+      isValid = $bitcore.Mnemonic.isValid(phrase)
     }
 
     if (!isValid) {
@@ -385,16 +238,17 @@ export const useWalletStore = defineStore('wallet', () => {
     loadingMessage.value = 'Restoring wallet...'
 
     try {
+      // First disconnect Chronik WebSocket
+      $chronik.disconnectWebSocket()
       // Clear existing state
       transactionHistory.value = []
       utxos.value = new Map()
-      balance.value = { total: '0', spendable: '0' }
+      balance.value = { total: '0', spendable: '0', utxoCount: 0 }
 
       await buildWalletFromMnemonic(phrase)
       await saveWalletState()
 
-      // Disconnect and reconnect Chronik with new address
-      disconnectWebSocket()
+      // Reconnect Chronik with new address (uses local wrapper function)
       await initializeChronik()
     } finally {
       loading.value = false
@@ -417,19 +271,20 @@ export const useWalletStore = defineStore('wallet', () => {
     } address...`
 
     try {
+      // Disconnect Chronik WebSocket first
+      $chronik.disconnectWebSocket()
+
       // Clear existing state
       transactionHistory.value = []
-      parsedTransactions.value = []
       utxos.value = new Map()
-      balance.value = { total: '0', spendable: '0' }
+      balance.value = { total: '0', spendable: '0', utxoCount: 0 }
 
       // Update address type and rebuild wallet
       addressType.value = newType
       await buildWalletFromMnemonic(seedPhrase.value)
       await saveWalletState()
 
-      // Disconnect and reconnect Chronik with new address
-      disconnectWebSocket()
+      // Reconnect Chronik WebSocket with new address (use local wrapper function)
       await initializeChronik()
     } finally {
       loading.value = false
@@ -461,7 +316,7 @@ export const useWalletStore = defineStore('wallet', () => {
       accounts.value.set(config.purpose, accountState)
       accountUtxos.value.set(config.purpose, {
         utxos: new Map(),
-        balance: { total: '0', spendable: '0' },
+        balance: { total: '0', spendable: '0', utxoCount: 0 },
       })
     }
 
@@ -482,7 +337,7 @@ export const useWalletStore = defineStore('wallet', () => {
 
     seedPhrase.value = phrase
     utxos.value = new Map()
-    balance.value = { total: '0', spendable: '0' }
+    balance.value = { total: '0', spendable: '0', utxoCount: 0 }
   }
 
   /**
@@ -491,7 +346,7 @@ export const useWalletStore = defineStore('wallet', () => {
   async function _deriveAccountKeys(
     phrase: string,
     accountPurpose: AccountPurpose,
-    networkName: BitcoreTypes.NetworkName,
+    networkName: NetworkType,
   ): Promise<AccountState> {
     const accountIndex = accountPurpose
     const addressIndex = 0
@@ -501,10 +356,18 @@ export const useWalletStore = defineStore('wallet', () => {
       isChange,
       addressIndex,
     )
+    const {
+      HDPrivateKey,
+      PrivateKey,
+      PublicKey,
+      Mnemonic,
+      Script,
+      Address,
+      Networks,
+    } = $bitcore
 
-    if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
-      const { deriveKeys } = useCryptoWorker()
-      const result = await deriveKeys(
+    if (USE_CRYPTO_WORKER) {
+      const result = await $cryptoWorker.deriveKeys(
         phrase,
         addressType.value,
         networkName,
@@ -513,25 +376,19 @@ export const useWalletStore = defineStore('wallet', () => {
         isChange,
       )
 
-      const PrivateKey = getPrivateKey()
-      const Script = getScript()
-      const Address = getAddress()
-      const Networks = getNetworks()
       Networks.get(networkName)
 
       const signingKey = new PrivateKey(result.privateKeyHex)
-      let script: BitcoreTypes.Script
-      let internalPubKey: BitcoreTypes.PublicKey | undefined
+      let script: Bitcore.Script
+      let internalPubKey: Bitcore.PublicKey | undefined
       let merkleRoot: Buffer | undefined
 
       if (addressType.value === 'p2tr-commitment' && result.internalPubKeyHex) {
-        const PublicKey = getBitcoreSDK().PublicKey
-        internalPubKey = new PublicKey(result.internalPubKeyHex)
-        merkleRoot = result.merkleRootHex
-          ? Buffer.from(result.merkleRootHex, 'hex')
-          : Buffer.alloc(32)
-        const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
-        script = getBuildPayToTaproot()(commitment)
+        const { commitmentHex } = await $cryptoWorker.deriveP2TRCommitment(
+          result.internalPubKeyHex,
+        )
+        const commitment = new PublicKey(commitmentHex)
+        script = $bitcore.buildPayToTaproot(commitment)
       } else {
         const addr = Address.fromString(result.address)
         script = Script.fromAddress(addr)
@@ -562,11 +419,6 @@ export const useWalletStore = defineStore('wallet', () => {
         lastUsedIndex: 0,
       }
     } else {
-      const Networks = getNetworks()
-      const Mnemonic = getMnemonic()
-      const HDPrivateKey = getHDPrivateKey()
-      const Address = getAddress()
-      const Script = getScript()
       const network = Networks.get(networkName)
       if (!network) {
         throw new Error(`Unknown network: ${networkName}`)
@@ -589,10 +441,11 @@ export const useWalletStore = defineStore('wallet', () => {
 
       if (addressType.value === 'p2tr-commitment') {
         internalPubKey = signingKey.publicKey
+        // key-path only Taproot needs 32-byte merkle root of all-zeroes
         merkleRoot = Buffer.alloc(32)
-        const commitment = getTweakPublicKey()(internalPubKey, merkleRoot)
+        const commitment = $bitcore.tweakPublicKey(internalPubKey, merkleRoot)
         addr = Address.fromTaprootCommitment(commitment, network)
-        script = getBuildPayToTaproot()(commitment)
+        script = $bitcore.buildPayToTaproot(commitment)
       } else {
         addr = signingKey.toAddress(network)
         script = Script.fromAddress(addr)
@@ -678,7 +531,7 @@ export const useWalletStore = defineStore('wallet', () => {
   /**
    * Get the Chronik script type for the current address type
    */
-  function getChronikScriptType(): ChronikScriptType {
+  function getChronikAddressType(): AddressType {
     return addressType.value === 'p2tr-commitment' ? 'p2tr-commitment' : 'p2pkh'
   }
 
@@ -689,9 +542,9 @@ export const useWalletStore = defineStore('wallet', () => {
     loadingMessage.value = 'Connecting to network...'
 
     const networkStore = useNetworkStore()
-    const scriptTypeVal = getChronikScriptType()
+    const scriptTypeVal = getChronikAddressType()
 
-    await initializeChronikService({
+    await $chronik.initialize({
       network: networkStore.config,
       scriptPayload: scriptPayload.value,
       scriptType: scriptTypeVal,
@@ -707,7 +560,7 @@ export const useWalletStore = defineStore('wallet', () => {
       onRemovedFromMempool: (txid: string) => handleRemovedFromMempool(txid),
     })
 
-    const blockchainInfo = await fetchBlockchainInfo()
+    const blockchainInfo = await $chronik.fetchBlockchainInfo()
     if (blockchainInfo) {
       tipHeight.value = blockchainInfo.tipHeight
       tipHash.value = blockchainInfo.tipHash
@@ -715,14 +568,14 @@ export const useWalletStore = defineStore('wallet', () => {
 
     await refreshUtxos()
     await fetchTransactionHistory()
-    await connectWebSocket()
+    await $chronik.connectWebSocket()
     await subscribeToAllAccounts()
     initializeBackgroundMonitoring()
 
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          if (isChronikInitialized()) {
+          if ($chronik.isInitialized()) {
             refreshUtxos().catch(console.error)
           }
           syncWithServiceWorker()
@@ -737,7 +590,7 @@ export const useWalletStore = defineStore('wallet', () => {
    * Subscribe to all account addresses for real-time updates
    */
   async function subscribeToAllAccounts(): Promise<void> {
-    const scriptTypeVal = getChronikScriptType()
+    const scriptTypeVal = getChronikAddressType()
     const subscriptions: ChronikSubscription[] = []
 
     for (const [purpose, account] of accounts.value) {
@@ -751,7 +604,7 @@ export const useWalletStore = defineStore('wallet', () => {
     }
 
     if (subscriptions.length > 0) {
-      await subscribeToMultipleScripts(subscriptions)
+      await $chronik.subscribeToMultipleScripts(subscriptions)
       console.log(
         `[Wallet] Subscribed to ${subscriptions.length} account addresses`,
       )
@@ -786,7 +639,7 @@ export const useWalletStore = defineStore('wallet', () => {
           chronikUrl: networkStore.config.chronikUrl,
           pollingInterval: 60_000,
           addresses: [address.value],
-          scriptType: getChronikScriptType(),
+          scriptType: getChronikAddressType(),
           scriptPayload: scriptPayload.value,
         },
       })
@@ -870,9 +723,9 @@ export const useWalletStore = defineStore('wallet', () => {
    * Handle transaction added to mempool
    */
   async function handleAddedToMempool(txid: string) {
-    if (!isChronikInitialized() || !_script) return
+    if (!$chronik.isInitialized() || !_script) return
 
-    const tx = await fetchTransaction(txid)
+    const tx = await $chronik.fetchTransaction(txid)
     if (!tx) return
 
     const scriptHex = _script.toHex()
@@ -899,7 +752,7 @@ export const useWalletStore = defineStore('wallet', () => {
           outputAmount += BigInt(output.value || '0')
           utxos.value.set(outpoint, {
             value: output.value,
-            height: -1,
+            blockHeight: -1,
             isCoinbase: tx.isCoinbase,
           })
           changed = true
@@ -948,16 +801,16 @@ export const useWalletStore = defineStore('wallet', () => {
    * Handle transaction confirmed
    */
   async function handleConfirmed(txid: string) {
-    if (!isChronikInitialized()) return
+    if (!$chronik.isInitialized()) return
 
-    const tx = await fetchTransaction(txid)
+    const tx = await $chronik.fetchTransaction(txid)
     if (!tx) return
 
     let changed = false
 
     for (const [outpoint, utxo] of utxos.value) {
       if (outpoint.startsWith(txid)) {
-        utxo.height = tx.block?.height ?? -1
+        utxo.blockHeight = tx.block?.height ?? -1
         changed = true
       }
     }
@@ -972,9 +825,11 @@ export const useWalletStore = defineStore('wallet', () => {
    * Handle new block connected
    */
   async function handleBlockConnected(blockHash: string) {
-    if (!isChronikInitialized()) return
+    if (!$chronik.isInitialized()) return
 
-    const block = (await fetchBlock(blockHash)) as any
+    const block = await $chronik.fetchBlock(blockHash)
+    if (!block) return
+
     tipHeight.value = block.blockInfo.height
     tipHash.value = blockHash
 
@@ -986,16 +841,16 @@ export const useWalletStore = defineStore('wallet', () => {
    * Refresh UTXOs from Chronik service
    */
   async function refreshUtxos() {
-    if (!isChronikInitialized()) return
+    if (!$chronik.isInitialized()) return
 
     utxos.value.clear()
 
-    const fetchedUtxos = await fetchUtxos()
+    const fetchedUtxos = await $chronik.fetchUtxos()
     for (const utxo of fetchedUtxos) {
       const outpoint = `${utxo.outpoint.txid}_${utxo.outpoint.outIdx}`
       utxos.value.set(outpoint, {
         value: utxo.value,
-        height: utxo.blockHeight,
+        blockHeight: utxo.blockHeight,
         isCoinbase: utxo.isCoinbase,
       })
     }
@@ -1011,11 +866,11 @@ export const useWalletStore = defineStore('wallet', () => {
     pageSize: number = 25,
     page: number = 0,
   ) {
-    if (!isChronikInitialized() || !_script) return
+    if (!$chronik.isInitialized() || !_script) return
 
     historyLoading.value = true
     try {
-      const { txs } = await serviceFetchHistory(page, pageSize)
+      const { txs } = await $chronik.fetchTransactionHistory(page, pageSize)
       const scriptHex = _script.toHex()
       const history: TransactionHistoryItem[] = []
 
@@ -1050,9 +905,8 @@ export const useWalletStore = defineStore('wallet', () => {
         let counterpartyAddress = ''
         if (counterpartyScript) {
           try {
-            const Script = getScript()
             const scriptBuf = Buffer.from(counterpartyScript, 'hex')
-            const script = new Script(scriptBuf)
+            const script = new $bitcore.Script(scriptBuf)
             const addr = script.toAddress()
             if (addr) {
               counterpartyAddress = addr.toXAddress()
@@ -1081,41 +935,8 @@ export const useWalletStore = defineStore('wallet', () => {
       }
 
       transactionHistory.value = history
-      await fetchParsedTransactions(txs.map((tx: any) => tx.txid))
     } finally {
       historyLoading.value = false
-    }
-  }
-
-  /**
-   * Fetch parsed transactions from the Explorer API
-   */
-  async function fetchParsedTransactions(txids: string[]) {
-    if (!address.value || txids.length === 0) return
-
-    try {
-      const { fetchTransaction: fetchTx, parseTransaction } = await import(
-        '~/composables/useExplorerApi'
-      ).then(m => m.useExplorerApi())
-
-      const parsed: any[] = []
-      const BATCH_SIZE = 5
-
-      for (let i = 0; i < txids.length; i += BATCH_SIZE) {
-        const batch = txids.slice(i, i + BATCH_SIZE)
-        const promises = batch.map(txid => fetchTx(txid))
-        const results = await Promise.all(promises)
-
-        for (const tx of results) {
-          if (tx) {
-            parsed.push(parseTransaction(tx, address.value))
-          }
-        }
-      }
-
-      parsedTransactions.value = parsed
-    } catch (err) {
-      console.error('Failed to fetch parsed transactions:', err)
     }
   }
 
@@ -1132,7 +953,7 @@ export const useWalletStore = defineStore('wallet', () => {
 
       if (utxo.isCoinbase) {
         const confirmations =
-          utxo.height > 0 ? tipHeight.value - utxo.height + 1 : 0
+          utxo.blockHeight > 0 ? tipHeight.value - utxo.blockHeight + 1 : 0
         if (confirmations >= 100) {
           spendable += value
         }
@@ -1144,6 +965,7 @@ export const useWalletStore = defineStore('wallet', () => {
     balance.value = {
       total: total.toString(),
       spendable: spendable.toString(),
+      utxoCount: utxos.value.size,
     }
   }
 
@@ -1154,8 +976,7 @@ export const useWalletStore = defineStore('wallet', () => {
     if (!_signingKey) {
       throw new Error('Wallet not initialized')
     }
-    const Message = getMessage()
-    const message = new Message(text)
+    const message = new $bitcore.Message(text)
     return message.sign(_signingKey)
   }
 
@@ -1167,8 +988,7 @@ export const useWalletStore = defineStore('wallet', () => {
     addr: string,
     signature: string,
   ): boolean {
-    const Message = getMessage()
-    const message = new Message(text)
+    const message = new $bitcore.Message(text)
     return message.verify(addr, signature)
   }
 
@@ -1237,7 +1057,7 @@ export const useWalletStore = defineStore('wallet', () => {
     purpose: AccountPurpose = AccountPurpose.PRIMARY,
   ): WalletBalance {
     const utxoState = accountUtxos.value.get(purpose)
-    return utxoState?.balance ?? { total: '0', spendable: '0' }
+    return utxoState?.balance ?? { total: '0', spendable: '0', utxoCount: 0 }
   }
 
   /**
@@ -1255,6 +1075,9 @@ export const useWalletStore = defineStore('wallet', () => {
     return {
       total: total.toString(),
       spendable: spendable.toString(),
+      utxoCount: accountUtxos.value
+        .values()
+        .reduce((count, utxoState) => count + utxoState.utxos.size, 0),
     }
   }
 
@@ -1262,7 +1085,7 @@ export const useWalletStore = defineStore('wallet', () => {
    * Disconnect and cleanup
    */
   async function disconnect() {
-    disconnectWebSocket()
+    $chronik.disconnectWebSocket()
     connected.value = false
   }
 
@@ -1279,15 +1102,16 @@ export const useWalletStore = defineStore('wallet', () => {
     loadingMessage.value = `Switching to ${networkStore.displayName}...`
 
     try {
-      disconnectWebSocket()
+      $chronik.disconnectWebSocket()
 
       transactionHistory.value = []
-      parsedTransactions.value = []
       utxos.value = new Map()
-      balance.value = { total: '0', spendable: '0' }
+      balance.value = { total: '0', spendable: '0', utxoCount: 0 }
 
       await buildWalletFromMnemonic(seedPhrase.value)
       await saveWalletState()
+
+      // Initialize Chronik with new network
       await initializeChronik()
     } finally {
       loading.value = false
@@ -1336,9 +1160,7 @@ export const useWalletStore = defineStore('wallet', () => {
   /**
    * Sign a transaction and return the signed hex
    */
-  function signTransactionHex(
-    tx: InstanceType<typeof BitcoreTypes.Transaction>,
-  ): string {
+  function signTransactionHex(tx: Bitcore.Transaction): string {
     if (!_signingKey) {
       throw new Error('Wallet not initialized for signing')
     }
@@ -1377,8 +1199,7 @@ export const useWalletStore = defineStore('wallet', () => {
    * Validate a seed phrase
    */
   function isValidSeedPhrase(phrase: string): boolean {
-    const Mnemonic = getMnemonic()
-    return Mnemonic.isValid(phrase)
+    return $bitcore.Mnemonic.isValid(phrase)
   }
 
   // =========================================================================
@@ -1387,7 +1208,6 @@ export const useWalletStore = defineStore('wallet', () => {
   return {
     // State
     initialized,
-    sdkReady,
     loading,
     loadingMessage,
     seedPhrase,
@@ -1396,7 +1216,6 @@ export const useWalletStore = defineStore('wallet', () => {
     tipHash,
     connected,
     transactionHistory,
-    parsedTransactions,
     historyLoading,
     accounts,
     accountUtxos,
@@ -1424,7 +1243,7 @@ export const useWalletStore = defineStore('wallet', () => {
     buildWalletFromMnemonic,
     loadWallet,
     saveWalletState,
-    getChronikScriptType,
+    getChronikAddressType,
     initializeChronik,
     subscribeToAllAccounts,
     initializeBackgroundMonitoring,
@@ -1438,7 +1257,6 @@ export const useWalletStore = defineStore('wallet', () => {
     handleBlockConnected,
     refreshUtxos,
     fetchTransactionHistory,
-    fetchParsedTransactions,
     recalculateBalance,
     signMessage,
     verifyMessage,

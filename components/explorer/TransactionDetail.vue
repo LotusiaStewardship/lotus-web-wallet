@@ -5,31 +5,34 @@
  * Displays detailed transaction information including inputs, outputs,
  * confirmations, and fee.
  */
-import type { ExplorerTx } from '~/composables/useExplorerApi'
 
 const props = defineProps<{
   txid: string
 }>()
 
-const explorerApi = useExplorerApi()
+const { fetchTransaction } = useExplorerApi()
+const walletStore = useWalletStore()
 const toast = useToast()
 
 const loading = ref(true)
 const error = ref<string | null>(null)
 const tx = ref<ExplorerTx | null>(null)
 
+const tipHeight = computed(() => walletStore.tipHeight)
+const { confirmations, fee } = useTransactionDetails(tx, tipHeight)
+
 onMounted(async () => {
-  await fetchTransaction()
+  await fetchAndSetTransaction()
 })
 
-watch(() => props.txid, fetchTransaction)
+watch(() => props.txid, fetchAndSetTransaction)
 
-async function fetchTransaction() {
+async function fetchAndSetTransaction() {
   loading.value = true
   error.value = null
 
   try {
-    const result = await explorerApi.fetchTransaction(props.txid)
+    const result = await fetchTransaction(props.txid, tipHeight.value)
     if (result) {
       tx.value = result
     } else {
@@ -59,22 +62,6 @@ function formatXPI(sats: string | number): string {
     maximumFractionDigits: 6,
   })
 }
-
-// Calculate total input/output values
-const totalInputValue = computed(() => {
-  if (!tx.value) return 0
-  return tx.value.inputs.reduce((sum, input) => sum + parseInt(input.value || '0'), 0)
-})
-
-const totalOutputValue = computed(() => {
-  if (!tx.value) return 0
-  return tx.value.outputs.reduce((sum, output) => sum + parseInt(output.value || '0'), 0)
-})
-
-const fee = computed(() => {
-  if (!tx.value || tx.value.isCoinbase) return 0
-  return totalInputValue.value - totalOutputValue.value
-})
 </script>
 
 <template>
@@ -98,17 +85,17 @@ const fee = computed(() => {
       <div class="flex items-center gap-3">
         <div :class="[
           'w-10 h-10 rounded-full flex items-center justify-center',
-          tx.confirmations > 0 ? 'bg-success/10' : 'bg-warning/10',
+          confirmations > 0 ? 'bg-success/10' : 'bg-warning/10',
         ]">
-          <UIcon :name="tx.confirmations > 0 ? 'i-lucide-check-circle' : 'i-lucide-clock'"
-            :class="tx.confirmations > 0 ? 'text-success' : 'text-warning'" class="w-5 h-5" />
+          <UIcon :name="confirmations > 0 ? 'i-lucide-check-circle' : 'i-lucide-clock'"
+            :class="confirmations > 0 ? 'text-success' : 'text-warning'" class="w-5 h-5" />
         </div>
         <div>
           <h2 class="font-semibold">
             {{ tx.isCoinbase ? 'Block Reward' : 'Transaction' }}
           </h2>
           <p class="text-sm text-gray-500">
-            {{ tx.confirmations > 0 ? `${tx.confirmations} confirmations` : 'Pending' }}
+            {{ confirmations > 0 ? `${confirmations} confirmation${confirmations === 1 ? '' : 's'}` : 'Pending' }}
           </p>
         </div>
       </div>
@@ -126,8 +113,8 @@ const fee = computed(() => {
       <div class="space-y-3">
         <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
           <span class="text-gray-500">Status</span>
-          <UBadge :color="tx.confirmations > 0 ? 'success' : 'warning'">
-            {{ tx.confirmations > 0 ? 'Confirmed' : 'Pending' }}
+          <UBadge :color="confirmations > 0 ? 'success' : 'warning'">
+            {{ confirmations > 0 ? 'Confirmed' : 'Pending' }}
           </UBadge>
         </div>
 

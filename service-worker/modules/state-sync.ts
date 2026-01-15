@@ -9,22 +9,13 @@
 
 declare let self: ServiceWorkerGlobalScope
 
-const DB_NAME = 'lotus-wallet-sw'
-const DB_VERSION = 1
-
-interface CachedState {
-  walletBalance: string
-  lastKnownUtxos: string[]
-  pendingSessions: string[]
-  lastSyncTimestamp: number
-}
-
-interface StateEntry {
-  key: string
-  value: unknown
-  timestamp: number
-}
-
+/**
+ * Manages state synchronization between the service worker and clients
+ * using IndexedDB for persistent storage.
+ *
+ * Provides methods for caching wallet state, UTXOs, and session data
+ * to enable offline support and cross-tab state sharing.
+ */
 export class StateSync {
   private db: IDBDatabase | null = null
   private initPromise: Promise<void> | null = null

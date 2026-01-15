@@ -132,7 +132,6 @@ import {
   LazyWalletsCreateWalletModal,
   LazyWalletsSpendModal,
 } from '#components'
-import type { Person, SharedWallet } from '~/types/people'
 
 // ============================================================================
 // Type Definitions
@@ -164,6 +163,7 @@ export interface AddContactModalProps {
   initialAddress?: string
   initialName?: string
   initialPublicKey?: string
+  editPerson?: Person
 }
 
 export interface ShareContactModalProps {
@@ -496,7 +496,6 @@ let prewarmed = false
  */
 export async function prewarmOverlays(): Promise<void> {
   if (prewarmed) return
-  prewarmed = true
 
   // Step 1: Prefetch all modal component chunks using Nuxt's built-in utility
   // This downloads the JavaScript chunks in the background
@@ -519,11 +518,15 @@ export async function prewarmOverlays(): Promise<void> {
 
   // Step 2: Create overlay instances for commonly used modals
   // This ensures the overlay wrapper is ready to open immediately
+  getAddContactModal()
   getActionSheet()
   getSendModal()
   getReceiveModal()
   getScanModal()
   getAddContactModal()
+
+  // Set to prewarmed after prefetching and instance creation
+  prewarmed = true
 }
 
 export function useOverlays() {

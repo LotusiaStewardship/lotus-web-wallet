@@ -6,7 +6,7 @@
  */
 import { useContactUri } from '~/composables/useContactUri'
 import { useAddress } from '~/composables/useAddress'
-import type { Person } from '~/types/people'
+import { usePersonContext } from '~/composables/usePersonContext'
 import QRCodeVue3 from 'qrcode-vue3'
 
 const props = defineProps<{
@@ -17,8 +17,10 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
+// Use person context and other composables
 const { generateContactUriForPerson } = useContactUri()
 const { truncateAddress } = useAddress()
+const { displayName, address } = usePersonContext(computed(() => props.person?.id || ''))
 
 // Reset state on mount
 onMounted(() => {
@@ -30,22 +32,24 @@ const copied = ref(false)
 const copiedUri = ref(false)
 
 const truncatedAddress = computed(() => {
-  if (!props.person) return ''
-  return truncateAddress(props.person.address, 14, 8)
+  const addr = address.value
+  if (!addr) return ''
+  return truncateAddress(addr, 14, 8)
 })
 
 const contactUri = computed(() => {
-  if (!props.person) return ''
+  if (!props.person || !address.value) return ''
   return generateContactUriForPerson({
-    address: props.person.address,
-    name: props.person.name,
+    address: address.value,
+    name: displayName.value,
     publicKeyHex: props.person.publicKeyHex,
   })
 })
 
 async function copyAddress() {
-  if (!props.person?.address) return
-  await navigator.clipboard.writeText(props.person.address)
+  const addr = address.value
+  if (!addr) return
+  await navigator.clipboard.writeText(addr)
   copied.value = true
   setTimeout(() => {
     copied.value = false

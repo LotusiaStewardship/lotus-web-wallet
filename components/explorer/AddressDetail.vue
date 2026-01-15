@@ -5,21 +5,20 @@
  * Displays detailed address information including balance, transaction history,
  * and contact integration.
  */
-import { usePeopleStore } from '~/stores/people'
-import type { AddressTx } from '~/composables/useExplorerApi'
+import type { Tx } from 'chronik-client'
 
 const props = defineProps<{
   address: string
 }>()
 
-const explorerApi = useExplorerApi()
+const { fetchAddressBalance, fetchAddressHistory } = useExplorerApi()
 const peopleStore = usePeopleStore()
 const toast = useToast()
 const { openSendModal, openAddContactModal } = useOverlays()
 
 const loading = ref(true)
 const balance = ref<string | null>(null)
-const transactions = ref<AddressTx[]>([])
+const transactions = ref<Tx[]>([])
 const numPages = ref(0)
 const currentPage = ref(1)
 
@@ -36,16 +35,16 @@ async function fetchAddressData() {
 
   try {
     // Fetch balance
-    const balanceResult = await explorerApi.fetchAddressBalance(props.address)
+    const balanceResult = await fetchAddressBalance(props.address)
     if (balanceResult !== null) {
       balance.value = balanceResult
     }
 
     // Fetch transaction history
-    const historyResult = await explorerApi.fetchAddressHistory(props.address, 1, 20)
+    const historyResult = await fetchAddressHistory(props.address, 1, 20)
     if (historyResult) {
-      transactions.value = historyResult.history.txs
-      numPages.value = historyResult.history.numPages
+      transactions.value = historyResult.txs
+      numPages.value = historyResult.numPages
     }
   } catch (error) {
     console.error('Failed to fetch address data:', error)

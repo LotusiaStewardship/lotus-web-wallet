@@ -10,15 +10,7 @@
  * - Command palette state
  * - Theme preferences
  */
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import {
-  getItem,
-  setItem,
-  getRawItem,
-  setRawItem,
-  STORAGE_KEYS,
-} from '~/utils/storage'
 
 // ============================================================================
 // Types

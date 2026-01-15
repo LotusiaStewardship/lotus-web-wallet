@@ -5,13 +5,12 @@
  * Displays detailed block information including transactions,
  * miner info, and navigation between blocks.
  */
-import type { ExplorerBlock } from '~/composables/useExplorerApi'
 
 const props = defineProps<{
   height: number
 }>()
 
-const explorerApi = useExplorerApi()
+const { fetchBlock } = useExplorerApi()
 const toast = useToast()
 
 const loading = ref(true)
@@ -19,17 +18,17 @@ const error = ref(false)
 const block = ref<ExplorerBlock | null>(null)
 
 onMounted(async () => {
-  await fetchBlock()
+  await fetchAndSetBlock()
 })
 
-watch(() => props.height, fetchBlock)
+watch(() => props.height, fetchAndSetBlock)
 
-async function fetchBlock() {
+async function fetchAndSetBlock() {
   loading.value = true
   error.value = false
 
   try {
-    const result = await explorerApi.fetchBlock(props.height.toString())
+    const result = await fetchBlock(props.height.toString())
     if (result) {
       block.value = result
     } else {
@@ -54,10 +53,11 @@ function formatDate(timestamp: number | string): string {
   return new Date(ts * 1000).toLocaleString()
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+function formatBytes(bytes: string | number): string {
+  const numBytes = typeof bytes === 'string' ? parseInt(bytes) : bytes
+  if (numBytes < 1024) return `${numBytes} Bytes`
+  if (numBytes < 1024 * 1024) return `${(numBytes / 1024).toFixed(1)} KB`
+  return `${(numBytes / 1024 / 1024).toFixed(2)} MB`
 }
 
 function truncate(str: string, len: number): string {
@@ -135,7 +135,7 @@ function truncate(str: string, len: number): string {
 
         <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
           <span class="text-gray-500">Size</span>
-          <span>{{ formatBytes(block.blockInfo.nBits || 0) }}</span>
+          <span>{{ formatBytes(block.blockInfo.blockSize || 0) }}</span>
         </div>
 
         <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
@@ -145,7 +145,7 @@ function truncate(str: string, len: number): string {
 
         <div class="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
           <span class="text-gray-500">Timestamp</span>
-          <span class="font-mono">{{ block.blockInfo.timestamp }}</span>
+          <span>{{ formatDate(block.blockInfo.timestamp) }}</span>
         </div>
       </div>
 

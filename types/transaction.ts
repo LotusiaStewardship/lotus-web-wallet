@@ -2,6 +2,8 @@
  * Transaction Types
  *
  * Type definitions for transaction building, drafts, and display.
+ *
+ * 1/10/26: This file is completely unused
  */
 
 // ============================================================================

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { prewarmOverlays } from '~/composables/useOverlays'
-
+const peopleStore = usePeopleStore()
+const activityStore = useActivityStore()
 const walletStore = useWalletStore()
 const onboardingStore = useOnboardingStore()
 const notificationStore = useNotificationStore()
@@ -21,8 +21,8 @@ const shortcutsModalOpen = ref(false)
   }
 }) */
 
-// Initialize stores on app mount
-onMounted(async () => {
+// Initialize non-async stores before app is mounted
+onBeforeMount(() => {
   // Initialize onboarding state first (sync, from localStorage)
   onboardingStore.initialize()
 
@@ -35,7 +35,30 @@ onMounted(async () => {
   // Load P2P settings from storage (before wallet init)
   p2pStore.loadSettings()
 
-  // Initialize wallet (async, may create new or load existing)
+  // Initialize people store
+  peopleStore.initialize()
+
+  // Initialize activity store
+  activityStore.initialize()
+
+  // Set up service worker message handler
+  setupServiceWorkerMessageHandler()
+
+  // Pre-warm overlay instances during idle time to eliminate first-click delay
+  // Use requestIdleCallback if available, otherwise fall back to setTimeout
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => prewarmOverlays(), { timeout: 2000 })
+  } else {
+    setTimeout(prewarmOverlays, 100)
+  }
+})
+
+// Initialize stores on app mount (async)
+onMounted(async () => {
+
+  // Crypto worker initialization moved to `plugins/crypto-init.client.ts`
+
+  // Initialize new wallet or restore existing wallet
   await walletStore.initialize()
 
   // After wallet is ready, conditionally initialize P2P if autoConnect is enabled
@@ -56,17 +79,6 @@ onMounted(async () => {
     } catch (p2pError) {
       console.warn('[App] Failed to auto-connect P2P:', p2pError)
     }
-  }
-
-  // Set up service worker message handler
-  setupServiceWorkerMessageHandler()
-
-  // Pre-warm overlay instances during idle time to eliminate first-click delay
-  // Use requestIdleCallback if available, otherwise fall back to setTimeout
-  if (typeof requestIdleCallback !== 'undefined') {
-    requestIdleCallback(() => prewarmOverlays(), { timeout: 2000 })
-  } else {
-    setTimeout(prewarmOverlays, 100)
   }
 })
 

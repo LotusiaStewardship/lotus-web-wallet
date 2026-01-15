@@ -30,15 +30,10 @@ import { useNotificationStore } from './notifications'
 import { useContactsStore } from './contacts'
 import { useIdentityStore } from './identity'
 import { usePeopleStore } from './people'
-import type {
-  SharedWallet as PeopleSharedWallet,
-  SharedWalletParticipant as PeopleSharedWalletParticipant,
-} from '~/types/people'
 import { useServiceWorker } from '~/composables/useServiceWorker'
 import { generateId } from '~/utils/helpers'
 import { getItem, setItem, removeItem, STORAGE_KEYS } from '~/utils/storage'
 import { getBitcore } from '~/plugins/bitcore.client'
-import { AccountPurpose } from '~/types/accounts'
 import {
   initializeMuSig2,
   cleanupMuSig2,
@@ -67,7 +62,6 @@ import {
   type WalletSigningSession,
   type SignerSigningContext,
 } from '~/plugins/05.musig2.client'
-import type { DiscoveredSigner } from '~/types/musig2'
 import { getDiscoveryCache } from '~/plugins/03.discovery-cache.client'
 
 // ============================================================================
@@ -203,7 +197,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
   /**
    * Get shared wallets (delegated to peopleStore)
    */
-  const sharedWallets = computed((): PeopleSharedWallet[] => {
+  const sharedWallets = computed((): SharedWallet[] => {
     const peopleStore = usePeopleStore()
     return peopleStore.allWallets
   })
@@ -214,7 +208,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
   const totalSharedBalance = computed((): bigint => {
     const peopleStore = usePeopleStore()
     return peopleStore.allWallets.reduce(
-      (sum: bigint, w: PeopleSharedWallet) => sum + w.balanceSats,
+      (sum: bigint, w: SharedWallet) => sum + w.balanceSats,
       0n,
     )
   })
@@ -645,7 +639,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
     name: string
     description?: string
     participantPublicKeys: string[]
-  }): Promise<PeopleSharedWallet> {
+  }): Promise<SharedWallet> {
     // Wallet creation only requires Bitcore SDK, not full P2P initialization
     if (config.participantPublicKeys.length < 1) {
       throw new Error('Shared wallet requires at least 2 participants')
@@ -710,7 +704,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
     }
 
     // Build participant list with Person ID resolution
-    const participants: PeopleSharedWalletParticipant[] = allPublicKeyHexes.map(
+    const participants: SharedWalletParticipant[] = allPublicKeyHexes.map(
       pubKeyHex => {
         const isMe = pubKeyHex === myPublicKeyHex
 
@@ -1164,7 +1158,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
   /**
    * Notify when a shared wallet is created
    */
-  function notifyWalletCreated(wallet: PeopleSharedWallet) {
+  function notifyWalletCreated(wallet: SharedWallet) {
     const notificationStore = useNotificationStore()
 
     notificationStore.addNotification({
@@ -1180,7 +1174,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
   /**
    * Notify when a shared wallet receives funds
    */
-  function notifyWalletFunded(wallet: PeopleSharedWallet, amount: bigint) {
+  function notifyWalletFunded(wallet: SharedWallet, amount: bigint) {
     const notificationStore = useNotificationStore()
 
     notificationStore.addNotification({
@@ -1196,7 +1190,7 @@ export const useMuSig2Store = defineStore('musig2', () => {
   /**
    * Internal: Notify when spend is proposed
    */
-  function _notifySpendProposed(wallet: PeopleSharedWallet, purpose?: string) {
+  function _notifySpendProposed(wallet: SharedWallet, purpose?: string) {
     const notificationStore = useNotificationStore()
 
     notificationStore.addNotification({

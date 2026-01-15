@@ -4,7 +4,6 @@
  * Phase 5: Provides normalization functions to convert different transaction
  * formats into a unified NormalizedTransaction interface for the common TxItem component.
  */
-import type { TransactionHistoryItem } from '~/stores/wallet'
 
 /**
  * Normalized transaction format for unified display

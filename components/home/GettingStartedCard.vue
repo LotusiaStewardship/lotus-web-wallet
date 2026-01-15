@@ -18,7 +18,7 @@ const steps = computed(() => [
     id: 'create',
     title: 'Create wallet',
     description: 'Your wallet is ready to use',
-    completed: walletStore.initialized,
+    completed: !!walletStore.address,
     action: null as (() => void) | null,
     actionLabel: '',
   },

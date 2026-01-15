@@ -4,7 +4,6 @@
  * Pure functions for deriving display properties from ActivityItem objects.
  * These are used across the home page, activity feed, and activity item components.
  */
-import type { ActivityItem } from '~/stores/activity'
 
 // ============================================================================
 // Activity Icon
@@ -14,7 +13,7 @@ import type { ActivityItem } from '~/stores/activity'
  * Get the icon name for an activity item based on its type
  */
 export function getActivityIcon(item: ActivityItem): string {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   switch (data.type) {
     case 'transaction':
       return data.direction === 'incoming'
@@ -65,7 +64,7 @@ export type ActivityColorName =
  * Get the color name for an activity item based on its type
  */
 export function getActivityColor(item: ActivityItem): ActivityColorName {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   switch (data.type) {
     case 'transaction':
       return data.direction === 'incoming' ? 'success' : 'warning'
@@ -137,7 +136,7 @@ export function getActivityIconTextClass(item: ActivityItem): string {
  * Get a human-readable title for an activity item
  */
 export function getActivityTitle(item: ActivityItem): string {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   switch (data.type) {
     case 'transaction':
       const direction = data.direction === 'incoming' ? 'Received' : 'Sent'
@@ -172,10 +171,10 @@ export function getActivityTitle(item: ActivityItem): string {
  * Get a subtitle/description for an activity item
  */
 export function getActivitySubtitle(item: ActivityItem): string {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   switch (data.type) {
     case 'transaction':
-      const confirmations = data.confirmations as number
+      const confirmations = data.confirmations
       return confirmations > 0
         ? `${confirmations} confirmation${confirmations > 1 ? 's' : ''}`
         : 'Pending confirmation'
@@ -209,7 +208,7 @@ export function getActivitySubtitle(item: ActivityItem): string {
  * Returns null if the activity type doesn't have an amount
  */
 export function getActivityAmount(item: ActivityItem): string | null {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   switch (data.type) {
     case 'transaction':
     case 'signing_request':
@@ -230,7 +229,7 @@ export function getActivityAmount(item: ActivityItem): string | null {
  * Get the amount text class for an activity item
  */
 export function getActivityAmountClass(item: ActivityItem): string {
-  const data = item.data as Record<string, unknown>
+  const data = item.data
   if (data.type === 'transaction') {
     return data.direction === 'incoming' ? 'text-success' : 'text-warning'
   }

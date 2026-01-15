@@ -2,83 +2,13 @@
  * Network Store
  * Manages network configuration and selection (mainnet, testnet, regtest)
  */
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
-
-// Network types
-//export type NetworkType = 'livenet' | 'testnet' | 'regtest'
-export type NetworkType = 'livenet' | 'testnet'
-
-// Network configuration interface
-export interface NetworkConfig {
-  /** Internal network name used by Bitcore */
-  name: NetworkType
-  /** Human-readable display name */
-  displayName: string
-  /** Network character used in XAddress encoding */
-  networkChar: string
-  /** Chronik server URL */
-  chronikUrl: string
-  /** Block explorer URL */
-  explorerUrl: string
-  /** Explorer API URL */
-  explorerApiUrl: string
-  /** Rank API URL */
-  rankApiUrl: string
-  /** UI color theme for this network */
-  color: 'primary' | 'warning' | 'info'
-  /** Whether this is a production network */
-  isProduction: boolean
-}
-
-// Network configurations
-export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
-  livenet: {
-    name: 'livenet',
-    displayName: 'Mainnet',
-    networkChar: '_',
-    chronikUrl: 'https://chronik.lotusia.org',
-    explorerUrl: 'https://lotusia.org/explorer',
-    explorerApiUrl: 'https://lotusia.org/api/explorer',
-    rankApiUrl: 'https://rank.lotusia.org/api/v1',
-    color: 'primary',
-    isProduction: true,
-  },
-  testnet: {
-    name: 'testnet',
-    displayName: 'Testnet',
-    networkChar: 'T',
-    chronikUrl: 'https://testnet.lotusia.org/chronik',
-    explorerUrl: 'https://testnet.lotusia.org/explorer',
-    explorerApiUrl: 'https://testnet.lotusia.org/api/explorer',
-    //rankApiUrl: 'https://testnet.lotusia.org/rank/api/v1',
-    rankApiUrl: 'https://rank.lotusia.org/api/v1',
-    color: 'warning',
-    isProduction: false,
-  },
-  /* regtest: {
-    name: 'regtest',
-    displayName: 'Regtest',
-    networkChar: 'R',
-    chronikUrl: 'http://localhost:8331',
-    explorerUrl: '',
-    explorerApiUrl: '',
-    rankApiUrl: '',
-    color: 'info',
-    isProduction: false,
-  }, */
-}
-
-// State interface
-export interface NetworkState {
-  /** Currently selected network */
-  currentNetwork: NetworkType
-  /** Whether the store has been initialized */
-  initialized: boolean
-}
+import type { Address, NetworkName } from 'xpi-ts/lib/bitcore'
 
 export const useNetworkStore = defineStore('network', () => {
+  // Import Bitcore plugin
+  const { $bitcore } = useNuxtApp()
+
   // === STATE ===
   const currentNetwork = ref<NetworkType>('livenet')
   const initialized = ref(false)
@@ -200,26 +130,16 @@ export const useNetworkStore = defineStore('network', () => {
    * Get network type from an address string
    * Returns null if address format is not recognized
    */
-  function getNetworkFromAddress(address: string): NetworkType | null {
-    if (!address || typeof address !== 'string') return null
-    if (!address.startsWith('lotus')) return null
+  function getNetworkFromAddress(
+    address: string | Address,
+  ): NetworkName | null {
+    if (!$bitcore.Address.isValid(address)) return null
 
-    // Find network character (first uppercase or underscore after 'lotus')
-    const networkCharMatch = address.slice(5).match(/^[_TR]/)
-    if (!networkCharMatch) return null
-
-    const networkChar = networkCharMatch[0]
-
-    switch (networkChar) {
-      case '_':
-        return 'livenet'
-      case 'T':
-        return 'testnet'
-      /* case 'R':
-        return 'regtest' */
-      default:
-        return null
+    if (typeof address === 'string') {
+      address = $bitcore.Address.fromString(address)
     }
+
+    return address.network.name
   }
 
   /**

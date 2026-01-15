@@ -4,11 +4,6 @@
  * Client-side composable for interacting with the service worker.
  * Provides registration status, message passing, and event handling.
  */
-import type {
-  SWMessage,
-  SWStatusResponse,
-  NetworkMonitorConfig,
-} from '~/types/service-worker'
 
 // ============================================================================
 // Composable
@@ -302,32 +297,10 @@ export function useServiceWorker() {
   /**
    * Get pending signing requests from SW
    */
-  async function getPendingRequests(): Promise<
-    Array<{
-      id: string
-      fromPeerId: string
-      fromNickname?: string
-      walletId: string
-      walletName?: string
-      amount?: string
-      receivedAt: number
-      expiresAt: number
-      status: string
-    }>
-  > {
+  async function getPendingRequests(): Promise<SigningRequest[]> {
     try {
       const response = await postMessageWithResponse<{
-        requests: Array<{
-          id: string
-          fromPeerId: string
-          fromNickname?: string
-          walletId: string
-          walletName?: string
-          amount?: string
-          receivedAt: number
-          expiresAt: number
-          status: string
-        }>
+        requests: SigningRequest[]
       }>({ type: 'GET_PENDING_REQUESTS' })
       return response.requests
     } catch {

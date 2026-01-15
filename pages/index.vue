@@ -24,15 +24,13 @@ const onboardingStore = useOnboardingStore()
 
 // Initialize stores
 onMounted(() => {
-  activityStore.initialize()
   peopleStore.initialize()
 })
 
 // Conditional rendering flags
 const hasAttentionItems = computed(() => {
   const hasUnreadSigningRequests = activityStore.allItems.some(item => {
-    const data = item.data as Record<string, unknown>
-    return data.type === 'signing_request' && !item.readAt
+    return item.data.type === 'signing_request' && !item.readAt
   })
   return hasUnreadSigningRequests || !onboardingStore.backupComplete
 })

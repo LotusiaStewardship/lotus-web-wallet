@@ -25,18 +25,21 @@ import { useMuSig2Store } from '~/stores/musig2'
 import { useIdentityStore } from '~/stores/identity'
 import { useContactsStore, type Contact } from '~/stores/contacts'
 import { useWalletStore } from '~/stores/wallet'
-import { AccountPurpose } from '~/types/accounts'
 import type { Identity } from '~/types/identity'
 import type { OnlineStatus } from '~/types/contact'
 import type { WalletSigningSession } from '~/plugins/05.musig2.client'
-import type { SharedWallet, SharedWalletParticipant } from '~/types/people'
+import type {
+  SharedWallet,
+  SharedWalletParticipant,
+  Person,
+} from '~/types/people'
 
 // ============================================================================
 // Types
 // ============================================================================
 
 /**
- * Participant with resolved identity and contact information
+ * Participant with resolved identity and person information
  */
 export interface ParticipantWithContext extends SharedWalletParticipant {
   /** Resolved identity from identity store */

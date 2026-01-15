@@ -5,11 +5,13 @@
  * Modal for adding a new contact with name, address, and optional public key.
  */
 import { usePeopleStore } from '~/stores/people'
+import type { Person } from '~/utils/types/people'
 
 const props = defineProps<{
   initialAddress?: string
   initialName?: string
   initialPublicKey?: string
+  editPerson?: Person // New prop for edit mode
 }>()
 
 const emit = defineEmits<{
@@ -21,11 +23,21 @@ const { isValidAddress } = useAddress()
 
 // Reset form on mount
 onMounted(() => {
-  form.name = props.initialName || ''
-  form.address = props.initialAddress || ''
-  form.publicKeyHex = props.initialPublicKey || ''
-  form.notes = ''
-  form.isFavorite = false
+  if (props.editPerson) {
+    // Edit mode - populate with existing data
+    form.name = props.editPerson.name
+    form.address = props.editPerson.address
+    form.publicKeyHex = props.editPerson.publicKeyHex || ''
+    form.notes = props.editPerson.notes || ''
+    form.isFavorite = props.editPerson.isFavorite
+  } else {
+    // Add mode - use initial values or defaults
+    form.name = props.initialName || ''
+    form.address = props.initialAddress || ''
+    form.publicKeyHex = props.initialPublicKey || ''
+    form.notes = ''
+    form.isFavorite = false
+  }
 })
 
 const form = reactive({
@@ -74,30 +86,39 @@ async function handleSubmit() {
   saving.value = true
 
   try {
-    peopleStore.addPerson({
-      name: form.name.trim(),
-      address: form.address.trim(),
-      publicKeyHex: form.publicKeyHex.trim() || undefined,
-      notes: form.notes.trim() || undefined,
-      isFavorite: form.isFavorite,
-      isOnline: false,
-      canSign: !!form.publicKeyHex,
-      level: form.publicKeyHex ? 1 : 0,
-      tags: [],
-      transactionCount: 0,
-      totalSent: 0n,
-      totalReceived: 0n,
-      sharedWalletIds: [],
-    })
+    if (props.editPerson) {
+      // Edit mode - update existing person
+      peopleStore.updatePerson(props.editPerson.id, {
+        name: form.name.trim(),
+        address: form.address.trim(),
+        publicKeyHex: form.publicKeyHex.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+        isFavorite: form.isFavorite,
+        canSign: !!form.publicKeyHex,
+        level: form.publicKeyHex ? 1 : 0,
+      })
+    } else {
+      // Add mode - create new person
+      peopleStore.addPerson({
+        name: form.name.trim(),
+        address: form.address.trim(),
+        publicKeyHex: form.publicKeyHex.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+        isFavorite: form.isFavorite,
+        isOnline: false,
+        canSign: !!form.publicKeyHex,
+        level: form.publicKeyHex ? 1 : 0,
+        tags: [],
+        transactionCount: 0,
+        totalSent: 0n,
+        totalReceived: 0n,
+        sharedWalletIds: [],
+      })
+    }
 
-    // Reset form
-    form.name = ''
-    form.address = ''
-    form.publicKeyHex = ''
-    form.notes = ''
-    form.isFavorite = false
-
-    emit('close')
+    close()
+  } catch (error) {
+    console.error('Failed to save person:', error)
   } finally {
     saving.value = false
   }
@@ -119,7 +140,7 @@ function close() {
       <div class="p-6 space-y-6">
         <!-- Header -->
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold">Add Contact</h2>
+          <h2 class="text-lg font-semibold">{{ editPerson ? 'Edit Contact' : 'Add Contact' }}</h2>
           <UButton variant="ghost" icon="i-lucide-x" @click="close" />
         </div>
 
@@ -147,7 +168,7 @@ function close() {
             Cancel
           </UButton>
           <UButton color="primary" block :loading="saving" @click="handleSubmit">
-            Save
+            {{ editPerson ? 'Save Changes' : 'Add Contact' }}
           </UButton>
         </div>
       </div>

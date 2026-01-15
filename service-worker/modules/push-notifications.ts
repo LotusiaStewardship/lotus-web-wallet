@@ -1,53 +1,17 @@
-/**
- * Push Notification Manager
- *
- * Handles browser push notifications from the service worker.
- * Provides notification templates, display logic, and click handling.
- */
-
 declare let self: ServiceWorkerGlobalScope
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface NotificationConfig {
-  title: string
-  body: string
-  icon?: string
-  badge?: string
-  tag?: string
-  data?: Record<string, unknown>
-  actions?: Array<{ action: string; title: string; icon?: string }>
-  requireInteraction?: boolean
-}
-
-export type NotificationEventType =
-  | 'transaction_received'
-  | 'transaction_sent'
-  | 'signing_request'
-  | 'session_expiring'
-  | 'session_expired'
-  | 'vote_received'
-  | 'vote_confirmed'
-  | 'profile_linked'
-  | 'system'
-
-export interface NotificationEventData {
-  type: NotificationEventType
-  title?: string
-  body?: string
-  data?: Record<string, unknown>
-}
-
-// ============================================================================
-// Notification Templates
-// ============================================================================
-
+/**
+ * Notification templates for each push notification event type
+ * Each template function takes event data and returns a PushNotificationConfig
+ */
 const templates: Record<
-  NotificationEventType,
-  (data: Record<string, unknown>) => NotificationConfig
+  PushNotificationEventType,
+  (data: Record<string, unknown>) => PushNotificationConfig
 > = {
+  /**
+   * Template for received transaction notifications
+   * @param data - Event data containing amount and transaction details
+   */
   transaction_received: data => ({
     title: 'Received Lotus',
     body: `You received ${data.amount || '?'} XPI`,
@@ -58,6 +22,10 @@ const templates: Record<
     actions: [{ action: 'view', title: 'View' }],
   }),
 
+  /**
+   * Template for sent transaction notifications
+   * @param data - Event data containing amount and transaction details
+   */
   transaction_sent: data => ({
     title: 'Transaction Sent',
     body: `Sent ${data.amount || '?'} XPI`,
@@ -68,6 +36,10 @@ const templates: Record<
     actions: [{ action: 'view', title: 'View' }],
   }),
 
+  /**
+   * Template for MuSig2 signing request notifications
+   * @param data - Event data containing requester info and transaction details
+   */
   signing_request: data => ({
     title: 'Signing Request',
     body: `${data.from || 'Someone'} wants you to sign ${
@@ -84,6 +56,10 @@ const templates: Record<
     ],
   }),
 
+  /**
+   * Template for session expiring warning notifications
+   * @param data - Event data containing session info and time remaining
+   */
   session_expiring: data => ({
     title: 'Session Expiring',
     body: `Signing session expires in ${data.minutes || '?'} minute(s)`,
@@ -94,6 +70,10 @@ const templates: Record<
     actions: [{ action: 'extend', title: 'Extend' }],
   }),
 
+  /**
+   * Template for session expired notifications
+   * @param data - Event data containing session and wallet info
+   */
   session_expired: data => ({
     title: 'Session Expired',
     body: data.walletName
@@ -105,6 +85,10 @@ const templates: Record<
     data: { ...data, eventType: 'session_expired' },
   }),
 
+  /**
+   * Template for vote received on profile notifications
+   * @param data - Event data containing vote amount and profile info
+   */
   vote_received: data => ({
     title: 'Vote on Your Profile',
     body: `Someone voted ${data.amount || '?'} XPI on ${
@@ -117,6 +101,10 @@ const templates: Record<
     actions: [{ action: 'view', title: 'View' }],
   }),
 
+  /**
+   * Template for vote confirmation notifications
+   * @param data - Event data containing vote amount and profile name
+   */
   vote_confirmed: data => ({
     title: 'Vote Confirmed',
     body: `Your vote of ${data.amount || '?'} XPI on ${
@@ -128,6 +116,10 @@ const templates: Record<
     data: { ...data, eventType: 'vote_confirmed' },
   }),
 
+  /**
+   * Template for profile linked notifications
+   * @param data - Event data containing platform information
+   */
   profile_linked: data => ({
     title: 'Profile Linked',
     body: `Your ${data.platform || ''} profile has been linked`,
@@ -137,8 +129,12 @@ const templates: Record<
     data: { ...data, eventType: 'profile_linked' },
   }),
 
+  /**
+   * Template for generic system notifications
+   * @param data - Event data containing title and body overrides
+   */
   system: data => ({
-    title: (data.title as string) || 'Lotus Wallet',
+    title: (data.title as string) || 'Lotusia',
     body: (data.body as string) || 'System notification',
     icon: '/icon/192.png',
     badge: '/icon/72.png',
@@ -147,17 +143,19 @@ const templates: Record<
   }),
 }
 
-// ============================================================================
-// Push Notification Manager
-// ============================================================================
-
+/**
+ * Push Notification Manager
+ *
+ * Handles browser push notifications from the service worker.
+ * Provides notification templates, display logic, and click handling.
+ */
 export class PushNotificationManager {
   private badgeCount = 0
 
   /**
    * Show a notification using a template
    */
-  async showNotification(event: NotificationEventData): Promise<void> {
+  async showNotification(event: PushNotificationEventData): Promise<void> {
     const template = templates[event.type]
     if (!template) {
       console.warn(`[PushNotifications] Unknown event type: ${event.type}`)
@@ -176,7 +174,7 @@ export class PushNotificationManager {
   /**
    * Show a notification with raw config
    */
-  async showRawNotification(config: NotificationConfig): Promise<void> {
+  async showRawNotification(config: PushNotificationConfig): Promise<void> {
     try {
       // Check for action support (Safari doesn't support actions)
       const supportsActions =
@@ -250,7 +248,7 @@ export class PushNotificationManager {
     action: string | undefined,
     data: Record<string, unknown> | undefined,
   ): string {
-    const eventType = data?.eventType as NotificationEventType | undefined
+    const eventType = data?.eventType as PushNotificationEventType | undefined
 
     // Handle specific actions
     switch (action) {

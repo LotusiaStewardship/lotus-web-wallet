@@ -7,9 +7,6 @@
 import { useWalletStore } from '~/stores/wallet'
 import { useNetworkStore } from '~/stores/network'
 import { useDraftStore } from '~/stores/draft'
-import { useAmount } from './useAmount'
-import { useAddress } from './useAddress'
-import { useClipboard } from './useClipboard'
 
 // ============================================================================
 // Composable
@@ -29,9 +26,7 @@ export function useWallet() {
   /**
    * Whether wallet is ready for use
    */
-  const isReady = computed(
-    () => walletStore.sdkReady && walletStore.initialized,
-  )
+  const isReady = computed(() => walletStore.initialized)
 
   /**
    * Whether wallet is loading

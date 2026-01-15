@@ -8,18 +8,7 @@
  * (address, peerId, etc.) are derived or associated.
  */
 import { defineStore } from 'pinia'
-import type {
-  Identity,
-  IdentityUpdate,
-  IdentitySignerCapabilities,
-} from '~/types/identity'
 import type { OnlineStatus } from '~/types/contact'
-import {
-  createIdentity,
-  isValidPublicKey,
-  normalizePublicKey,
-} from '~/utils/identity'
-import { STORAGE_KEYS } from '~/utils/storage'
 
 // ============================================================================
 // Constants

@@ -39,7 +39,7 @@ const displayedWallets = computed(() =>
           <div>
             <p class="font-medium">{{ wallet.name }}</p>
             <p class="text-xs text-gray-500">
-              {{ wallet.participantIds.length }} participants
+              {{ wallet.participants.length }} participants
             </p>
           </div>
         </div>

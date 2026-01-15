@@ -5,7 +5,7 @@
  * Unified activity feed showing all events from wallet, P2P, and MuSig2.
  * Features search, filtering, date grouping, and mark as read functionality.
  */
-import { useActivityStore, type ActivityItem } from '~/stores/activity'
+import { useActivityStore } from '~/stores/activity'
 
 definePageMeta({
   title: 'Activity',
@@ -13,10 +13,6 @@ definePageMeta({
 
 const activityStore = useActivityStore()
 
-// Initialize store on mount
-onMounted(() => {
-  activityStore.initialize()
-})
 
 // Filter options
 const filterOptions = computed(() => [
@@ -30,7 +26,7 @@ const filterOptions = computed(() => [
 function handleItemClick(item: ActivityItem) {
   activityStore.markAsRead(item.id)
 
-  const data = item.data as Record<string, unknown>
+  const data = item.data as ActivityData
   switch (data.type) {
     case 'transaction':
       navigateTo(`/explore/tx/${data.txid}`)

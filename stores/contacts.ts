@@ -14,8 +14,6 @@ import { useIdentityStore } from './identity'
 import { useP2PStore } from './p2p'
 import type { NetworkType } from './network'
 import { useNetworkStore } from './network'
-import type { Identity, IdentitySignerCapabilities } from '~/types/identity'
-import { IdentityLevel } from '~/types/identity'
 import type { OnlineStatus, ContactWithIdentity } from '~/types/contact'
 import {
   isValidPublicKey,

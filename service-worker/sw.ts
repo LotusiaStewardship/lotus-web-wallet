@@ -2,11 +2,11 @@
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
 import { NetworkMonitor } from './modules/network-monitor'
 import { SessionMonitor } from './modules/session-monitor'
+import { stateSync } from './modules/state-sync'
 import {
   PushNotificationManager,
   setupNotificationClickHandler,
 } from './modules/push-notifications'
-import { stateSync } from './modules/state-sync'
 
 declare let self: ServiceWorkerGlobalScope
 
@@ -26,16 +26,16 @@ const pushNotificationManager = new PushNotificationManager()
 setupNotificationClickHandler(pushNotificationManager)
 
 // Message handling
-self.addEventListener('message', async event => {
-  const { type, payload } = event.data || {}
+self.addEventListener('message', async function (this, ev) {
+  const { type, payload } = ev.data || {}
 
   switch (type) {
     case 'SKIP_WAITING':
-      self.skipWaiting()
+      this.skipWaiting()
       break
 
     case 'GET_STATUS':
-      event.ports[0]?.postMessage({
+      ev.ports[0]?.postMessage({
         registered: true,
         active: true,
         version: SW_VERSION,
@@ -111,7 +111,7 @@ self.addEventListener('message', async event => {
       break
 
     case 'GET_PENDING_REQUESTS':
-      event.ports[0]?.postMessage({
+      ev.ports[0]?.postMessage({
         requests: sessionMonitor.getPendingRequests(),
       })
       break
@@ -132,7 +132,7 @@ self.addEventListener('message', async event => {
 
     case 'GET_CACHED_STATE':
       stateSync.getAllState().then(state => {
-        event.ports[0]?.postMessage({
+        ev.ports[0]?.postMessage({
           type: 'CACHED_STATE',
           payload: state,
         })
@@ -149,7 +149,7 @@ self.addEventListener('message', async event => {
 
     case 'GET_CACHED_UTXOS':
       stateSync.getUtxos(payload.scriptPayload).then(utxos => {
-        event.ports[0]?.postMessage({
+        ev.ports[0]?.postMessage({
           type: 'CACHED_UTXOS',
           payload: { utxos },
         })

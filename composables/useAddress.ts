@@ -47,7 +47,7 @@ export interface AddressTypeLabel {
 // ============================================================================
 
 export function useAddress() {
-  const { Bitcore, isReady } = useBitcore()
+  const { $bitcore } = useNuxtApp()
   const networkStore = useNetworkStore()
 
   /**
@@ -61,10 +61,9 @@ export function useAddress() {
     network?: 'livenet' | 'testnet',
   ): boolean {
     if (!address || typeof address !== 'string') return false
-    if (!isReady.value || !Bitcore.value?.Address) return false
 
     try {
-      const addr = new Bitcore.value.Address(address)
+      const addr = new $bitcore.Address(address)
       if (network) {
         return addr.network.name === network
       }
@@ -89,10 +88,10 @@ export function useAddress() {
    * @returns Parsed address info or null if invalid
    */
   function parseAddress(address: string): AddressInfo | null {
-    if (!address || !isReady.value || !Bitcore.value?.XAddress) return null
+    if (!address) return null
 
     try {
-      const xaddr = new Bitcore.value.XAddress(address)
+      const xaddr = new $bitcore.XAddress(address)
       return {
         address: xaddr.toString(),
         type: xaddr.type as AddressInfo['type'],
@@ -143,17 +142,15 @@ export function useAddress() {
    */
   function publicKeyToAddress(
     publicKeyHex: string,
-    network: 'livenet' | 'testnet' = 'livenet',
+    networkName: 'livenet' | 'testnet' = 'livenet',
   ): string | null {
-    if (!publicKeyHex || !isReady.value || !Bitcore.value?.PublicKey)
-      return null
+    if (!publicKeyHex) return null
 
     try {
-      const pubKey = new Bitcore.value.PublicKey(publicKeyHex)
-      const Networks = Bitcore.value.Networks
-      const net = Networks.get(network)
-      const addr = pubKey.toAddress(net)
-      return addr.toXAddress(net)
+      const pubKey = new $bitcore.PublicKey(publicKeyHex)
+      const network = $bitcore.Networks.get(networkName)
+      const addr = pubKey.toAddress(network)
+      return addr.toXAddress(network)
     } catch {
       return null
     }
@@ -167,16 +164,16 @@ export function useAddress() {
    */
   function hashToAddress(
     hash: string,
-    network: 'livenet' | 'testnet' = 'livenet',
+    networkName: 'livenet' | 'testnet' = 'livenet',
   ): string | null {
-    if (!hash || !isReady.value || !Bitcore.value?.Address) return null
+    if (!hash) return null
 
     try {
-      const hashBuffer = Buffer.from(hash, 'hex')
-      const Networks = Bitcore.value.Networks
-      const net = Networks.get(network)
-      const addr = new Bitcore.value.Address(hashBuffer, net, 'pubkeyhash')
-      return addr.toXAddress(net)
+      // Convert hashbuffer to Script
+      const script = $bitcore.Script.fromBuffer(Buffer.from(hash, 'hex'))
+      const network = $bitcore.Networks.get(networkName)
+      const addr = new $bitcore.Address(script, network)
+      return addr.toXAddress(network)
     } catch {
       return null
     }

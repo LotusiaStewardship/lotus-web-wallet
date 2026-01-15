@@ -125,7 +125,7 @@ export interface P2PSettings {
  * Default P2P settings
  */
 export const DEFAULT_P2P_SETTINGS: P2PSettings = {
-  autoConnect: true,
+  autoConnect: false,
   maxConnections: 50,
   enableDHT: true,
   enableGossipSub: true,

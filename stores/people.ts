@@ -5,15 +5,6 @@
  * Provides a relationship-centric view of all contacts.
  */
 import { defineStore } from 'pinia'
-import type {
-  Person,
-  PersonInput,
-  PersonUpdate,
-  SharedWallet,
-  SharedWalletInput,
-  SharedWalletUpdate,
-} from '~/types/people'
-import { PEOPLE_STORAGE_KEY, SHARED_WALLETS_STORAGE_KEY } from '~/types/people'
 
 // ============================================================================
 // Store Definition (Composition API)
@@ -32,7 +23,7 @@ export const usePeopleStore = defineStore('people', () => {
     if (initialized.value) return
 
     // Load people
-    const storedPeople = localStorage.getItem(PEOPLE_STORAGE_KEY)
+    const storedPeople = localStorage.getItem(STORAGE_KEYS.PEOPLE)
     if (storedPeople) {
       try {
         const data = JSON.parse(storedPeople)
@@ -54,7 +45,7 @@ export const usePeopleStore = defineStore('people', () => {
     }
 
     // Load shared wallets
-    const storedWallets = localStorage.getItem(SHARED_WALLETS_STORAGE_KEY)
+    const storedWallets = localStorage.getItem(STORAGE_KEYS.SHARED_WALLETS)
     if (storedWallets) {
       try {
         const data = JSON.parse(storedWallets)
@@ -87,7 +78,7 @@ export const usePeopleStore = defineStore('people', () => {
         },
       ]
     })
-    localStorage.setItem(PEOPLE_STORAGE_KEY, JSON.stringify(data))
+    localStorage.setItem(STORAGE_KEYS.PEOPLE, JSON.stringify(data))
   }
 
   function persistWallets() {
@@ -102,7 +93,7 @@ export const usePeopleStore = defineStore('people', () => {
         ]
       },
     )
-    localStorage.setItem(SHARED_WALLETS_STORAGE_KEY, JSON.stringify(data))
+    localStorage.setItem(STORAGE_KEYS.SHARED_WALLETS, JSON.stringify(data))
   }
 
   // === GETTERS ===
@@ -324,6 +315,30 @@ export const usePeopleStore = defineStore('people', () => {
     persistPeople()
   }
 
+  // === FAVORITES AND GROUPS ===
+
+  function toggleFavorite(personId: string) {
+    const person = people.value.get(personId)
+    if (!person) return
+
+    person.isFavorite = !person.isFavorite
+    person.updatedAt = Date.now()
+
+    persistPeople()
+  }
+
+  function assignToGroup(personId: string, groupId: string) {
+    const person = people.value.get(personId)
+    if (!person) return
+
+    // Add groupId to tags if not already present
+    if (!person.tags.includes(groupId)) {
+      person.tags.push(groupId)
+      person.updatedAt = Date.now()
+      persistPeople()
+    }
+  }
+
   // === HELPERS ===
 
   function sortPeople(list: Person[]): Person[] {
@@ -391,5 +406,9 @@ export const usePeopleStore = defineStore('people', () => {
 
     // Activity
     recordActivity,
+
+    // Favorites and Groups
+    toggleFavorite,
+    assignToGroup,
   }
 })

@@ -6,12 +6,9 @@
  * Uses UDashboardGroup, UDashboardSidebar, and UDashboardPanel for proper layout.
  * Modal management is handled by useModals composable via useOverlay.
  */
-import { useWalletStore } from '~/stores/wallet'
-import { useNetworkStore } from '~/stores/network'
-import { useActivityStore } from '~/stores/activity'
-import { useSettingsStore } from '~/stores/settings'
 import { resetForChaining, type ScanModalResult } from '~/composables/useOverlays'
 
+const { $chronik } = useNuxtApp()
 const walletStore = useWalletStore()
 const networkStore = useNetworkStore()
 const activityStore = useActivityStore()
@@ -44,8 +41,14 @@ watch(() => route.query, async (query) => {
 // Mobile detection
 const isMobile = ref(true)
 
-onMounted(() => {
+onBeforeMount(() => {
   networkStore.initialize()
+  // Update Chronik plugin with current network configuration
+  // This will ensure the configured network is set when walletStore.initialize() is called
+  $chronik.setNetwork(networkStore.config)
+})
+
+onMounted(() => {
   checkMobile()
   window.addEventListener('resize', checkMobile)
 })
@@ -246,7 +249,7 @@ async function handleScanFlow() {
         <!-- Page Content -->
         <template #body>
           <!-- SDK Loading State -->
-          <div v-if="walletStore.loading && !walletStore.sdkReady"
+          <div v-if="walletStore.loading && !walletStore.isReadyForSigning()"
             class="flex flex-col items-center justify-center min-h-[50vh] gap-4">
             <UIcon name="i-lucide-loader-2" class="w-12 h-12 animate-spin text-primary" />
             <p class="text-gray-500">{{ walletStore.loadingMessage || 'Loading wallet...' }}</p>

@@ -15,9 +15,6 @@
  *
  * The `.client.ts` suffix ensures this only runs in the browser (SPA mode).
  */
-import type { DiscoveredSigner, MuSig2SessionState } from '~/types/musig2'
-import { SESSION_TIMEOUT } from '~/types/musig2'
-import { AccountPurpose } from '~/types/accounts'
 import * as XpiP2P from 'xpi-p2p-ts'
 import { Bitcore } from 'xpi-ts'
 
@@ -278,7 +275,7 @@ function _mapP2PSessionToWalletSession(
     messageHex: session.message?.toString('hex'),
     createdAt: p2pSession.createdAt,
     updatedAt: p2pSession.lastActivity,
-    expiresAt: p2pSession.createdAt + SESSION_TIMEOUT,
+    expiresAt: p2pSession.createdAt + MUSIG2_SESSION_TIMEOUT,
     metadata: p2pSession.announcement?.metadata,
   }
 }

@@ -2,6 +2,8 @@
  * P2P Types
  *
  * Type definitions for P2P connectivity and presence.
+ *
+ * 1/10/26: Review with store to consolidate duplications
  */
 
 // ============================================================================

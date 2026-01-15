@@ -6,8 +6,50 @@
  */
 
 // ============================================================================
-// Lotus Network Constants
+// Lotus Network and Wallet Constants
 // ============================================================================
+
+/**
+ * All network configurations
+ */
+export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
+  livenet: {
+    name: 'livenet',
+    displayName: 'Mainnet',
+    networkChar: '_',
+    chronikUrl: 'https://chronik.lotusia.org',
+    explorerUrl: 'https://lotusia.org/explorer',
+    explorerApiUrl: 'https://lotusia.org/api/explorer',
+    rankApiUrl: 'https://rank.lotusia.org/api/v1',
+    color: 'primary',
+    isProduction: true,
+  },
+  testnet: {
+    name: 'testnet',
+    displayName: 'Testnet',
+    networkChar: 'T',
+    chronikUrl: 'https://testnet.lotusia.org/chronik',
+    explorerUrl: 'https://testnet.lotusia.org/explorer',
+    explorerApiUrl: 'https://testnet.lotusia.org/api/explorer',
+    rankApiUrl: 'https://rank.lotusia.org/api/v1',
+    color: 'warning',
+    isProduction: false,
+  },
+  /* regtest: {
+    name: 'regtest',
+    displayName: 'Regtest',
+    networkChar: 'R',
+    chronikUrl: 'http://localhost:8331',
+    explorerUrl: '',
+    explorerApiUrl: '',
+    rankApiUrl: '',
+    color: 'info',
+    isProduction: false,
+  }, */
+}
+
+/** Default network */
+export const DEFAULT_NETWORK: NetworkType = 'livenet'
 
 /** Number of decimal places for Lotus (XPI) */
 export const LOTUS_DECIMALS = 6
@@ -26,6 +68,58 @@ export const BIP44_PURPOSE = 44
 
 /** BIP44 coin type for Lotus */
 export const BIP44_COINTYPE = 10605
+
+/**
+ * Predefined account purposes following BIP44 account index convention
+ */
+export enum AccountPurpose {
+  /** Primary wallet - receiving, sending, identity */
+  PRIMARY = 0,
+  /** MuSig2 signing - dedicated key for multi-sig */
+  MUSIG2 = 1,
+  /** Atomic swaps - future use */
+  SWAP = 2,
+  /** Privacy features - future use */
+  PRIVACY = 3,
+}
+
+/**
+ * User-friendly labels for UI display (no technical jargon)
+ */
+export const ACCOUNT_FRIENDLY_LABELS: Record<AccountPurpose, string> = {
+  [AccountPurpose.PRIMARY]: 'Main Wallet',
+  [AccountPurpose.MUSIG2]: 'Signing Key',
+  [AccountPurpose.SWAP]: 'Swap Account',
+  [AccountPurpose.PRIVACY]: 'Private Account',
+}
+
+/**
+ * User-friendly descriptions for UI display
+ */
+export const ACCOUNT_DESCRIPTIONS: Record<AccountPurpose, string> = {
+  [AccountPurpose.PRIMARY]: 'Your main address for sending and receiving',
+  [AccountPurpose.MUSIG2]: 'Used for shared wallet participation',
+  [AccountPurpose.SWAP]: 'For atomic swap transactions',
+  [AccountPurpose.PRIVACY]: 'Enhanced privacy features',
+}
+
+/**
+ * Default account configurations
+ */
+export const DEFAULT_ACCOUNTS: AccountConfig[] = [
+  {
+    purpose: AccountPurpose.PRIMARY,
+    label: 'Primary Wallet',
+    enabled: true,
+    gapLimit: 0,
+  },
+  {
+    purpose: AccountPurpose.MUSIG2,
+    label: 'MuSig2 Signing',
+    enabled: true,
+    gapLimit: 0,
+  },
+]
 
 // ============================================================================
 // Fee Constants
@@ -168,6 +262,19 @@ export const REGTEST_CHAR = 'R'
 
 /** Payment URI scheme prefix (BIP21-style) */
 export const PAYMENT_URI_SCHEME = 'sendto'
+
+// ============================================================================
+// Network Monitor
+// ============================================================================
+
+/** Request timeout in milliseconds */
+export const REQUEST_TIMEOUT_MS = 10_000
+
+/** Maximum retry attempts for failed requests */
+export const MAX_RETRY_ATTEMPTS = 3
+
+/** Delay between retries in milliseconds */
+export const RETRY_DELAY_MS = 1_000
 
 // ============================================================================
 // Feature Flags

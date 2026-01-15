@@ -4,47 +4,57 @@
  * Provides background monitoring of wallet addresses via Chronik REST API polling.
  * Used when the main app is backgrounded and WebSocket connection may be suspended.
  */
+import { ChronikClient } from 'chronik-client'
+import type { Utxo } from 'chronik-client'
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface NetworkMonitorConfig {
-  chronikUrl: string
-  pollingInterval: number // ms
-  addresses: string[]
-  scriptType: 'p2pkh' | 'p2tr-commitment'
-  scriptPayload: string
-}
-
-export interface UtxoInfo {
-  txid: string
-  outIdx: number
-  value: string
-}
-
-export interface TransactionDetectedPayload {
-  txid: string
-  address: string
-  amount: string
-  isIncoming: boolean
-  timestamp: number
-}
-
-export interface BalanceChangedPayload {
-  address: string
-  utxos: UtxoInfo[]
-}
-
-type ClientMessage =
-  | { type: 'BALANCE_CHANGED'; payload: BalanceChangedPayload }
-  | { type: 'TRANSACTION_DETECTED'; payload: TransactionDetectedPayload }
-
-// ============================================================================
-// Network Monitor Class
-// ============================================================================
-
+/**
+ * Network Monitor Class
+ *
+ * Monitors wallet addresses for UTXO changes using Chronik REST API polling.
+ * This class is designed for use in a Service Worker context where WebSocket
+ * connections may be suspended when the browser tab is backgrounded.
+ *
+ * Features:
+ * - Adaptive polling intervals based on wallet activity state
+ * - Automatic detection of new and spent UTXOs
+ * - Client notification via Service Worker messaging API
+ * - Configurable retry logic for network failures
+ *
+ * Polling Intervals:
+ * - 10s when pending transactions exist
+ * - 15s when active signing sessions exist
+ * - 20s when recently backgrounded (first 2 minutes)
+ * - 60s default polling interval
+ *
+ * @example
+ * ```typescript
+ * const monitor = new NetworkMonitor()
+ *
+ * // Configure with network settings
+ * monitor.configure({
+ *   chronikUrl: 'https://chronik.example.com',
+ *   pollingInterval: 60000,
+ *   addresses: ['address1', 'address2'],
+ *   scriptType: 'p2pkh',
+ *   scriptPayload: 'abc123...'
+ * })
+ *
+ * // Start monitoring
+ * monitor.startPolling()
+ *
+ * // Update state flags to adjust polling frequency
+ * monitor.setPendingTransactions(true)
+ * monitor.setActiveSigningSessions(true)
+ *
+ * // Stop when no longer needed
+ * monitor.stopPolling()
+ * ```
+ *
+ * @see {@link NetworkMonitorConfig} for configuration options
+ * @see {@link SessionMonitor} for related session monitoring functionality
+ */
 export class NetworkMonitor {
+  private chronik: ChronikClient | null = null
   private config: NetworkMonitorConfig | null = null
   private lastKnownUtxos: Map<string, Set<string>> = new Map()
   private pollingTimer: ReturnType<typeof setInterval> | null = null
@@ -63,6 +73,8 @@ export class NetworkMonitor {
       addresses: config.addresses.length,
       pollingInterval: config.pollingInterval,
     })
+    this.chronik = new ChronikClient(config.chronikUrl)
+    console.log('[NetworkMonitor] Chronik client initialized')
   }
 
   /**
@@ -250,53 +262,94 @@ export class NetworkMonitor {
   /**
    * Fetch UTXOs from Chronik REST API
    */
-  private async fetchUtxos(): Promise<
-    Array<{ txid: string; outIdx: number; value: string }>
-  > {
+  private async fetchUtxos(): Promise<NetworkMonitorUtxoInfo[]> {
     if (!this.config) return []
 
-    const { chronikUrl, scriptType, scriptPayload } = this.config
-    const url = `${chronikUrl}/script/${scriptType}/${scriptPayload}/utxos`
+    const { scriptType, scriptPayload } = this.config
 
-    try {
-      const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    let lastError: Error | null = null
+
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+
+      try {
+        const response = await this.chronik
+          ?.script(scriptType, scriptPayload)
+          .utxos()
+        clearTimeout(timeoutId)
+
+        if (!response) {
+          throw new Error(
+            `[NetworkMonitor] No UTXOs response received for script ${scriptPayload}`,
+          )
+        }
+
+        // Type guard for the first element
+        const firstScript = response[0]
+        if (!firstScript || !Array.isArray(firstScript.utxos)) {
+          return []
+        }
+
+        return firstScript.utxos.map((utxo: Utxo) => ({
+          txid: utxo.outpoint?.txid ?? '',
+          outIdx: utxo.outpoint?.outIdx ?? 0,
+          value: utxo.value ?? '0',
+        }))
+      } catch (error) {
+        clearTimeout(timeoutId)
+
+        if (error instanceof Error) {
+          if (error.name === 'AbortError') {
+            console.warn(
+              `[NetworkMonitor] Request timeout (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`,
+            )
+            lastError = new Error('Request timeout')
+          } else {
+            console.warn(
+              `[NetworkMonitor] Fetch error (attempt ${attempt}/${MAX_RETRY_ATTEMPTS}):`,
+              error.message,
+            )
+            lastError = error
+          }
+        } else {
+          lastError = new Error('Unknown error')
+        }
+
+        // Wait before retry (unless it's the last attempt)
+        if (attempt < MAX_RETRY_ATTEMPTS) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+        }
       }
-
-      const data = await response.json()
-
-      // Chronik returns an array of script UTXOs, we want the first one's utxos
-      if (!data || !Array.isArray(data) || data.length === 0) {
-        return []
-      }
-
-      const scriptUtxos = data[0]?.utxos || []
-
-      return scriptUtxos.map((utxo: any) => ({
-        txid: utxo.outpoint?.txid || '',
-        outIdx: utxo.outpoint?.outIdx || 0,
-        value: utxo.value || '0',
-      }))
-    } catch (error) {
-      console.error('[NetworkMonitor] Failed to fetch UTXOs:', error)
-      return []
     }
+
+    // Return empty array if no UTXOs found or retry attempts failed
+    return []
   }
 
   /**
    * Notify all clients of an event
    */
-  private notifyClients(message: ClientMessage): void {
+  private notifyClients(message: NetworkClientMessage): void {
     // In service worker context, use clients API
     if (typeof self !== 'undefined' && 'clients' in self) {
       const sw = self as unknown as ServiceWorkerGlobalScope
       sw.clients.matchAll({ type: 'window' }).then(clients => {
         for (const client of clients) {
+          console.log(
+            '[NetworkMonitor] Notifying client of new message:',
+            message.type,
+            client.id,
+            message.type,
+          )
           client.postMessage(message)
         }
       })
     }
+    console.warn(
+      '[NetworkMonitor] No clients to notify or unsupported context',
+      self,
+    )
   }
 
   /**

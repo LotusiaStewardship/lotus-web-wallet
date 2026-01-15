@@ -3,14 +3,12 @@
  * Fetches transaction data from the Lotus Explorer API
  */
 
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type {
-  Block as ChronikBlock,
-  BlockInfo as ChronikBlockInfo,
-  Tx as ChronikTx,
-  TxInput as ChronikTxInput,
-  TxOutput as ChronikTxOutput,
-} from 'chronik-client'
+  ScriptChunkPlatformUTF8,
+  ScriptChunkSentimentUTF8,
+} from 'xpi-ts/lib/rank'
+import type { PeerInfo, MiningInfo } from 'xpi-ts/lib/rpc'
+import type { BlockInfo as ChronikBlockInfo } from 'chronik-client'
 import { useNetworkStore } from '~/stores/network'
 
 // Get Explorer API URL from network store
@@ -18,68 +16,6 @@ const getExplorerApiUrl = () => {
   const networkStore = useNetworkStore()
   return networkStore.explorerApiUrl || 'https://lotusia.org/api/explorer'
 }
-
-// Types matching the Explorer API response
-export interface ExplorerTxInput {
-  prevOut: {
-    txid: string
-    outIdx: number
-  }
-  inputScript: string
-  outputScript: string
-  value: string
-  sequenceNo: number
-  address?: string
-}
-
-export interface RankOutput {
-  platform: string
-  profileId: string
-  postId?: string
-  sentiment: 'positive' | 'negative' | 'neutral'
-}
-
-export interface ExplorerTxOutput {
-  value: string
-  outputScript: string
-  spentBy?: {
-    txid: string
-    outIdx: number
-  }
-  address?: string
-  rankOutput?: RankOutput
-}
-
-export interface ExplorerTx {
-  txid: string
-  version: number
-  inputs: ExplorerTxInput[]
-  outputs: ExplorerTxOutput[]
-  lockTime: number
-  block?: {
-    height: number
-    hash: string
-    timestamp: string
-  }
-  timeFirstSeen: string
-  size: number
-  isCoinbase: boolean
-  network: string
-  confirmations: number
-  sumBurnedSats: string
-}
-
-/**
- * Explorer Block type
- * Extends Chronik Block with miner address and enriched transactions
- */
-export type ExplorerBlock = ChronikBlock & {
-  minedBy?: string
-  txs: ExplorerTx[]
-}
-
-// Re-export Chronik types for convenience
-export type { ChronikBlock, ChronikBlockInfo, ChronikTx }
 
 // Network overview types
 export interface GeoIPData {
@@ -96,53 +32,9 @@ export interface GeoIPData {
   as: string
 }
 
-export interface PeerInfo {
-  id: number
-  addr: string
-  addrlocal?: string
-  services: string
-  relaytxes: boolean
-  lastsend: number
-  lastrecv: number
-  bytessent: number
-  bytesrecv: number
-  conntime: number
-  timeoffset: number
-  pingtime?: number
-  minping?: number
-  version: number
-  subver: string
-  inbound: boolean
-  startingheight: number
-  banscore: number
-  synced_headers: number
-  synced_blocks: number
-  whitelisted: boolean
-  geoip?: GeoIPData
-}
-
-export interface MiningInfo {
-  blocks: number
-  currentblocksize: number
-  currentblocktx: number
-  difficulty: number
-  networkhashps: number
-  pooledtx: number
-  chain: string
-  warnings: string
-}
-
 export interface NetworkOverview {
   mininginfo: MiningInfo
   peerinfo: PeerInfo[]
-}
-
-/**
- * Address transaction with sumBurnedSats
- * Used in address history responses
- */
-export type AddressTx = ChronikTx & {
-  sumBurnedSats: string
 }
 
 /**
@@ -151,49 +43,14 @@ export type AddressTx = ChronikTx & {
 export interface AddressHistoryResponse {
   lastSeen: string | null
   history: {
-    txs: AddressTx[]
+    txs: ExplorerTx[]
     numPages: number
   }
 }
 
-// Transaction type classification for wallet history
-export type WalletTransactionType =
-  | 'give'
-  | 'receive'
-  | 'rank'
-  | 'burn'
-  | 'coinbase'
-  | 'self'
-  | 'unknown'
-
-export interface ParsedTransaction {
-  txid: string
-  type: WalletTransactionType
-  timestamp: number
-  confirmations: number
-  blockHeight: number
-
-  // For give/receive transactions
-  amount?: string // in sats
-  counterpartyAddress?: string
-
-  // For RANK transactions
-  rankData?: {
-    platform: string
-    profileId: string
-    postId?: string
-    sentiment: 'positive' | 'negative' | 'neutral'
-    burnedAmount: string
-  }
-
-  // For burn transactions (non-RANK OP_RETURN)
-  burnedAmount?: string
-
-  // Raw data for advanced view
-  raw: ExplorerTx
-}
-
 export const useExplorerApi = () => {
+  // Get the Explorer plugin from Nuxt context (valid inside composable function)
+  const { $explorer } = useNuxtApp()
   /**
    * Fetch a single transaction from the Explorer API
    */
@@ -238,116 +95,9 @@ export const useExplorerApi = () => {
   }
 
   /**
-   * Parse a transaction to determine its type and extract relevant data
-   */
-  const parseTransaction = (
-    tx: ExplorerTx,
-    userAddress: string,
-  ): ParsedTransaction => {
-    const timestamp = tx.block?.timestamp
-      ? parseInt(tx.block.timestamp)
-      : parseInt(tx.timeFirstSeen)
-
-    const blockHeight = tx.block?.height ?? -1
-
-    // Base parsed transaction
-    const parsed: ParsedTransaction = {
-      txid: tx.txid,
-      type: 'unknown',
-      timestamp,
-      confirmations: tx.confirmations,
-      blockHeight,
-      raw: tx,
-    }
-
-    // Check for coinbase
-    if (tx.isCoinbase) {
-      parsed.type = 'coinbase'
-      // Sum all outputs to user address
-      const received = tx.outputs
-        .filter(o => o.address === userAddress)
-        .reduce((sum, o) => sum + BigInt(o.value), 0n)
-      parsed.amount = received.toString()
-      return parsed
-    }
-
-    // Check for RANK transaction
-    const rankOutput = tx.outputs.find(o => o.rankOutput)
-    if (rankOutput?.rankOutput) {
-      parsed.type = 'rank'
-      parsed.rankData = {
-        platform: rankOutput.rankOutput.platform,
-        profileId: rankOutput.rankOutput.profileId,
-        postId: rankOutput.rankOutput.postId,
-        sentiment: rankOutput.rankOutput.sentiment,
-        burnedAmount: rankOutput.value,
-      }
-      return parsed
-    }
-
-    // Check for burn (non-RANK OP_RETURN with value)
-    const burnedSats = BigInt(tx.sumBurnedSats)
-    if (burnedSats > 0n && !rankOutput) {
-      parsed.type = 'burn'
-      parsed.burnedAmount = tx.sumBurnedSats
-      return parsed
-    }
-
-    // Calculate give/receive
-    let inputFromUser = 0n
-    let outputToUser = 0n
-    let counterpartyAddress = ''
-
-    // Sum inputs from user
-    for (const input of tx.inputs) {
-      if (input.address === userAddress) {
-        inputFromUser += BigInt(input.value)
-      }
-    }
-
-    // Sum outputs to user and find counterparty
-    for (const output of tx.outputs) {
-      if (output.address === userAddress) {
-        outputToUser += BigInt(output.value)
-      } else if (output.address && !counterpartyAddress) {
-        counterpartyAddress = output.address
-      }
-    }
-
-    // Determine if give or receive
-    if (
-      inputFromUser > 0n &&
-      outputToUser > 0n &&
-      inputFromUser === outputToUser + burnedSats
-    ) {
-      // Self-send (consolidation or fee payment)
-      parsed.type = 'self'
-      parsed.amount = burnedSats.toString() // Fee paid
-      return parsed
-    }
-
-    if (inputFromUser > outputToUser) {
-      // User sent more than received = Give
-      parsed.type = 'give'
-      parsed.amount = (inputFromUser - outputToUser).toString()
-      parsed.counterpartyAddress = counterpartyAddress
-    } else if (outputToUser > inputFromUser) {
-      // User received more than sent = Receive
-      parsed.type = 'receive'
-      parsed.amount = (outputToUser - inputFromUser).toString()
-      // For receives, counterparty is the first input address
-      if (tx.inputs[0]?.address) {
-        parsed.counterpartyAddress = tx.inputs[0].address
-      }
-    }
-
-    return parsed
-  }
-
-  /**
    * Get display info for a transaction type
    */
-  const getTransactionTypeInfo = (type: WalletTransactionType) => {
+  const getTransactionTypeInfo = (type: ExplorerTxType) => {
     switch (type) {
       case 'give':
         return {
@@ -581,19 +331,19 @@ export const useExplorerApi = () => {
 
   return {
     // Existing methods
-    fetchTransaction,
-    fetchTransactions,
-    parseTransaction,
     getTransactionTypeInfo,
     getSentimentInfo,
     formatPlatformName,
     getExplorerApiUrl,
-    // New Explorer methods
-    fetchNetworkOverview,
-    fetchBlocks,
-    fetchBlock,
-    fetchAddressHistory,
-    fetchAddressBalance,
     fetchChainInfo,
+    fetchNetworkOverview,
+    // Explorer plugin methods
+    fetchRecentBlocks: $explorer.fetchRecentBlocks,
+    fetchBlocks: $explorer.fetchBlocks,
+    fetchBlock: $explorer.fetchBlock,
+    fetchAddressHistory: $explorer.fetchAddressHistory,
+    fetchAddressBalance: $explorer.fetchAddressBalance,
+    fetchTransaction: $explorer.fetchTransaction,
+    fetchTransactions: $explorer.fetchTransactionBatch,
   }
 }

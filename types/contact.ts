@@ -2,11 +2,11 @@
  * Contact Types
  *
  * Type definitions for contact management.
+ *
+ * TODO: Need to identify how these are used in the application. Contact system
+ *       is deprecated in favor of People store, so these types need to be
+ *       removed at some point.
  */
-
-import type { NetworkType } from './network'
-import type { Identity, IdentitySignerCapabilities } from './identity'
-import { IdentityLevel } from './identity'
 
 // ============================================================================
 // Contact Address Types

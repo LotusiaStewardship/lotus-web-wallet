@@ -4,8 +4,6 @@
  * Initializes the service worker connection on app startup.
  * Only runs on the client side (.client.ts suffix).
  */
-import { useServiceWorker } from '~/composables/useServiceWorker'
-
 export default defineNuxtPlugin(() => {
   const { initialize, onMessage } = useServiceWorker()
 
@@ -16,7 +14,7 @@ export default defineNuxtPlugin(() => {
   })
 
   // Set up global message listener for SW events
-  onMessage((event: MessageEvent) => {
+  onMessage((event: MessageEvent<SWMessage>) => {
     const { type, payload } = event.data || {}
 
     switch (type) {

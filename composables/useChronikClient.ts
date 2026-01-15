@@ -19,10 +19,10 @@ import type {
   ChronikClient,
   Utxo as ChronikUtxo,
   Tx as ChronikTx,
+  ScriptType as ChronikScriptType,
 } from 'chronik-client'
 import type {
   ChronikConnectionOptions,
-  ChronikScriptType,
   ChronikSubscription,
 } from '~/plugins/02.chronik.client'
 

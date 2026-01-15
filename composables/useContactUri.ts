@@ -221,4 +221,3 @@ export function useContactUri() {
 // ============================================================================
 
 import { useWalletStore } from '~/stores/wallet'
-import { AccountPurpose } from '~/types/accounts'

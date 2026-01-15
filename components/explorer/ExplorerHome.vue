@@ -4,15 +4,13 @@
  *
  * Displays network stats, recent blocks, and mempool overview.
  */
-import { useNetworkStore } from '~/stores/network'
-import type { ChronikBlockInfo } from '~/composables/useExplorerApi'
+import type { BlockInfo } from 'chronik-client'
 
 const networkStore = useNetworkStore()
-const explorerApi = useExplorerApi()
-const chronik = useChronikClient()
+const { fetchRecentBlocks } = useExplorerApi()
 
 const loading = ref(true)
-const recentBlocks = ref<ChronikBlockInfo[]>([])
+const recentBlocks = ref<BlockInfo[]>([])
 const tipHeight = ref<number | null>(null)
 
 const network = computed(() =>
@@ -27,18 +25,10 @@ async function fetchData() {
   loading.value = true
   try {
     // Fetch recent blocks from Explorer API
-    const blocksResult = await explorerApi.fetchBlocks(1, 5)
+    const blocksResult = await fetchRecentBlocks()
     if (blocksResult) {
       recentBlocks.value = blocksResult.blocks
       tipHeight.value = blocksResult.tipHeight
-    }
-
-    // Fallback to Chronik if Explorer API fails
-    if (!blocksResult) {
-      const chainInfo = await chronik.fetchBlockchainInfo()
-      if (chainInfo) {
-        tipHeight.value = chainInfo.tipHeight
-      }
     }
   } catch (error) {
     console.error('Failed to fetch explorer data:', error)

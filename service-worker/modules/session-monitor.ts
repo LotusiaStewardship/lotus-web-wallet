@@ -4,54 +4,6 @@
  * Tracks MuSig2 signing sessions and P2P presence sessions in the background.
  * Sends warnings before session expiry and notifications when sessions expire.
  */
-
-// ============================================================================
-// Types
-// ============================================================================
-
-export interface SessionInfo {
-  id: string
-  type: 'musig2' | 'p2p_presence' | 'signing_request'
-  expiresAt: number
-  warningAt: number
-  warningSent?: boolean
-  data: Record<string, unknown>
-}
-
-export interface SigningRequest {
-  id: string
-  fromPeerId: string
-  fromNickname?: string
-  walletId: string
-  walletName?: string
-  amount?: string
-  receivedAt: number
-  expiresAt: number
-  status: 'pending' | 'accepted' | 'rejected' | 'expired'
-}
-
-type SessionClientMessage =
-  | { type: 'SESSION_EXPIRING'; payload: SessionExpiringPayload }
-  | { type: 'SESSION_EXPIRED'; payload: SessionExpiredPayload }
-  | { type: 'SIGNING_REQUEST_RECEIVED'; payload: SigningRequest }
-  | { type: 'SIGNING_REQUEST_EXPIRED'; payload: { requestId: string } }
-  | { type: 'REFRESH_PRESENCE'; payload: { timestamp: number } }
-
-interface SessionExpiringPayload {
-  sessionId: string
-  sessionType: SessionInfo['type']
-  expiresIn: number
-}
-
-interface SessionExpiredPayload {
-  sessionId: string
-  sessionType: SessionInfo['type']
-}
-
-// ============================================================================
-// Session Monitor Class
-// ============================================================================
-
 export class SessionMonitor {
   private sessions: Map<string, SessionInfo> = new Map()
   private signingRequests: Map<string, SigningRequest> = new Map()

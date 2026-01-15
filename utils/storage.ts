@@ -28,6 +28,10 @@ export const STORAGE_KEYS = {
   // Contacts
   CONTACTS: 'lotus-wallet-contacts',
 
+  // People
+  PEOPLE: 'lotus:people',
+  SHARED_WALLETS: 'lotus:shared-wallets',
+
   // P2P
   P2P_PRIVATE_KEY: 'p2p-private-key',
   P2P_PRESENCE_CONFIG: 'p2p-presence-config',
@@ -157,8 +161,8 @@ export function setRawItem(key: StorageKey, value: string): boolean {
 // IndexedDB Operations
 // ============================================================================
 
-const DB_NAME = 'lotus-wallet-db'
-const DB_VERSION = 1
+export const DB_NAME = 'lotus-wallet-db'
+export const DB_VERSION = 2
 
 /**
  * Store names in IndexedDB

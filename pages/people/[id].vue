@@ -4,7 +4,7 @@
  *
  * Shows detailed information about a contact.
  */
-import { usePeopleStore } from '~/stores/people'
+import { usePersonContext } from '~/composables/usePersonContext'
 import { useActivityStore } from '~/stores/activity'
 import { truncateAddress, formatXPI, formatRelativeTime } from '~/utils/formatting'
 
@@ -13,67 +13,144 @@ definePageMeta({
 })
 
 const route = useRoute()
-const peopleStore = usePeopleStore()
 const activityStore = useActivityStore()
 
-// Initialize stores
-onMounted(() => {
-  peopleStore.initialize()
-  activityStore.initialize()
-})
 
+// Person context
 const personId = computed(() => route.params.id as string)
-const person = computed(() => peopleStore.getById(personId.value))
+const {
+  person,
+  displayName,
+  address,
+  isOnline,
+  isFavorite,
+  canSign,
+  sharedWallets,
+  transactionCount,
+  notes,
+  tags,
+  send,
+  remove,
+  createSharedWallet,
+  copyAddress,
+  update,
+} = usePersonContext(personId)
 
-const notes = ref('')
+// Overlay management
+const { openShareContactModal, openAddContactModal } = useOverlays()
 
-// Overlay management via useOverlays
-const { openSendModal, openShareContactModal } = useOverlays()
+// Local notes ref for editing
+const editableNotes = ref('')
 
 // Sync notes when person changes
-watch(person, (p) => {
-  if (p) notes.value = p.notes || ''
+watch(notes, (newNotes) => {
+  editableNotes.value = newNotes || ''
 }, { immediate: true })
-
-// Shared wallets this person is part of
-const sharedWallets = computed(() => {
-  if (!person.value) return []
-  return person.value.sharedWalletIds
-    .map(id => peopleStore.getWallet(id))
-    .filter((w): w is NonNullable<typeof w> => w !== undefined)
-})
 
 // Recent activity with this person
 const recentActivity = computed(() => {
   if (!person.value) return []
   return activityStore.allItems
     .filter(item => {
-      const data = item.data as Record<string, unknown>
-      return data.contactId === person.value!.id ||
-        data.address === person.value!.address
+      const data = item.data as unknown
+      if (typeof data === 'object' && data !== null) {
+        const record = data as Record<string, unknown>
+        return record.contactId === person.value!.id ||
+          record.address === address.value
+      }
+      return false
     })
     .slice(0, 5)
 })
 
 const truncatedAddr = computed(() => {
-  if (!person.value) return ''
-  return truncateAddress(person.value.address)
+  const addr = address.value
+  return addr ? truncateAddress(addr) : ''
 })
 
-function copyAddress() {
-  if (person.value) {
-    navigator.clipboard.writeText(person.value.address)
+// Net balance calculations
+const netBalance = computed(() => {
+  if (!person.value) return 0n
+  return person.value.totalReceived - person.value.totalSent
+})
+
+const netBalanceClass = computed(() => {
+  const balance = netBalance.value
+  if (balance > 0n) return 'text-success'
+  if (balance < 0n) return 'text-error'
+  return 'text-gray-500'
+})
+
+const netBalanceColor = computed(() => {
+  const balance = netBalance.value
+  if (balance > 0n) return 'success'
+  if (balance < 0n) return 'error'
+  return 'neutral'
+})
+
+const netBalanceLabel = computed(() => {
+  const balance = netBalance.value
+  if (balance > 0n) return 'Net Received'
+  if (balance < 0n) return 'Net Sent'
+  return 'Balanced'
+})
+
+const netBalanceBorderClass = computed(() => {
+  const balance = netBalance.value
+  if (balance > 0n) return 'border-success/20 bg-success/5 dark:border-success/30 dark:bg-success/10'
+  if (balance < 0n) return 'border-error/20 bg-error/5 dark:border-error/30 dark:bg-error/10'
+  return 'border-gray-200 dark:border-gray-800'
+})
+
+const netBalanceIcon = computed(() => {
+  const balance = netBalance.value
+  if (balance > 0n) return 'i-lucide-arrow-down-left'
+  if (balance < 0n) return 'i-lucide-arrow-up-right'
+  return 'i-lucide-minus'
+})
+
+// Smart formatting for large XPI amounts
+const formatLargeXPI = (amount: bigint, decimals: number = 2) => {
+  const absAmount = amount < 0n ? -amount : amount
+
+  // Define thresholds in satoshis (1 XPI = 100,000,000 satoshis)
+  const thresholds = [
+    { value: 1000000000n, label: 'B', divisor: 1000000000n }, // Billion XPI
+    { value: 100000000n, label: 'M', divisor: 100000000n },   // Million XPI  
+    { value: 10000000n, label: '100s', divisor: 10000000n },   // Hundreds of XPI
+    { value: 1000000n, label: '10s', divisor: 1000000n },     // Tens of XPI
+  ]
+
+  for (const threshold of thresholds) {
+    if (absAmount >= threshold.value) {
+      const formatted = Number(amount / threshold.divisor).toFixed(decimals)
+      return `${formatted}${threshold.label}`
+    }
   }
+
+  // For smaller amounts, use regular formatting
+  return formatXPI(amount, { minDecimals: decimals, maxDecimals: decimals })
 }
+
+// Formatted computed properties
+const formattedSent = computed(() => formatLargeXPI(person.value?.totalSent || 0n))
+const formattedReceived = computed(() => formatLargeXPI(person.value?.totalReceived || 0n))
+const formattedNetBalance = computed(() => formatLargeXPI(netBalance.value))
 
 async function openSendTo() {
-  if (person.value) {
-    await openSendModal({ initialRecipient: person.value.address })
-  }
+  await send()
 }
 
-function openCreateWallet() {
-  navigateTo(`/people/wallets?create=true&with=${person.value?.id}`)
+async function openCreateWallet() {
+  await createSharedWallet()
+}
+
+async function handleEdit() {
+  if (person.value) {
+    await openAddContactModal({
+      editPerson: person.value
+    })
+  }
 }
 
 async function showQR() {
@@ -82,24 +159,26 @@ async function showQR() {
   }
 }
 
-function saveNotes() {
-  if (person.value && notes.value !== person.value.notes) {
-    peopleStore.updatePerson(person.value.id, { notes: notes.value })
+async function saveNotes() {
+  if (person.value && editableNotes.value !== notes.value) {
+    await update({ notes: editableNotes.value })
   }
 }
 
 function removeTag(tag: string) {
   if (person.value) {
-    const newTags = person.value.tags.filter(t => t !== tag)
-    peopleStore.updatePerson(person.value.id, { tags: newTags })
+    const newTags = tags.value.filter(t => t !== tag)
+    update({ tags: newTags })
   }
 }
 
-function confirmDelete() {
+async function confirmDelete() {
   // TODO: Show confirmation dialog (Phase 9)
-  if (person.value && confirm(`Delete ${person.value.name}?`)) {
-    peopleStore.removePerson(person.value.id)
-    navigateTo('/people')
+  if (person.value && confirm(`Delete ${displayName.value}?`)) {
+    const deleted = await remove()
+    if (deleted) {
+      navigateTo('/people')
+    }
   }
 }
 </script>
@@ -119,7 +198,10 @@ function confirmDelete() {
           class="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-success border-2 border-white dark:border-gray-900" />
       </div>
 
-      <h1 class="text-2xl font-bold mt-4">{{ person.name }}</h1>
+      <div class="flex items-center justify-center gap-2 mt-4">
+        <h1 class="text-2xl font-bold">{{ displayName }}</h1>
+        <UButton variant="ghost" size="sm" icon="i-lucide-edit" @click="handleEdit" />
+      </div>
 
       <div class="flex items-center justify-center gap-2 mt-1">
         <code class="text-sm text-gray-500">{{ truncatedAddr }}</code>
@@ -139,7 +221,7 @@ function confirmDelete() {
       <UButton color="primary" icon="i-lucide-send" @click="openSendTo">
         Send
       </UButton>
-      <UButton v-if="person.canSign" color="neutral" variant="outline" icon="i-lucide-shield" @click="openCreateWallet">
+      <UButton v-if="canSign" color="neutral" variant="outline" icon="i-lucide-shield" @click="openCreateWallet">
         Wallet
       </UButton>
       <UButton color="neutral" variant="outline" icon="i-lucide-share-2" @click="showQR">
@@ -147,23 +229,61 @@ function confirmDelete() {
       </UButton>
     </div>
 
-    <!-- Stats -->
-    <div class="grid grid-cols-3 gap-4 p-4 rounded-xl bg-gray-100 dark:bg-gray-800">
-      <div class="text-center">
-        <p class="text-2xl font-bold">{{ person.transactionCount }}</p>
-        <p class="text-xs text-gray-500">Transactions</p>
+    <!-- Transaction Stats -->
+    <div class="space-y-3">
+      <!-- Compact Stats Bar -->
+      <div
+        class="grid grid-cols-3 gap-4 p-4 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
+        <!-- Transaction Count -->
+        <div class="text-center">
+          <div class="flex items-center justify-center gap-1 mb-1">
+            <UIcon name="i-lucide-repeat" class="w-4 h-4 text-primary" />
+            <span class="text-xs font-medium text-gray-500">Transactions</span>
+          </div>
+          <p class="text-xl font-bold text-primary">{{ transactionCount }}</p>
+        </div>
+
+        <!-- Total Sent -->
+        <div class="text-center border-x border-gray-200 dark:border-gray-800">
+          <div class="flex items-center justify-center gap-1 mb-1">
+            <UIcon name="i-lucide-arrow-up-right" class="w-4 h-4 text-error" />
+            <span class="text-xs font-medium text-gray-500">Sent</span>
+          </div>
+          <p class="text-xl font-bold text-error truncate"
+            :title="formatXPI(person.totalSent, { minDecimals: 2, maxDecimals: 2 })">
+            {{ formattedSent }}
+          </p>
+        </div>
+
+        <!-- Total Received -->
+        <div class="text-center">
+          <div class="flex items-center justify-center gap-1 mb-1">
+            <UIcon name="i-lucide-arrow-down-left" class="w-4 h-4 text-success" />
+            <span class="text-xs font-medium text-gray-500">Received</span>
+          </div>
+          <p class="text-xl font-bold text-success truncate"
+            :title="formatXPI(person.totalReceived, { minDecimals: 2, maxDecimals: 2 })">
+            {{ formattedReceived }}
+          </p>
+        </div>
       </div>
-      <div class="text-center">
-        <p class="text-2xl font-bold text-error">
-          {{ formatXPI(person.totalSent, { minDecimals: 2 }) }}
-        </p>
-        <p class="text-xs text-gray-500">Sent</p>
-      </div>
-      <div class="text-center">
-        <p class="text-2xl font-bold text-success">
-          {{ formatXPI(person.totalReceived, { minDecimals: 2 }) }}
-        </p>
-        <p class="text-xs text-gray-500">Received</p>
+
+      <!-- Net Balance Indicator (only if there's activity) -->
+      <div v-if="person.totalSent > 0 || person.totalReceived > 0"
+        class="flex items-center justify-between p-3 rounded-lg border" :class="netBalanceBorderClass">
+        <div class="flex items-center gap-2">
+          <UIcon :name="netBalanceIcon" class="w-4 h-4" :class="netBalanceColor" />
+          <span class="text-sm font-medium">Net Position</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-bold truncate" :class="netBalanceClass"
+            :title="formatXPI(netBalance, { minDecimals: 2, maxDecimals: 2 })">
+            {{ formattedNetBalance }}
+          </span>
+          <UBadge :color="netBalanceColor" variant="soft" size="xs">
+            {{ netBalanceLabel }}
+          </UBadge>
+        </div>
       </div>
     </div>
 
@@ -221,24 +341,28 @@ function confirmDelete() {
     <!-- Notes -->
     <div class="space-y-3">
       <h2 class="text-lg font-semibold">Notes</h2>
-      <UTextarea class="w-full" v-model="notes" placeholder="Add notes about this person..." :rows="3"
+      <UTextarea class="w-full" v-model="editableNotes" placeholder="Add notes about this person..." :rows="3"
         @blur="saveNotes" />
     </div>
 
     <!-- Tags -->
-    <div class="space-y-3">
+    <!--
+    TODO: "Add Tag" button doesn't do anything
+
+    Need to implement the tag system and management
+    -->
+    <!-- <div class="space-y-3">
       <h2 class="text-lg font-semibold">Tags</h2>
       <div class="flex flex-wrap gap-2">
         <UBadge v-for="tag in person.tags" :key="tag" variant="subtle" class="cursor-pointer" @click="removeTag(tag)">
           {{ tag }}
           <UIcon name="i-lucide-x" class="w-3 h-3 ml-1" />
         </UBadge>
-        <!-- TODO: "Add Tag" button doesn't do anything -->
         <UButton variant="ghost" size="xs" icon="i-lucide-plus">
           Add Tag
         </UButton>
       </div>
-    </div>
+    </div> -->
 
     <!-- Danger Zone -->
     <div class="pt-6 border-t border-gray-200 dark:border-gray-800">

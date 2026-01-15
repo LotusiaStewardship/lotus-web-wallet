@@ -4,11 +4,15 @@
  *
  * Compact person display for the "Online Now" section.
  */
-import type { Person } from '~/types/people'
+import type { Person } from '~/utils/types/people'
+import { usePersonContext } from '~/composables/usePersonContext'
 
-defineProps<{
+const props = defineProps<{
   person: Person
 }>()
+
+// Use person context for display name
+const { displayName } = usePersonContext(props.person.id)
 
 const emit = defineEmits<{
   (e: 'click'): void
@@ -23,6 +27,6 @@ const emit = defineEmits<{
       <span
         class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-success border border-white dark:border-gray-900" />
     </div>
-    <span class="text-sm font-medium">{{ person.name }}</span>
+    <span class="text-sm font-medium">{{ displayName }}</span>
   </button>
 </template>

@@ -5,8 +5,6 @@
  * These utilities work with the unified Identity model.
  */
 import { getBitcore, isBitcoreLoaded } from '~/plugins/bitcore.client'
-import type { Identity, IdentityInput } from '~/types/identity'
-import { IdentityLevel } from '~/types/identity'
 
 /**
  * Validate a compressed public key format.

@@ -11,18 +11,10 @@
  * State management remains in the draft store.
  */
 import type * as BitcoreTypes from 'xpi-ts/lib/bitcore'
-import { DUST_THRESHOLD, MAX_TX_SIZE, MAX_RECIPIENTS } from '~/utils/constants'
 
 // ============================================================================
 // Types
 // ============================================================================
-
-export interface UtxoEntry {
-  outpoint: string
-  value: string
-  height: number
-  isCoinbase: boolean
-}
 
 export interface RecipientData {
   address: string

@@ -17,23 +17,7 @@
  * - setOpReturn(config) - OP_RETURN data
  * - setLocktime(config) - Locktime
  */
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { useWalletStore } from './wallet'
-import { useNetworkStore } from './network'
-import { getBitcore } from '~/plugins/bitcore.client'
-import {
-  broadcastTransaction,
-  isChronikInitialized,
-} from '~/plugins/02.chronik.client'
-import {
-  useTransactionBuilder,
-  type UtxoEntry,
-  type OpReturnConfig,
-  type LocktimeConfig,
-  type TransactionBuildContext,
-} from '~/composables/useTransactionBuilder'
-import { DEFAULT_FEE_RATE, USE_CRYPTO_WORKER } from '~/utils/constants'
 
 // ============================================================================
 // Types
@@ -93,6 +77,7 @@ function createInitialState(): DraftState {
 // ============================================================================
 
 export const useDraftStore = defineStore('draft', () => {
+  const { $bitcore, $chronik } = useNuxtApp()
   // === STATE ===
   const address = ref('')
   const amountSats = ref(0n)
@@ -131,10 +116,9 @@ export const useDraftStore = defineStore('draft', () => {
 
   function _buildContext(): TransactionBuildContext | null {
     const walletStore = useWalletStore()
-    const Bitcore = getBitcore()
 
     const txContext = walletStore.getTransactionBuildContext()
-    if (!Bitcore || !txContext) return null
+    if (!$bitcore || !txContext) return null
 
     const availableUtxosList = _getAvailableUtxos()
 
@@ -310,12 +294,11 @@ export const useDraftStore = defineStore('draft', () => {
     const walletStore = useWalletStore()
     const networkStore = useNetworkStore()
     const builder = useTransactionBuilder()
-    const Bitcore = getBitcore()
 
     if (
-      !isChronikInitialized() ||
+      !$chronik.isInitialized() ||
       !walletStore.isReadyForSigning() ||
-      !Bitcore
+      !$bitcore
     ) {
       throw new Error('Wallet not initialized')
     }
@@ -351,7 +334,7 @@ export const useDraftStore = defineStore('draft', () => {
             ? {
                 outpoint: utxo.outpoint,
                 value: walletUtxo.value,
-                height: walletUtxo.height,
+                blockHeight: walletUtxo.blockHeight,
                 isCoinbase: walletUtxo.isCoinbase,
               }
             : null
@@ -381,8 +364,10 @@ export const useDraftStore = defineStore('draft', () => {
       // Sign the transaction
       let signedTxHex: string
 
-      if (USE_CRYPTO_WORKER && typeof Worker !== 'undefined') {
-        const { signTransaction } = useCryptoWorker()
+      // If enabled, crypto worker is initialized in app.vue before wallet store
+      if (USE_CRYPTO_WORKER) {
+        const { $cryptoWorker } = useNuxtApp()
+        console.log('Signing transaction via crypto worker')
         const privateKeyHex = walletStore.getPrivateKeyHex()
         if (!privateKeyHex) throw new Error('Private key not available')
 
@@ -395,7 +380,7 @@ export const useDraftStore = defineStore('draft', () => {
           scriptHex,
         }))
 
-        const signResult = await signTransaction(
+        const signResult = await $cryptoWorker.signTransaction(
           tx.toBuffer().toString('hex'),
           utxosForSigning,
           privateKeyHex,
@@ -409,7 +394,7 @@ export const useDraftStore = defineStore('draft', () => {
       }
 
       // Broadcast
-      const result = await broadcastTransaction(signedTxHex)
+      const result = await $chronik.broadcastTransaction(signedTxHex)
 
       // Update wallet state - remove spent UTXOs
       for (const input of tx.inputs) {

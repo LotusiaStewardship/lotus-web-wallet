@@ -20,16 +20,7 @@
  */
 
 /// <reference lib="webworker" />
-
-import type {
-  CryptoWorkerRequest,
-  CryptoWorkerResponse,
-  AddressType,
-  KeysDerivedResponse,
-  TransactionSignedResponse,
-  MessageSignedResponse,
-  CryptoWorkerStatus,
-} from '~/types/crypto-worker'
+import { BIP44_PURPOSE, BIP44_COINTYPE } from '~/utils/constants'
 import {
   Mnemonic,
   HDPrivateKey,
@@ -45,27 +36,20 @@ import {
   Hash,
 } from 'xpi-ts/lib/bitcore'
 import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
+import type { AddressType } from '~/utils/types/wallet'
+import type {
+  CryptoWorkerRequest,
+  CryptoWorkerResponse,
+  KeysDerivedResponse,
+  P2TRCommitmentDerivedResponse,
+  TransactionSignedResponse,
+  MessageSignedResponse,
+  CryptoWorkerStatus,
+} from '~/utils/types/crypto-worker'
 
+// This should be incremented when the worker's behavior or supported
+// operations change
 const WORKER_VERSION = '2.0.0'
-
-// ============================================================================
-// SDK Loading
-// ============================================================================
-
-//type BitcoreSDK = typeof Bitcore
-//const sdkReady = true
-
-//async function ensureSDK(): Promise<BitcoreSDK> {
-// SDK is statically imported, always available
-//return Bitcore
-//}
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const BIP44_PURPOSE = 44
-const BIP44_COINTYPE = 10605
 
 // ============================================================================
 // Worker Initialization
@@ -74,8 +58,6 @@ const BIP44_COINTYPE = 10605
 // Initialize SDK and signal ready
 ;(async () => {
   try {
-    // await ensureSDK()
-
     const status: CryptoWorkerStatus = {
       ready: true,
       version: WORKER_VERSION,
@@ -83,6 +65,7 @@ const BIP44_COINTYPE = 10605
         'GENERATE_MNEMONIC',
         'VALIDATE_MNEMONIC',
         'DERIVE_KEYS',
+        'DERIVE_P2TR_COMMITMENT',
         'SIGN_TRANSACTION',
         'SIGN_MESSAGE',
         'VERIFY_MESSAGE',
@@ -116,9 +99,6 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
   const { type, requestId } = request
 
   try {
-    // Ensure SDK is loaded before processing
-    //const sdk = await ensureSDK()
-
     switch (type) {
       case 'GENERATE_MNEMONIC':
         await handleGenerateMnemonic(requestId, request.payload.strength)
@@ -126,6 +106,13 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 
       case 'VALIDATE_MNEMONIC':
         await handleValidateMnemonic(requestId, request.payload.mnemonic)
+        break
+
+      case 'DERIVE_P2TR_COMMITMENT':
+        await handleGenerateP2TRCommitment(
+          requestId,
+          request.payload.internalPubKeyHex,
+        )
         break
 
       case 'DERIVE_KEYS':
@@ -192,6 +179,33 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
 // ============================================================================
 // Operation Handlers
 // ============================================================================
+
+/**
+ * Generate a P2TR (Pay-to-Taproot) commitment from an internal public key.
+ * Uses an empty merkle root for key-path-only spending.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param internalPubKeyHex - Internal public key as hex string
+ */
+async function handleGenerateP2TRCommitment(
+  requestId: string,
+  internalPubKeyHex: string,
+): Promise<void> {
+  const internalPubKey = new PublicKey(internalPubKeyHex)
+  const merkleRoot = Buffer.alloc(32)
+  const commitment = tweakPublicKey(internalPubKey, merkleRoot)
+
+  const payload: P2TRCommitmentDerivedResponse['payload'] = {
+    commitmentHex: commitment.toString(),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'P2TR_COMMITMENT_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
 
 async function handleGenerateMnemonic(
   requestId: string,
@@ -410,8 +424,6 @@ async function handleHashData(
 
   // Convert hex string to Buffer
   const dataBuffer = Buffer.from(data, 'hex')
-
-  // Use SDK's Hash utilities for all algorithms (consistent and reliable)
 
   switch (algorithm) {
     case 'sha256': {

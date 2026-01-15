@@ -5,14 +5,6 @@
  * These functions have no side effects and can be used anywhere.
  */
 
-import {
-  LOTUS_DECIMALS,
-  SATS_PER_XPI,
-  LOTUS_PREFIX,
-  MAINNET_CHAR,
-  TESTNET_CHAR,
-} from './constants'
-
 // ============================================================================
 // Number Formatting
 // ============================================================================

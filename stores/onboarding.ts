@@ -9,9 +9,7 @@
  * - Feature hints
  * - Backup reminders
  */
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
 
 // ============================================================================
 // Types

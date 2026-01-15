@@ -4,9 +4,7 @@
  * Centralized store for UI settings that persist across sessions.
  * This store manages user preferences that don't belong to other domain-specific stores.
  */
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
 
 // ============================================================================
 // Types
