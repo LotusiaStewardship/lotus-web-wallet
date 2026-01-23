@@ -4,8 +4,6 @@
  * Address parsing, formatting, and validation utilities.
  * Uses the Bitcore SDK for address operations.
  */
-import { useBitcore } from './useBitcore'
-import { useNetworkStore } from '~/stores/network'
 
 // ============================================================================
 // Types
@@ -46,10 +44,10 @@ export interface AddressTypeLabel {
 // Composable
 // ============================================================================
 
-export function useAddress() {
-  const { $bitcore } = useNuxtApp()
-  const networkStore = useNetworkStore()
+const { $bitcore } = useNuxtApp()
+const networkStore = useNetworkStore()
 
+export function useAddress() {
   /**
    * Validate a Lotus address
    * @param address - Address to validate

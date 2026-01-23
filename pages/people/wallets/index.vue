@@ -31,7 +31,10 @@ const { openCreateWalletModal } = useOverlays()
 // Watch for create query param
 watch(() => route.query, async (query) => {
   if (query.create === 'true') {
-    await openCreateWalletModal(undefined, true)
+    // Clean query params immediately
+    await router.replace({ query: { ...route.query, create: undefined, with: undefined } })
+
+    await openCreateWalletModal(undefined)
   }
 }, { immediate: true })
 

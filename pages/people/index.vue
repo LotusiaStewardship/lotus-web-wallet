@@ -5,7 +5,6 @@
  * Central hub for contacts, shared wallets, and P2P presence.
  */
 import { usePeopleStore } from '~/stores/people'
-import type { Person } from '~/types/people'
 
 definePageMeta({
   title: 'People',
@@ -15,11 +14,6 @@ const peopleStore = usePeopleStore()
 const route = useRoute()
 const router = useRouter()
 
-// Initialize store
-onMounted(() => {
-  peopleStore.initialize()
-})
-
 const activeTab = ref<'all' | 'favorites' | 'online' | 'signers' | 'wallets'>('all')
 
 // Overlay management via useOverlays
@@ -28,11 +22,14 @@ const { openSendModal, openAddContactModal, openShareMyContactModal } = useOverl
 // Watch for query params to open add contact modal
 watch(() => route.query, async (query) => {
   if (query.add === 'true') {
+    // Clean query params immediately
+    await router.replace({ query: { ...route.query, add: undefined, address: undefined, name: undefined, pubkey: undefined } })
+
     await openAddContactModal({
       initialAddress: (query.address as string) || undefined,
       initialName: (query.name as string) || undefined,
       initialPublicKey: (query.pubkey as string) || undefined,
-    }, true)
+    })
   }
 }, { immediate: true })
 
@@ -85,14 +82,6 @@ const emptyStateMessage = computed(() => {
 
 async function openAddContact() {
   await openAddContactModal()
-}
-
-async function openSendTo(person: Person) {
-  await openSendModal({ initialRecipient: person.address })
-}
-
-function toggleFavorite(person: Person) {
-  peopleStore.updatePerson(person.id, { isFavorite: !person.isFavorite })
 }
 </script>
 
@@ -167,7 +156,7 @@ function toggleFavorite(person: Person) {
     <template v-else>
       <div v-if="displayedPeople.length > 0" class="space-y-2">
         <PeoplePersonCard v-for="person in displayedPeople" :key="person.id" :person="person"
-          @click="navigateTo(`/people/${person.id}`)" @send="openSendTo(person)" @favorite="toggleFavorite(person)" />
+          @click="navigateTo(`/people/${person.id}`)" />
       </div>
 
       <!-- Empty State -->

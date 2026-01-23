@@ -12,7 +12,6 @@ import { defineStore } from 'pinia'
 import { getItem, setItem, STORAGE_KEYS } from '~/utils/storage'
 import { useIdentityStore } from './identity'
 import { useP2PStore } from './p2p'
-import type { NetworkType } from './network'
 import { useNetworkStore } from './network'
 import type { OnlineStatus, ContactWithIdentity } from '~/types/contact'
 import {

@@ -177,10 +177,7 @@ export class PushNotificationManager {
   async showRawNotification(config: PushNotificationConfig): Promise<void> {
     try {
       // Check for action support (Safari doesn't support actions)
-      const supportsActions =
-        'actions' in Notification.prototype ||
-        (typeof Notification !== 'undefined' &&
-          Notification.prototype.hasOwnProperty('actions'))
+      const supportsActions = Notification && 'actions' in Notification
 
       const options: NotificationOptions & {
         actions?: Array<{ action: string; title: string }>

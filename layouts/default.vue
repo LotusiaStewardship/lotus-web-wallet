@@ -33,8 +33,11 @@ watch(() => route.query, async (query) => {
     const address = query.send as string
     const amount = query.amount ? Number(query.amount) : undefined
 
+    // Clean query params immediately
+    await router.replace({ query: { ...route.query, send: undefined, amount: undefined } })
+
     // Open modal and wait for result
-    await openSendModal({ initialRecipient: address, initialAmount: amount }, true)
+    await openSendModal({ initialRecipient: address, initialAmount: amount })
   }
 }, { immediate: true })
 
@@ -125,7 +128,7 @@ async function handleActionSheet() {
       await handleScanFlow()
       break
     case 'wallet':
-      await openCreateWalletModal(undefined, true)
+      await openCreateWalletModal(undefined)
       break
   }
 }

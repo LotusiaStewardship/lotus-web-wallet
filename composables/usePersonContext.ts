@@ -166,7 +166,7 @@ export function usePersonContext(
   async function send(): Promise<void> {
     if (!person.value?.address) return
 
-    await openSendModal({ initialRecipient: person.value.address })
+    await openSendModal({ initialRecipient: person.value })
   }
 
   async function edit(): Promise<void> {

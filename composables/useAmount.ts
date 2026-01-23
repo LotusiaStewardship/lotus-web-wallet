@@ -12,12 +12,6 @@
 /** Satoshis per XPI (bigint for precision) */
 const SATS_PER_XPI = 1_000_000n
 
-/** Number of decimal places */
-const DECIMALS = 6
-
-/** Dust threshold in satoshis */
-const DUST_THRESHOLD = 546n
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -58,7 +52,7 @@ export function useAmount() {
     if (fraction === 0n) {
       result = whole.toString()
     } else {
-      const fractionStr = fraction.toString().padStart(DECIMALS, '0')
+      const fractionStr = fraction.toString().padStart(LOTUS_DECIMALS, '0')
       const trimmed = fractionStr.replace(/0+$/, '')
       result = `${whole}.${trimmed}`
     }
@@ -80,7 +74,9 @@ export function useAmount() {
 
     const [whole, fraction = ''] = absStr.split('.')
     const wholeSats = BigInt(whole || '0') * SATS_PER_XPI
-    const fractionPadded = fraction.padEnd(DECIMALS, '0').slice(0, DECIMALS)
+    const fractionPadded = fraction
+      .padEnd(LOTUS_DECIMALS, '0')
+      .slice(0, LOTUS_DECIMALS)
     const fractionSats = BigInt(fractionPadded)
     const result = wholeSats + fractionSats
 
@@ -117,7 +113,7 @@ export function useAmount() {
     } else {
       formatted = num.toLocaleString(undefined, {
         minimumFractionDigits: options?.minDecimals ?? 0,
-        maximumFractionDigits: options?.maxDecimals ?? DECIMALS,
+        maximumFractionDigits: options?.maxDecimals ?? LOTUS_DECIMALS,
       })
     }
 
@@ -251,10 +247,5 @@ export function useAmount() {
 
     // Utilities
     percentOfTotal,
-
-    // Constants
-    SATS_PER_XPI,
-    DECIMALS,
-    DUST_THRESHOLD,
   }
 }

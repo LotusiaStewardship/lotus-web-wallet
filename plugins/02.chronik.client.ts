@@ -19,8 +19,10 @@ import type {
   WsEndpoint,
   Utxo as ChronikUtxo,
   Tx as ChronikTx,
-  ScriptType as ChronikScriptType,
   Block,
+  TxHistoryPage,
+  BlockchainInfo,
+  ScriptType,
 } from 'chronik-client'
 import { ChronikClient } from 'chronik-client'
 
@@ -37,7 +39,7 @@ export interface ChronikConnectionOptions {
   /** Script payload for subscriptions */
   scriptPayload: string
   /** Script type for subscriptions */
-  scriptType: ChronikScriptType
+  scriptType: ScriptType
   /** Callback for new transactions */
   onTransaction?: (txid: string) => void
   /** Callback for connection state changes */
@@ -54,7 +56,7 @@ export interface ChronikConnectionOptions {
  * Subscription info for a single script
  */
 export interface ChronikSubscription {
-  scriptType: ChronikScriptType
+  scriptType: ScriptType
   scriptPayload: string
   /** Account purpose identifier for routing callbacks */
   accountId?: string
@@ -69,8 +71,7 @@ export type BlockchainInfoResult = ReturnType<ChronikClient['blockchainInfo']>
 
 export default defineNuxtPlugin({
   name: 'chronik',
-  // Note: Plugin ordering is handled by filename prefix (02.)
-  // Bitcore plugin runs first as it has no prefix
+  dependsOn: ['bitcore'],
   setup() {
     // ============================================================================
     // Module-level State
@@ -215,7 +216,7 @@ export default defineNuxtPlugin({
      * Fetch UTXOs for a specific script payload
      */
     async function fetchUtxosForScript(
-      scriptType: ChronikScriptType,
+      scriptType: ScriptType,
       scriptPayload: string,
     ): Promise<ChronikUtxo[]> {
       if (!client) {
@@ -260,21 +261,22 @@ export default defineNuxtPlugin({
     async function fetchTransactionHistory(
       page: number = 0,
       pageSize: number = 25,
-    ): Promise<{ txs: ChronikTx[]; numPages: number }> {
+    ): Promise<TxHistoryPage> {
       if (!client || !currentOptions) {
-        throw new Error('Chronik client not initialized')
+        console.warn(
+          '[Chronik Plugin] Client not initialized, returning empty history',
+        )
+        return {
+          txs: [],
+          numPages: 0,
+        }
       }
 
       const endpoint = client.script(
         currentOptions.scriptType,
         currentOptions.scriptPayload,
       )
-      const result = await endpoint.history(page, pageSize)
-
-      return {
-        txs: result?.txs ?? [],
-        numPages: result?.numPages ?? 0,
-      }
+      return await endpoint.history(page, pageSize)
     }
 
     /**
@@ -282,7 +284,10 @@ export default defineNuxtPlugin({
      */
     async function fetchTransaction(txid: string): Promise<ChronikTx | null> {
       if (!client) {
-        throw new Error('Chronik client not initialized')
+        console.warn(
+          '[Chronik Plugin] Client not initialized, returning null transaction',
+        )
+        return null
       }
 
       try {
@@ -314,7 +319,7 @@ export default defineNuxtPlugin({
     /**
      * Fetch blockchain info (tip height and hash)
      */
-    async function fetchBlockchainInfo(): Promise<Awaited<BlockchainInfoResult> | null> {
+    async function fetchBlockchainInfo(): Promise<BlockchainInfo | null> {
       if (!client) {
         throw new Error('Chronik client not initialized')
       }
@@ -352,7 +357,7 @@ export default defineNuxtPlugin({
      * Update the script payload (e.g., when switching address types)
      */
     function updateScriptOptions(
-      scriptType: ChronikScriptType,
+      scriptType: ScriptType,
       scriptPayload: string,
     ): void {
       if (!currentOptions) {
@@ -366,7 +371,7 @@ export default defineNuxtPlugin({
      * Unsubscribe from current script and subscribe to new one
      */
     async function resubscribeToScript(
-      newScriptType: ChronikScriptType,
+      newScriptType: ScriptType,
       newScriptPayload: string,
     ): Promise<void> {
       if (!wsEndpoint || !currentOptions) {

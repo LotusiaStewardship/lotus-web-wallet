@@ -10,13 +10,6 @@
  *
  * Uses useOverlay pattern - receives props and emits 'close' event with result.
  */
-import { usePeopleStore } from '~/stores/people'
-import { useWalletStore } from '~/stores/wallet'
-import { useDraftStore } from '~/stores/draft'
-import { useNetworkStore } from '~/stores/network'
-import { truncateAddress, formatXPI } from '~/utils/formatting'
-import { registerBackHandler } from '~/composables/useOverlays'
-import type { Person } from '~/types/people'
 
 const props = defineProps<{
   initialRecipient?: Person | string

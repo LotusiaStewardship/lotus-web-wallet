@@ -295,11 +295,7 @@ export const useDraftStore = defineStore('draft', () => {
     const networkStore = useNetworkStore()
     const builder = useTransactionBuilder()
 
-    if (
-      !$chronik.isInitialized() ||
-      !walletStore.isReadyForSigning() ||
-      !$bitcore
-    ) {
+    if (!$chronik.isInitialized() || !walletStore.isReadyForSigning()) {
       throw new Error('Wallet not initialized')
     }
 

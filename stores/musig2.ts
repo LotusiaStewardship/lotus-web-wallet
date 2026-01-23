@@ -71,7 +71,7 @@ import { getDiscoveryCache } from '~/plugins/03.discovery-cache.client'
 /**
  * Transaction types for UI display
  */
-export type TransactionType =
+type TransactionType =
   | 'spend'
   | 'swap'
   | 'coinjoin'

@@ -7,6 +7,9 @@
 import { ChronikClient } from 'chronik-client'
 import type { Utxo } from 'chronik-client'
 
+// we are operating in a service worker context so `self` is defined
+declare let self: ServiceWorkerGlobalScope
+
 /**
  * Network Monitor Class
  *
@@ -54,14 +57,26 @@ import type { Utxo } from 'chronik-client'
  * @see {@link SessionMonitor} for related session monitoring functionality
  */
 export class NetworkMonitor {
+  /** Chronik client instance for making REST API calls */
   private chronik: ChronikClient | null = null
+  /** Current configuration for the network monitor */
   private config: NetworkMonitorConfig | null = null
+  /** Cache of known UTXOs per script payload, used to detect changes */
   private lastKnownUtxos: Map<string, Set<string>> = new Map()
+  /** Timer handle for the polling interval */
   private pollingTimer: ReturnType<typeof setInterval> | null = null
+  /** Flag indicating if there are pending transactions (increases polling frequency) */
   private hasPendingTransactions = false
+  /** Flag indicating if there are active signing sessions (increases polling frequency) */
   private hasActiveSigningSessions = false
+  /** Flag indicating if the app was recently backgrounded (temporarily increases polling frequency) */
   private recentlyBackgrounded = false
+  /** Timer handle for clearing the recentlyBackgrounded flag after 2 minutes */
   private recentlyBackgroundedTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ====================================================================================
+  // Configuration and Lifecycle
+  // ====================================================================================
 
   /**
    * Configure the network monitor
@@ -313,7 +328,7 @@ export class NetworkMonitor {
             lastError = error
           }
         } else {
-          lastError = new Error('Unknown error')
+          // Unknown error, just continue
         }
 
         // Wait before retry (unless it's the last attempt)
@@ -331,25 +346,17 @@ export class NetworkMonitor {
    * Notify all clients of an event
    */
   private notifyClients(message: NetworkClientMessage): void {
-    // In service worker context, use clients API
-    if (typeof self !== 'undefined' && 'clients' in self) {
-      const sw = self as unknown as ServiceWorkerGlobalScope
-      sw.clients.matchAll({ type: 'window' }).then(clients => {
-        for (const client of clients) {
-          console.log(
-            '[NetworkMonitor] Notifying client of new message:',
-            message.type,
-            client.id,
-            message.type,
-          )
-          client.postMessage(message)
-        }
-      })
-    }
-    console.warn(
-      '[NetworkMonitor] No clients to notify or unsupported context',
-      self,
-    )
+    self.clients.matchAll({ type: 'window' }).then(clients => {
+      for (const client of clients) {
+        console.log(
+          '[NetworkMonitor] Notifying client of new message:',
+          message.type,
+          client.id,
+          message.type,
+        )
+        client.postMessage(message)
+      }
+    })
   }
 
   /**

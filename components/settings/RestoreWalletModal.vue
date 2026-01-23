@@ -8,8 +8,6 @@
  * 3. Confirm restoration
  * 4. Success/Error result
  */
-import { useWalletStore } from '~/stores/wallet'
-import { registerBackHandler } from '~/composables/useOverlays'
 
 const props = defineProps<{
   backPressed?: number // Counter that increments on each back button press

@@ -12,8 +12,6 @@
  * - lotus_...                                     → Raw address (opens SendModal)
  */
 import { QrcodeStream } from 'vue-qrcode-reader'
-import { useContactUri, type ContactUriData } from '~/composables/useContactUri'
-import { PAYMENT_URI_SCHEME } from '~/utils/constants'
 
 export type ScanResult =
   | { type: 'address'; address: string }

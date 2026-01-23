@@ -5,8 +5,6 @@
  * Shows QR code and address for receiving XPI with copy/share options.
  * Uses useOverlay pattern - emits 'close' event when done.
  */
-import { useWalletStore } from '~/stores/wallet'
-import { useNetworkStore } from '~/stores/network'
 import QRCodeVue3 from 'qrcode-vue3'
 
 const emit = defineEmits<{

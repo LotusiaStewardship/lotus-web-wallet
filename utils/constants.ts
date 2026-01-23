@@ -54,7 +54,7 @@ export const DEFAULT_NETWORK: NetworkType = 'livenet'
 /** Number of decimal places for Lotus (XPI) */
 export const LOTUS_DECIMALS = 6
 
-/** Satoshis per XPI */
+/** Satoshis per XPI. Must be number for conversion methods used elsewhere */
 export const SATS_PER_XPI = 1_000_000
 
 /** Dust threshold in satoshis */
