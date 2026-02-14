@@ -223,9 +223,9 @@ export default defineNuxtPlugin({
       }
       // P2PKH/P2TR/P2SH outputs
       if (
-        script.isPayToPublicKeyHash() ||
-        script.isPayToScriptHash() ||
-        script.isPayToTaproot()
+        script.isPublicKeyHashOut() ||
+        script.isScriptHashOut() ||
+        script.isTaprootOut()
       ) {
         const address = getAddressFromScript(script)!.toXAddress()
         return {

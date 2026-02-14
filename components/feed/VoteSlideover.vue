@@ -61,11 +61,8 @@ async function confirmVote() {
   })
 
   if (result.success && result.txid) {
-    // Brief success display then close with result
-    setTimeout(() => {
-      reset()
-      emit('close', { txid: result.txid! })
-    }, 1500)
+    reset()
+    emit('close', { txid: result.txid! })
   }
 }
 
@@ -132,11 +129,11 @@ function close() {
         </div>
 
         <!-- Success Display -->
-        <div v-if="status === 'success'"
+        <!-- <div v-if="status === 'success'"
           class="text-sm text-success-500 text-center flex items-center justify-center gap-2">
           <UIcon name="i-lucide-check-circle" class="w-4 h-4" />
           <span>Vote cast successfully!</span>
-        </div>
+        </div> -->
 
         <!-- R4: Confirm Button — equal visual weight for upvote/downvote (cost symmetry) -->
         <button

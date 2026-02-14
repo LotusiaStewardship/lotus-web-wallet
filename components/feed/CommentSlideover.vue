@@ -12,6 +12,8 @@ export interface CommentSlideoverProps {
   platform: ScriptChunkPlatformUTF8
   profileId: string
   postId?: string
+  /** Parent comment txid for reply threading (5.1a spec) */
+  inReplyTo?: string
 }
 
 export interface CommentSlideoverResult {
@@ -93,13 +95,12 @@ async function confirmComment() {
     postId: props.postId,
     content: commentText.value,
     burnAmountSats: selectedBurnSats.value,
+    inReplyTo: props.inReplyTo,
   })
 
   if (result.success && result.txid) {
-    setTimeout(() => {
-      reset()
-      emit('close', { txid: result.txid! })
-    }, 1500)
+    reset()
+    emit('close', { txid: result.txid! })
   }
 }
 
@@ -116,8 +117,17 @@ function close() {
         <!-- Header -->
         <div class="flex items-center justify-between">
           <div class="w-8" />
-          <h2 class="text-lg font-semibold text-center">Add Comment</h2>
+          <h2 class="text-lg font-semibold text-center">
+            {{ props.inReplyTo ? 'Reply to Comment' : 'Add Comment' }}
+          </h2>
           <UButton variant="ghost" size="xs" icon="i-lucide-x" @click="close" />
+        </div>
+
+        <!-- Reply context indicator -->
+        <div v-if="props.inReplyTo"
+          class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500">
+          <UIcon name="i-lucide-reply" class="w-3.5 h-3.5 flex-shrink-0" />
+          <span>Replying to comment <span class="font-mono">{{ props.inReplyTo.slice(0, 8) }}...</span></span>
         </div>
 
         <!-- Comment Input -->

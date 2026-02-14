@@ -15,10 +15,7 @@
  *   - Chronik client (via plugin)
  */
 
-import {
-  toScriptRNKC,
-  type ScriptChunkPlatformUTF8,
-} from 'xpi-ts/lib/rank'
+import { toScriptRNKC, type ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import { RNKC_MIN_FEE_RATE, MAX_OP_RETURN_DATA } from 'xpi-ts/utils/constants'
 import { useWalletStore } from '~/stores/wallet'
 
@@ -35,8 +32,10 @@ export interface CommentParams {
   postId?: string
   /** Comment text (UTF-8) */
   content: string
-  /** Burn amount in satoshis */
-  burnAmountSats: bigint
+  /** Burn amount in satoshis. If omitted, auto-calculated from byte length × fee rate. */
+  burnAmountSats?: bigint
+  /** Parent comment txid for reply threading (5.1a spec) */
+  inReplyTo?: string
 }
 
 export interface CommentResult {
@@ -66,22 +65,19 @@ const MAX_COMMENT_BYTES = MAX_OP_RETURN_DATA * 2
 /** Minimum fee rate per byte of comment data (from xpi-ts constants) */
 const MIN_FEE_RATE_PER_BYTE = BigInt(RNKC_MIN_FEE_RATE)
 
-/** Burn presets for comments — higher than votes since burn must cover fee rate × comment length */
-export const COMMENT_BURN_PRESETS = [
-  { label: '100', sats: 100_000000n },
-  { label: '500', sats: 500_000000n },
-  { label: '1K', sats: 1_000_000000n },
-  { label: '5K', sats: 5_000_000000n },
-]
+/** Minimum fee rate per byte exported for UI display */
+export const COMMENT_MIN_FEE_RATE = MIN_FEE_RATE_PER_BYTE
 
 // ============================================================================
 // Composable
 // ============================================================================
 
 export function useRnkcComment() {
+  const { $bitcore, $cryptoWorker } = useNuxtApp()
   const walletStore = useWalletStore()
   const { broadcastTransaction } = useChronikClient()
   const { addInputsToTransaction } = useTransactionBuilder()
+  const { Script, Transaction } = $bitcore
 
   const status = ref<CommentStatus>('idle')
   const error = ref<string | null>(null)
@@ -130,7 +126,9 @@ export function useRnkcComment() {
    * The burn amount = total input - change - mining fee.
    */
   async function postComment(params: CommentParams): Promise<CommentResult> {
-    const { platform, profileId, postId, content, burnAmountSats } = params
+    const { platform, profileId, postId, content } = params
+    const burnAmountSats =
+      params.burnAmountSats ?? getMinBurnForComment(content)
 
     // Reset state
     status.value = 'building'
@@ -173,18 +171,18 @@ export function useRnkcComment() {
         throw new Error('Could not get transaction build context')
       }
 
-      const Bitcore = useNuxtApp().$bitcore
-      if (!Bitcore) {
-        throw new Error('Bitcore not available')
-      }
-
       // --- Select UTXOs ---
       const spendableUtxos = walletStore.getSpendableUtxos()
       const sortedUtxos = [...spendableUtxos].sort((a, b) =>
         Number(BigInt(b.value) - BigInt(a.value)),
       )
 
-      const selectedUtxos: UtxoEntry[] = []
+      const selectedUtxos: Array<{
+        outpoint: string
+        value: string
+        blockHeight: number
+        isCoinbase: boolean
+      }> = []
       let inputTotal = 0n
 
       // Select enough UTXOs to cover burn + estimated mining fee (~1000 sats buffer for multi-output tx)
@@ -199,7 +197,7 @@ export function useRnkcComment() {
       }
 
       // --- Construct transaction ---
-      const tx = new Bitcore.Transaction()
+      const tx = new Transaction()
       tx.feePerByte(DEFAULT_FEE_RATE)
 
       // Add inputs from selected UTXOs
@@ -212,27 +210,58 @@ export function useRnkcComment() {
         txContext.merkleRoot,
       )
 
-      // Add all OP_RETURN outputs (header + comment data outputs)
-      for (const scriptBuf of rnkcScripts) {
-        tx.addData(scriptBuf)
+      // Add RNKC outputs:
+      // Output 0: RNKC header with burn amount (PAID OP_RETURN)
+      const rnkcHeaderScript = Script.fromBuffer(rnkcScripts[0])
+      tx.addOutput(
+        new $bitcore.Output({
+          satoshis: Number(burnAmountSats),
+          script: rnkcHeaderScript,
+        }),
+      )
+
+      // Output 1+: Comment data outputs (ZERO-VALUE OP_RETURN)
+      for (let i = 1; i < rnkcScripts.length; i++) {
+        const commentScript = Script.fromBuffer(rnkcScripts[i])
+        tx.addOutput(
+          new $bitcore.Output({
+            satoshis: 0,
+            script: commentScript,
+          }),
+        )
       }
 
       // Set change address for remaining sats
       tx.change(txContext.changeAddress)
 
-      // Set fee = burn + mining fee
-      const estimatedMiningFee =
-        BigInt(tx.toBuffer().length) * BigInt(DEFAULT_FEE_RATE)
-      const totalFee = Number(burnAmountSats + estimatedMiningFee)
-      tx.fee(totalFee)
-
       // --- Sign ---
       status.value = 'signing'
-      const signedHex = walletStore.signTransactionHex(tx)
+      const unsignedHex = tx.toString()
+
+      const utxosForSigning = selectedUtxos.map(utxo => ({
+        outpoint: utxo.outpoint,
+        satoshis: Number(utxo.value),
+        scriptHex: txContext.script.toHex(),
+      }))
+
+      // Get private key from wallet
+      const privateKey = walletStore.getPrivateKeyHex()
+      if (!privateKey) {
+        throw new Error('Private key not available')
+      }
+
+      const signResult = await $cryptoWorker.signTransaction(
+        unsignedHex,
+        utxosForSigning,
+        privateKey,
+        txContext.addressType,
+        txContext.internalPubKey?.toString(),
+        txContext.merkleRoot?.toString('hex'),
+      )
 
       // --- Broadcast ---
       status.value = 'broadcasting'
-      const result = await broadcastTransaction(signedHex)
+      const result = await broadcastTransaction(signResult.signedTxHex)
       const txid = typeof result === 'string' ? result : (result as any)?.txid
 
       if (!txid) {
@@ -284,7 +313,7 @@ export function useRnkcComment() {
     getMinBurnForComment,
     getCommentByteLength,
     // Constants
-    COMMENT_BURN_PRESETS,
     MAX_COMMENT_BYTES,
+    MIN_FEE_RATE_PER_BYTE,
   }
 }

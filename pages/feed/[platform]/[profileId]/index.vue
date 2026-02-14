@@ -122,11 +122,17 @@ async function fetchData() {
   }
 }
 
-function handleVoted(_txid: string) {
+function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
-  // Refresh data after voting
-  fetchData()
+  // Optimistic update: increment local vote count immediately (no fetchData refresh)
+  if (profile.value && sentiment) {
+    if (sentiment === 'positive') {
+      profile.value = { ...profile.value, votesPositive: profile.value.votesPositive + 1 }
+    } else {
+      profile.value = { ...profile.value, votesNegative: profile.value.votesNegative + 1 }
+    }
+  }
 }
 
 onMounted(fetchData)

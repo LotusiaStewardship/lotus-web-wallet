@@ -2,11 +2,18 @@
 /**
  * Comment Thread Component
  *
- * Displays a threaded list of RNKC comments.
- * R1: When user has voted, sorts by net burn descending (highest burn first).
+ * Displays a threaded list of RNKC comments with an inline comment form.
+ *
+ * Data source: Comments are embedded in the profile/post API responses from
+ * rank-backend-ts. There are no dedicated /comments/ endpoints. The backend
+ * returns comments as nested PostAPI[] arrays via convertRankCommentToPostAPI().
+ *
+ * R1: When user has voted, sorts by ranking (net burn) descending.
  *     When user has NOT voted, sorts chronologically to prevent sentiment leakage.
- * Negative net burn comments are collapsed by default (handled by CommentItem).
- * Includes a "Add Comment" button that opens the CommentSlideover.
+ * R3: Burn amount is auto-calculated (informational cost, not a bet).
+ * R6: Negative net burn comments are collapsed by default (handled by CommentItem).
+ * 5.1b: Inline CommentInput replaces the CommentSlideover for contextual commenting.
+ * Threading: Reply events bubble up from CommentItem and show inline reply form.
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type { RnkcComment } from '~/composables/useRankApi'
@@ -26,30 +33,33 @@ const emit = defineEmits<{
 
 const walletStore = useWalletStore()
 const { getProfileComments, getPostComments } = useRankApi()
-const { openCommentSlideover } = useOverlays()
 
 const comments = ref<RnkcComment[]>([])
 const loading = ref(true)
 const loadError = ref<string | null>(null)
-const page = ref(1)
-const numPages = ref(1)
+const showCommentInput = ref(false)
+const activeReplyTo = ref<string | null>(null)
 
 const walletReady = computed(() => walletStore.isReadyForSigning())
 
-/** R1: Sort by net burn when voted, chronologically when not voted (prevents sentiment leakage) */
+/**
+ * R1: Sort by ranking (net burn) when voted, chronologically when not voted.
+ * Backend field mapping: ranking = satsPositive - satsNegative (net burn).
+ * Timestamps are seconds since epoch as strings.
+ */
 const sortedComments = computed(() => {
   return [...comments.value].sort((a, b) => {
     if (props.hasVoted) {
-      // Post-vote: sort by net burn descending (highest burn first)
-      const netA = BigInt(a.netBurn || a.sats || '0')
-      const netB = BigInt(b.netBurn || b.sats || '0')
+      // Post-vote: sort by ranking (net burn) descending (highest burn first)
+      const netA = BigInt(a.ranking || '0')
+      const netB = BigInt(b.ranking || '0')
       if (netB > netA) return 1
       if (netB < netA) return -1
       return 0
     }
     // Pre-vote: sort chronologically (oldest first) to avoid leaking sentiment
-    const tsA = new Date(a.timestamp || a.firstSeen).getTime()
-    const tsB = new Date(b.timestamp || b.firstSeen).getTime()
+    const tsA = Number(a.timestamp || a.firstSeen || '0')
+    const tsB = Number(b.timestamp || b.firstSeen || '0')
     return tsA - tsB
   })
 })
@@ -58,14 +68,13 @@ async function fetchComments() {
   loading.value = true
   loadError.value = null
   try {
+    // Comments are extracted from the existing profile/post API responses.
+    // The API functions handle fetching the parent entity and returning the comments array.
     const result = props.postId
-      ? await getPostComments(props.platform, props.profileId, props.postId, page.value)
-      : await getProfileComments(props.platform, props.profileId, page.value)
+      ? await getPostComments(props.platform, props.profileId, props.postId, walletStore.scriptPayload)
+      : await getProfileComments(props.platform, props.profileId)
 
-    if (result) {
-      comments.value = result.comments
-      numPages.value = result.numPages
-    }
+    comments.value = result
   } catch (err: any) {
     loadError.value = err?.message || 'Failed to load comments'
     console.error('[CommentThread] fetchComments failed:', err)
@@ -74,25 +83,29 @@ async function fetchComments() {
   }
 }
 
-async function handleAddComment() {
-  const result = await openCommentSlideover({
-    platform: props.platform,
-    profileId: props.profileId,
-    postId: props.postId,
-  })
-
-  if (result?.txid) {
-    emit('commented', result.txid)
-    // Refresh comments after posting
-    await fetchComments()
-  }
+function toggleCommentInput() {
+  showCommentInput.value = !showCommentInput.value
+  activeReplyTo.value = null
 }
 
-async function loadMore() {
-  if (page.value < numPages.value) {
-    page.value++
-    await fetchComments()
-  }
+async function handleCommentPosted(txid: string) {
+  showCommentInput.value = false
+  activeReplyTo.value = null
+  emit('commented', txid)
+  await fetchComments()
+}
+
+function handleReply(parentTxid: string) {
+  activeReplyTo.value = parentTxid
+  showCommentInput.value = false
+}
+
+function handleReplyCancelled() {
+  activeReplyTo.value = null
+}
+
+function handleCancelComment() {
+  showCommentInput.value = false
 }
 
 onMounted(() => {
@@ -110,14 +123,19 @@ onMounted(() => {
           ({{ comments.length }})
         </span>
       </h3>
-      <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="walletReady
-        ? 'bg-primary/10 text-primary hover:bg-primary/20'
-        : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'" :disabled="!walletReady"
-        @click="handleAddComment">
+      <button v-if="!showCommentInput"
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="walletReady
+          ? 'bg-primary/10 text-primary hover:bg-primary/20'
+          : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'" :disabled="!walletReady"
+        @click="toggleCommentInput">
         <UIcon name="i-lucide-message-square-plus" class="w-4 h-4" />
         <span>Comment</span>
       </button>
     </div>
+
+    <!-- Inline comment form (top-level) -->
+    <FeedCommentInput v-if="showCommentInput && walletReady" :platform="platform" :profile-id="profileId"
+      :post-id="postId" @posted="handleCommentPosted" @cancel="handleCancelComment" />
 
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-6">
@@ -127,24 +145,20 @@ onMounted(() => {
     <!-- Error -->
     <div v-else-if="loadError" class="text-sm text-error-500 text-center py-4">
       {{ loadError }}
-      <button class="ml-2 text-primary underline" @click="fetchComments">Retry</button>
+      <button class="ml-2 text-primary underline" @click="fetchComments()">Retry</button>
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="comments.length === 0" class="text-center py-6">
+    <div v-else-if="comments.length === 0 && !showCommentInput" class="text-center py-6">
       <UIcon name="i-lucide-message-circle" class="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
       <p class="text-sm text-gray-400">No comments yet. Be the first to share your perspective.</p>
     </div>
 
     <!-- Comment list -->
-    <div v-else class="space-y-1 divide-y divide-gray-100 dark:divide-gray-800">
-      <FeedCommentItem v-for="comment in sortedComments" :key="comment.txid" :comment="comment" />
+    <div v-if="sortedComments.length > 0" class="space-y-1 divide-y divide-gray-100 dark:divide-gray-800">
+      <FeedCommentItem v-for="comment in sortedComments" :key="comment.id" :comment="comment" :has-voted="hasVoted"
+        :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId" :post-id="postId"
+        @reply="handleReply" @reply-posted="handleCommentPosted" @reply-cancelled="handleReplyCancelled" />
     </div>
-
-    <!-- Load more -->
-    <button v-if="!loading && page < numPages" class="w-full py-2 text-sm text-primary hover:underline"
-      @click="loadMore">
-      Load more comments
-    </button>
   </div>
 </template>

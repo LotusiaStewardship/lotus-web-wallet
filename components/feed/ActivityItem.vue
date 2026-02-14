@@ -17,9 +17,19 @@
  * (echo-chamber-mitigation.md:147).
  *
  * R38-compliant: Uses curation language per psychopolitics-and-digital-power.md:254-270.
+ *
+ * Vote buttons and metrics are in a bottom action row (standard social media layout).
+ * R4: Equal visual weight for up/down buttons.
+ * Burn amount shown is the individual voter's burn — R1-safe (not aggregate).
+ *
+ * Optimistic update: After voting, the button highlights immediately without
+ * refreshing the feed (preserves scroll position). Mirrors rank-extension-ts pattern.
  */
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type { RankTransaction } from '~/composables/useRankApi'
 import { PlatformIcon } from '~/composables/useRankApi'
+import { formatXPICompact } from '~/utils/formatting'
+import { useWalletStore } from '~/stores/wallet'
 
 const props = defineProps<{
   vote: RankTransaction
@@ -44,6 +54,43 @@ const sentimentLabel = computed(() => {
   if (sentimentType.value === 'negative') return 'Flagged'
   return 'Noted'
 })
+
+const walletStore = useWalletStore()
+const { openVoteSlideover } = useOverlays()
+const walletReady = computed(() => walletStore.isReadyForSigning())
+
+/** R1-safe: Individual burn amount (this voter's burn, not aggregate) */
+const burnDisplay = computed(() => {
+  if (!props.vote.sats || props.vote.sats === '0') return null
+  return formatXPICompact(props.vote.sats)
+})
+
+/** Optimistic local state: tracks the user's vote on this item without feed refresh */
+const votedSentiment = ref<'positive' | 'negative' | null>(null)
+const voting = ref(false)
+
+async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event) {
+  event.preventDefault()
+  event.stopPropagation()
+  if (!walletReady.value || voting.value) return
+
+  voting.value = true
+  try {
+    const result = await openVoteSlideover({
+      sentiment,
+      platform: props.vote.platform as string,
+      profileId: props.vote.profileId,
+      postId: props.vote.postId || undefined,
+    })
+
+    if (result?.txid) {
+      // Optimistic update: highlight the button immediately, no feed refresh
+      votedSentiment.value = sentiment
+    }
+  } finally {
+    voting.value = false
+  }
+}
 
 const platformIcon = computed(
   () => PlatformIcon[props.vote.platform] || 'i-lucide-globe',
@@ -90,6 +137,7 @@ onMounted(async () => {
 
 <template>
   <NuxtLink :to="feedUrl" class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+    <!-- Top row: Avatar + Content -->
     <div class="flex items-center gap-3">
       <!-- Target Avatar (matches [postId].vue:162-172) -->
       <div class="relative flex-shrink-0">
@@ -104,7 +152,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- Content (matches detail page layout: name, platform · time, post id) -->
+      <!-- Content -->
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
           <span class="font-semibold text-md truncate">{{ vote.profileId }}</span>
@@ -123,6 +171,35 @@ onMounted(async () => {
     <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:198-200) -->
     <div v-if="isTwitterPost" class="mt-2 pl-[52px]">
       <FeedXPostEmbed :tweet-id="vote.postId" :profile-id="vote.profileId" />
+    </div>
+
+    <!-- Bottom action row: vote buttons + burn metric (standard social media layout) -->
+    <div class="flex items-center gap-4 mt-2 pl-[52px]">
+      <!-- R4: Upvote button (equal visual weight) -->
+      <button v-if="walletReady" class="flex items-center gap-1 p-1 rounded-md text-xs transition-colors" :class="votedSentiment === 'positive'
+        ? 'text-success-500'
+        : 'text-gray-400 hover:text-success-500 hover:bg-success-500/10'" :disabled="voting"
+        title="Endorse this content" @click="handleVoteClick('positive', $event)">
+        <UIcon name="i-lucide-thumbs-up" class="w-3.5 h-3.5" />
+        <span v-if="votedSentiment === 'positive'" class="text-[11px]">Voted</span>
+      </button>
+
+      <!-- R4: Downvote button (equal visual weight) -->
+      <button v-if="walletReady" class="flex items-center gap-1 p-1 rounded-md text-xs transition-colors" :class="votedSentiment === 'negative'
+        ? 'text-error-500'
+        : 'text-gray-400 hover:text-error-500 hover:bg-error-500/10'" :disabled="voting" title="Flag this content"
+        @click="handleVoteClick('negative', $event)">
+        <UIcon name="i-lucide-thumbs-down" class="w-3.5 h-3.5" />
+        <span v-if="votedSentiment === 'negative'" class="text-[11px]">Voted</span>
+      </button>
+
+      <!-- Spacer -->
+      <div class="flex-1" />
+
+      <!-- R1-safe: Individual burn amount (this voter's burn, not aggregate) -->
+      <span v-if="burnDisplay" class="text-[11px] text-gray-400">
+        {{ burnDisplay }} XPI
+      </span>
     </div>
   </NuxtLink>
 </template>

@@ -71,9 +71,12 @@ export const BURN_PRESETS = [
 // ============================================================================
 
 export function useRankVote() {
+  // Bitcore and crypto WebWorker plugin instance
+  const { $bitcore, $cryptoWorker } = useNuxtApp()
   const walletStore = useWalletStore()
   const { broadcastTransaction } = useChronikClient()
   const { addInputsToTransaction } = useTransactionBuilder()
+  const { Script, Transaction } = $bitcore
 
   const status = ref<VoteStatus>('idle')
   const error = ref<string | null>(null)
@@ -113,17 +116,18 @@ export function useRankVote() {
       }
 
       // --- Build RANK OP_RETURN script ---
-      const rankScript = toScriptRANK(sentiment, platform, profileId, postId)
+      const rankScriptBuffer = toScriptRANK(
+        sentiment,
+        platform,
+        profileId,
+        postId,
+      )
+      const rankScript = Script.fromBuffer(rankScriptBuffer)
 
       // --- Get wallet context ---
       const txContext = walletStore.getTransactionBuildContext()
       if (!txContext) {
         throw new Error('Could not get transaction build context')
-      }
-
-      const Bitcore = useNuxtApp().$bitcore
-      if (!Bitcore) {
-        throw new Error('Bitcore not available')
       }
 
       // --- Select UTXOs ---
@@ -147,7 +151,7 @@ export function useRankVote() {
       }
 
       // --- Construct transaction ---
-      const tx = new Bitcore.Transaction()
+      const tx = new Transaction()
       tx.feePerByte(DEFAULT_FEE_RATE)
 
       // Add inputs from selected UTXOs
@@ -160,26 +164,52 @@ export function useRankVote() {
         txContext.merkleRoot,
       )
 
-      // Add OP_RETURN output with RANK script
-      tx.addData(rankScript)
+      // Add RANK output with burn amount
+      // This is a PAID OP_RETURN output - the satoshis are burned
+      tx.addOutput(
+        new $bitcore.Output({
+          satoshis: burnAmountSats,
+          script: rankScript,
+        }),
+      )
 
       // Set change address for remaining sats
       tx.change(txContext.changeAddress)
 
-      // Set fee = burn + mining fee so the burn is consumed as "fee" from the miner's perspective
-      // The OP_RETURN marks the tx as a RANK vote; the indexer reads burnAmount from the tx
-      const estimatedMiningFee =
-        BigInt(tx.toBuffer().length) * BigInt(DEFAULT_FEE_RATE)
-      const totalFee = Number(burnAmountSats + estimatedMiningFee)
-      tx.fee(totalFee)
-
       // --- Sign ---
       status.value = 'signing'
-      const signedHex = walletStore.signTransactionHex(tx)
+      const unsignedHex = tx.toString()
+
+      // Prepare UTXO data for crypto worker
+      const scriptHex = walletStore.getScriptHex()
+      if (!scriptHex) {
+        throw new Error('Script hex not available')
+      }
+
+      const utxosForSigning = selectedUtxos.map(utxo => ({
+        outpoint: utxo.outpoint,
+        satoshis: Number(utxo.value),
+        scriptHex,
+      }))
+
+      // Get private key from wallet
+      const privateKey = walletStore.getPrivateKeyHex()
+      if (!privateKey) {
+        throw new Error('Private key not available')
+      }
+
+      const { signedTxHex } = await $cryptoWorker.signTransaction(
+        unsignedHex,
+        utxosForSigning,
+        privateKey,
+        txContext.addressType,
+        txContext.internalPubKey?.toString(),
+        txContext.merkleRoot?.toString('hex'),
+      )
 
       // --- Broadcast ---
       status.value = 'broadcasting'
-      const result = await broadcastTransaction(signedHex)
+      const result = await broadcastTransaction(signedTxHex)
       const txid = typeof result === 'string' ? result : (result as any)?.txid
 
       if (!txid) {

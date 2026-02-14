@@ -53,7 +53,6 @@ import {
   LazyActionsScanModal,
   LazyNavigationActionSheet,
   LazyFeedVoteSlideover,
-  LazyFeedCommentSlideover,
   LazyPeopleAddContactModal,
   LazyPeopleShareContactModal,
   LazyPeopleShareMyContactModal,
@@ -110,16 +109,6 @@ export interface VoteSlideoverProps {
 }
 
 export interface VoteSlideoverResult {
-  txid: string
-}
-
-export interface CommentSlideoverProps {
-  platform: string
-  profileId: string
-  postId?: string
-}
-
-export interface CommentSlideoverResult {
   txid: string
 }
 
@@ -266,7 +255,6 @@ type ModalMap = {
   scanModal: typeof LazyActionsScanModal
   actionSheet: typeof LazyNavigationActionSheet
   voteSlideover: typeof LazyFeedVoteSlideover
-  commentSlideover: typeof LazyFeedCommentSlideover
   addContactModal: typeof LazyPeopleAddContactModal
   shareContactModal: typeof LazyPeopleShareContactModal
   shareMyContactModal: typeof LazyPeopleShareMyContactModal
@@ -348,7 +336,6 @@ export async function prewarmOverlays(): Promise<void> {
       import('~/components/actions/ScanModal.vue'),
       import('~/components/navigation/ActionSheet.vue'),
       import('~/components/feed/VoteSlideover.vue'),
-      import('~/components/feed/CommentSlideover.vue'),
       import('~/components/people/AddContactModal.vue'),
       import('~/components/people/ShareContactModal.vue'),
       import('~/components/people/ShareMyContactModal.vue'),
@@ -372,7 +359,6 @@ export async function prewarmOverlays(): Promise<void> {
   getModal('scanModal', LazyActionsScanModal)
   getModal('actionSheet', LazyNavigationActionSheet)
   getModal('voteSlideover', LazyFeedVoteSlideover)
-  getModal('commentSlideover', LazyFeedCommentSlideover)
   getModal('addContactModal', LazyPeopleAddContactModal)
   getModal('shareContactModal', LazyPeopleShareContactModal)
   getModal('shareMyContactModal', LazyPeopleShareMyContactModal)
@@ -548,20 +534,6 @@ export function useOverlays() {
   }
 
   // --------------------------------------------------------------------------
-  // Comment Slideover
-  // --------------------------------------------------------------------------
-
-  async function openCommentSlideover(
-    props: CommentSlideoverProps,
-  ): Promise<CommentSlideoverResult | undefined> {
-    const modal = getModal('commentSlideover', LazyFeedCommentSlideover)
-    pushHistoryState('commentSlideover', modal.id, () => modal.close())
-    const result = await modal.open(props)
-    await cleanupHistoryAfterClose('commentSlideover')
-    return result as CommentSlideoverResult | undefined
-  }
-
-  // --------------------------------------------------------------------------
   // People Modals
   // --------------------------------------------------------------------------
 
@@ -646,9 +618,6 @@ export function useOverlays() {
 
     // Vote slideover
     openVoteSlideover,
-
-    // Comment slideover
-    openCommentSlideover,
 
     // People modals
     openAddContactModal,

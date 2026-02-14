@@ -99,6 +99,8 @@ export interface ProfileData {
   votesNegative: number
   voters: VoterDetails[]
   profileMeta?: VoterProfileMetadata | null
+  /** RNKC comments on this profile (PostAPI-shaped, from backend) */
+  comments?: RnkcComment[] | null
 }
 
 /** Profile list item */
@@ -190,6 +192,16 @@ export interface PostData {
     votesNegative: number
     profileMeta?: VoterProfileMetadata | null
   }
+  /** Lotusia post data (comment text, UTF-8) */
+  data?: string
+  /** Parent content fields for RNKC threading */
+  inReplyToPlatform?: ScriptChunkPlatformUTF8
+  inReplyToProfileId?: string
+  inReplyToPostId?: string
+  firstSeen?: string
+  timestamp?: string
+  /** RNKC comment replies (PostAPI-shaped from backend) */
+  comments?: RnkcComment[]
 }
 
 /** Trending API response (profiles/posts) */
@@ -211,40 +223,56 @@ export interface TrendingItem {
   votesTimespan: string[]
 }
 
-/** RNKC comment from API */
+/**
+ * RNKC comment from API.
+ *
+ * Comments are returned as nested PostAPI objects within profile and post
+ * responses from rank-backend-ts. There are no dedicated /comments/ endpoints.
+ *
+ * The backend converts RankComment → PostAPI via convertRankCommentToPostAPI():
+ *   id = txid, profileId = scriptPayload (comment author),
+ *   data = comment text (UTF-8), ranking/sats/votes = community votes on the comment,
+ *   inReplyTo* = parent content being replied to, comments = nested replies.
+ */
 export interface RnkcComment {
-  txid: string
+  /** Comment txid (used as the post ID in the backend) */
+  id: string
+  /** Platform of the content being commented on */
   platform: ScriptChunkPlatformUTF8
+  /** Author's script payload (20-byte P2PKH, stored as profileId in backend) */
   profileId: string
-  postId?: string
   /** Comment text (UTF-8 decoded from on-chain data) */
-  content: string
-  /** Author's script payload (20-byte P2PKH) */
-  scriptPayload: string
-  /** Burn amount in sats (string for bigint compat) */
-  sats: string
-  /** Net burn = satsPositive - satsNegative from community votes on this comment */
-  netBurn?: string
-  /** Positive sats from community votes */
-  satsPositive?: string
-  /** Negative sats from community votes */
-  satsNegative?: string
-  /** Parent comment txid for threading */
-  inReplyTo?: string
-  /** Nested replies */
-  replies?: RnkcComment[]
-  /** Block height (undefined if mempool) */
-  height?: number
-  /** Timestamp */
-  timestamp: string
-  /** First seen */
-  firstSeen: string
-}
-
-/** Comments API response */
-export interface CommentsResponse {
-  comments: RnkcComment[]
-  numPages: number
+  data?: string
+  /** Platform of the parent content being replied to */
+  inReplyToPlatform?: ScriptChunkPlatformUTF8
+  /** Profile ID of the parent content being replied to */
+  inReplyToProfileId?: string
+  /** Post ID of the parent content being replied to */
+  inReplyToPostId?: string
+  /** Timestamp (seconds since epoch, as string) */
+  timestamp?: string
+  /** First seen by indexer (seconds since epoch, as string) */
+  firstSeen?: string
+  /** Net ranking of the comment (satsPositive - satsNegative, as string) */
+  ranking: string
+  /** Positive sats from community votes on this comment */
+  satsPositive: string
+  /** Negative sats from community votes on this comment */
+  satsNegative: string
+  /** Number of positive votes on this comment */
+  votesPositive: number
+  /** Number of negative votes on this comment */
+  votesNegative: number
+  /** Author's profile ranking metrics */
+  profile: {
+    ranking: string
+    satsPositive: string
+    satsNegative: string
+    votesPositive: number
+    votesNegative: number
+  }
+  /** Nested replies (also PostAPI-shaped) */
+  comments?: RnkcComment[]
 }
 
 /** Wallet activity item */
@@ -585,49 +613,59 @@ export const useRankApi = () => {
   }
 
   /**
-   * Fetch comments for a specific profile
+   * Fetch comments for a specific profile.
+   *
+   * Comments are embedded in the profile response from the backend
+   * (GET /:platform/:profileId). There is no dedicated /comments/ endpoint.
+   * This function fetches the profile and extracts the comments array.
    */
   const getProfileComments = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
-    page: number = 1,
-    pageSize: number = 20,
-  ): Promise<CommentsResponse | null> => {
+  ): Promise<RnkcComment[]> => {
     try {
-      const url = `${getRankApiUrl()}/comments/${platform}/${profileId}/${page}/${pageSize}`
+      const url = `${getRankApiUrl()}/${platform}/${profileId}`
       const response = await fetch(url)
       if (!response.ok) {
-        console.error(`Failed to fetch profile comments: ${response.status}`)
-        return null
+        console.error(
+          `Failed to fetch profile for comments: ${response.status}`,
+        )
+        return []
       }
-      return await response.json()
+      const data: ProfileData = await response.json()
+      return data.comments ?? []
     } catch (error) {
       console.error('Error fetching profile comments:', error)
-      return null
+      return []
     }
   }
 
   /**
-   * Fetch comments for a specific post
+   * Fetch comments for a specific post.
+   *
+   * Comments are embedded in the post response from the backend
+   * (GET /:platform/:profileId/:postId). There is no dedicated /comments/ endpoint.
+   * This function fetches the post and extracts the comments array.
    */
   const getPostComments = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
     postId: string,
-    page: number = 1,
-    pageSize: number = 20,
-  ): Promise<CommentsResponse | null> => {
+    scriptPayload?: string,
+  ): Promise<RnkcComment[]> => {
     try {
-      const url = `${getRankApiUrl()}/comments/${platform}/${profileId}/${postId}/${page}/${pageSize}`
+      let url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
+      if (scriptPayload) url += `/${scriptPayload}`
       const response = await fetch(url)
       if (!response.ok) {
-        console.error(`Failed to fetch post comments: ${response.status}`)
-        return null
+        console.error(`Failed to fetch post for comments: ${response.status}`)
+        return []
       }
-      return await response.json()
+      const data: PostData = await response.json()
+      return data.comments ?? []
     } catch (error) {
       console.error('Error fetching post comments:', error)
-      return null
+      return []
     }
   }
 

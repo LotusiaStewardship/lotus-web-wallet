@@ -161,7 +161,7 @@ watch(
 
     <!-- Rendered Tweet Content -->
     <div v-else-if="tweet">
-      <p class="text-[16px] font-semibold leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
+      <p class="text-[16px] leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
         tweet.text }}</p>
     </div>
 
