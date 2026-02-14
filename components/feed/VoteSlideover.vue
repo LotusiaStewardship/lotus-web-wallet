@@ -89,7 +89,8 @@ function close() {
         </div>
 
         <p class="text-sm text-gray-500">
-          Choose how much XPI to burn with your vote. This burn is permanent and irreversible.
+          Choose how much XPI to burn with your vote. The Lotus you burn is transformed into a
+          permanent, on-chain record of what you value.
         </p>
 
         <!-- Burn Presets -->

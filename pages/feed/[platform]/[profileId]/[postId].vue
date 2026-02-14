@@ -194,6 +194,11 @@ onMounted(fetchData)
           </UBadge>
         </div>
 
+        <!-- Embedded X Post (Twitter only) -->
+        <div v-if="platform === 'twitter'" class="mb-4">
+          <FeedXPostEmbed :tweet-id="postId" :profile-id="profileId" />
+        </div>
+
         <!-- R1 Vote-to-Reveal: Pre-vote blind state -->
         <Transition name="fade" mode="out-in">
           <div v-if="!hasVoted" key="blind" class="text-center py-4 mb-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
