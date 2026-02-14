@@ -18,7 +18,6 @@ const activityStore = useActivityStore()
 const filterOptions = computed(() => [
   { value: 'all' as const, label: 'All', count: activityStore.activityCounts.all },
   { value: 'transaction' as const, label: 'Transactions', count: activityStore.activityCounts.transaction },
-  { value: 'signing_request' as const, label: 'Requests', count: activityStore.activityCounts.signing_request },
   { value: 'system' as const, label: 'System', count: activityStore.activityCounts.system },
 ])
 
@@ -30,14 +29,6 @@ function handleItemClick(item: ActivityItem) {
   switch (data.type) {
     case 'transaction':
       navigateTo(`/explore/tx/${data.txid}`)
-      break
-    case 'signing_request':
-    case 'signing_complete':
-      navigateTo(`/people/wallets/${data.walletId}`)
-      break
-    case 'wallet_created':
-    case 'wallet_funded':
-      navigateTo(`/people/wallets/${data.walletId}`)
       break
   }
 }

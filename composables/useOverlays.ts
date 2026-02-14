@@ -59,8 +59,6 @@ import {
   LazySettingsRestoreWalletModal,
   LazySettingsViewPhraseModal,
   LazyUiKeyboardShortcutsModal,
-  LazyWalletsCreateWalletModal,
-  LazyWalletsSpendModal,
 } from '#components'
 
 // ============================================================================
@@ -100,21 +98,7 @@ export interface ShareContactModalProps {
   person: Person | null
 }
 
-export interface CreateWalletModalProps {
-  preselectedContact?: string
-}
-
-export interface SpendModalProps {
-  wallet: SharedWallet
-  participants: Array<{
-    id: string
-    name: string
-    isOnline: boolean
-    isMe: boolean
-  }>
-}
-
-export type ActionSheetAction = 'send' | 'receive' | 'scan' | 'wallet'
+export type ActionSheetAction = 'send' | 'receive' | 'scan'
 
 // ============================================================================
 // Composable
@@ -265,8 +249,6 @@ type ModalMap = {
   restoreWalletModal: typeof LazySettingsRestoreWalletModal
   viewPhraseModal: typeof LazySettingsViewPhraseModal
   keyboardShortcutsModal: typeof LazyUiKeyboardShortcutsModal
-  createWalletModal: typeof LazyWalletsCreateWalletModal
-  spendModal: typeof LazyWalletsSpendModal
 }
 
 type ModalKey = keyof ModalMap
@@ -347,8 +329,6 @@ export async function prewarmOverlays(): Promise<void> {
       import('~/components/settings/RestoreWalletModal.vue'),
       import('~/components/settings/ViewPhraseModal.vue'),
       import('~/components/ui/KeyboardShortcutsModal.vue'),
-      import('~/components/wallets/CreateWalletModal.vue'),
-      import('~/components/wallets/SpendModal.vue'),
     ])
     console.log('[Overlays] Modal components preloaded')
   } catch (error) {
@@ -371,8 +351,6 @@ export async function prewarmOverlays(): Promise<void> {
   getModal('restoreWalletModal', LazySettingsRestoreWalletModal)
   getModal('viewPhraseModal', LazySettingsViewPhraseModal)
   getModal('keyboardShortcutsModal', LazyUiKeyboardShortcutsModal)
-  getModal('createWalletModal', LazyWalletsCreateWalletModal)
-  getModal('spendModal', LazyWalletsSpendModal)
   console.log('[Overlays] Overlay instances created')
 
   // Set to prewarmed after component preloading and instance creation
@@ -597,28 +575,6 @@ export function useOverlays() {
   }
 
   // --------------------------------------------------------------------------
-  // Wallet Modals
-  // --------------------------------------------------------------------------
-
-  async function openCreateWalletModal(
-    props?: CreateWalletModalProps,
-  ): Promise<void> {
-    const modal = getModal('createWalletModal', LazyWalletsCreateWalletModal)
-    pushHistoryState('createWalletModal', modal.id, () => modal.close())
-    await modal.open(props)
-    clearBackHandler()
-    await cleanupHistoryAfterClose('createWalletModal')
-  }
-
-  async function openSpendModal(props: SpendModalProps): Promise<void> {
-    const modal = getModal('spendModal', LazyWalletsSpendModal)
-    pushHistoryState('spendModal', modal.id, () => modal.close())
-    await modal.open(props)
-    clearBackHandler()
-    await cleanupHistoryAfterClose('spendModal')
-  }
-
-  // --------------------------------------------------------------------------
   // Return API
   // --------------------------------------------------------------------------
 
@@ -643,9 +599,5 @@ export function useOverlays() {
 
     // UI modals
     openKeyboardShortcutsModal,
-
-    // Wallet modals
-    openCreateWalletModal,
-    openSpendModal,
   }
 }

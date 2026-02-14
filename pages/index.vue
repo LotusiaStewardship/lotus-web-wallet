@@ -10,7 +10,6 @@
  * - Getting started checklist (new users)
  */
 import { useActivityStore } from '~/stores/activity'
-import { usePeopleStore } from '~/stores/people'
 import { useOnboardingStore } from '~/stores/onboarding'
 import { resetForChaining } from '~/composables/useOverlays'
 
@@ -19,24 +18,13 @@ definePageMeta({
 })
 
 const activityStore = useActivityStore()
-const peopleStore = usePeopleStore()
 const onboardingStore = useOnboardingStore()
-
-// Initialize stores
-onMounted(() => {
-  peopleStore.initialize()
-})
 
 // Conditional rendering flags
 const hasAttentionItems = computed(() => {
-  const hasUnreadSigningRequests = activityStore.allItems.some(item => {
-    return item.data.type === 'signing_request' && !item.readAt
-  })
-  return hasUnreadSigningRequests || !onboardingStore.backupComplete
+  return !onboardingStore.backupComplete
 })
 
-const hasOnlineContacts = computed(() => peopleStore.onlinePeople.length > 0)
-const hasSharedWallets = computed(() => peopleStore.allWallets.length > 0)
 const showGettingStarted = computed(() => !onboardingStore.skipped)
 
 // Overlay management via useOverlays
@@ -101,12 +89,6 @@ async function handleScanFlow() {
 
     <!-- Needs Attention (if any) -->
     <HomeNeedsAttentionCard v-if="hasAttentionItems" />
-
-    <!-- Online Now (if any online contacts) -->
-    <HomeOnlineNowCard v-if="hasOnlineContacts" />
-
-    <!-- Shared Wallets Preview (if any) -->
-    <HomeSharedWalletsPreview v-if="hasSharedWallets" />
 
     <!-- Recent Activity -->
     <HomeRecentActivityCard />

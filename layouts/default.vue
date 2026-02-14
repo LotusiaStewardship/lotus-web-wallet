@@ -24,7 +24,6 @@ const {
   openActionSheet,
   openKeyboardShortcutsModal,
   openAddContactModal,
-  openCreateWalletModal,
 } = useOverlays()
 
 // Watch for send query param globally and open modal
@@ -126,9 +125,6 @@ async function handleActionSheet() {
       break
     case 'scan':
       await handleScanFlow()
-      break
-    case 'wallet':
-      await openCreateWalletModal(undefined)
       break
   }
 }
