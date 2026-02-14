@@ -3,42 +3,55 @@
  * Activity Item Component
  *
  * Displays a single RANK vote in the activity stream.
- * Shows: voter (truncated scriptPayload), sentiment, target profile/post,
- * burn amount, and relative time.
+ * Target-focused layout: the profile/post being curated is the subject,
+ * with sentiment shown as a subtle badge.
+ *
+ * Design language matches the post/profile detail pages:
+ *   - Same avatar + platform overlay pattern
+ *   - Profile name as plain text, platform capitalized
+ *   - Post ID in mono font
+ *   - Sentiment as a compact badge (not colored verb text)
  *
  * R1-safe: Does NOT reveal aggregate sentiment — only shows individual vote data.
- * This is critical: the activity stream must never leak aggregate direction.
+ * Individual vote sentiment is an acceptable information channel per R1 spec
+ * (echo-chamber-mitigation.md:147).
+ *
+ * R38-compliant: Uses curation language per psychopolitics-and-digital-power.md:254-270.
  */
 import type { RankTransaction } from '~/composables/useRankApi'
 import { PlatformIcon } from '~/composables/useRankApi'
-import { formatXPI } from '~/utils/formatting'
 
 const props = defineProps<{
   vote: RankTransaction
 }>()
 
-const isUpvote = computed(() => props.vote.sentiment === 'positive')
-
-const truncatedVoter = computed(() => {
-  const sp = props.vote.scriptPayload
-  if (!sp || sp.length < 12) return sp || 'Anonymous'
-  return sp.slice(0, 6) + '\u2026' + sp.slice(-4)
+const sentimentType = computed(() => {
+  if (props.vote.sentiment === 'positive') return 'positive'
+  if (props.vote.sentiment === 'negative') return 'negative'
+  return 'neutral'
 })
 
-const burnDisplay = computed(() =>
-  formatXPI(props.vote.sats, { minDecimals: 0, maxDecimals: 2 }),
-)
+/** Sentiment badge color — matches UBadge color prop */
+const sentimentBadgeColor = computed(() => {
+  if (sentimentType.value === 'positive') return 'success'
+  if (sentimentType.value === 'negative') return 'error'
+  return 'neutral'
+})
+
+/** Sentiment badge label — R38 curation-aligned language */
+const sentimentLabel = computed(() => {
+  if (sentimentType.value === 'positive') return 'Endorsed'
+  if (sentimentType.value === 'negative') return 'Flagged'
+  return 'Noted'
+})
 
 const platformIcon = computed(
   () => PlatformIcon[props.vote.platform] || 'i-lucide-globe',
 )
 
-const targetLabel = computed(() => {
-  if (props.vote.postId) {
-    return `${props.vote.profileId}/${props.vote.postId}`
-  }
-  return props.vote.profileId
-})
+const isTwitterPost = computed(
+  () => props.vote.platform === 'twitter' && !!props.vote.postId,
+)
 
 const feedUrl = computed(() => {
   if (props.vote.postId) {
@@ -50,7 +63,12 @@ const feedUrl = computed(() => {
 const timeAgo = computed(() => {
   const ts = props.vote.timestamp || props.vote.firstSeen
   if (!ts) return ''
-  const diff = Date.now() - new Date(ts).getTime()
+  const parsed = typeof ts === 'number' ? ts : Number(ts)
+  // Handle both Unix seconds and milliseconds
+  const ms = parsed > 1e12 ? parsed : parsed * 1000
+  if (isNaN(ms)) return ''
+  const diff = Date.now() - ms
+  if (diff < 0) return 'just now'
   const mins = Math.floor(diff / 60000)
   if (mins < 1) return 'just now'
   if (mins < 60) return `${mins}m ago`
@@ -71,43 +89,40 @@ onMounted(async () => {
 </script>
 
 <template>
-  <NuxtLink :to="feedUrl"
-    class="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-    <!-- Sentiment Icon -->
-    <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
-      :class="isUpvote
-        ? 'bg-success-50 dark:bg-success-900/20'
-        : 'bg-error-50 dark:bg-error-900/20'">
-      <UIcon :name="isUpvote ? 'i-lucide-thumbs-up' : 'i-lucide-thumbs-down'" class="w-4 h-4"
-        :class="isUpvote ? 'text-success-500' : 'text-error-500'" />
+  <NuxtLink :to="feedUrl" class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+    <div class="flex items-center gap-3">
+      <!-- Target Avatar (matches [postId].vue:162-172) -->
+      <div class="relative flex-shrink-0">
+        <img v-if="avatarUrl && !avatarError" :src="avatarUrl" :alt="vote.profileId"
+          class="w-10 h-10 rounded-full object-cover" @error="avatarError = true" />
+        <div v-else class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+          <span class="text-sm font-bold text-gray-500">{{ vote.profileId.substring(0, 2).toUpperCase() }}</span>
+        </div>
+        <div
+          class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center">
+          <UIcon :name="platformIcon" class="w-2.5 h-2.5 text-gray-500" />
+        </div>
+      </div>
+
+      <!-- Content (matches detail page layout: name, platform · time, post id) -->
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-md truncate">{{ vote.profileId }}</span>
+          <UBadge :color="sentimentBadgeColor" size="sm" variant="subtle">{{ sentimentLabel }}</UBadge>
+        </div>
+        <div class="flex items-center gap-1.5 mt-0.5">
+          <span class="text-xs text-gray-500 capitalize">{{ vote.platform }}</span>
+          <template v-if="timeAgo">
+            <span class="text-xs text-gray-300 dark:text-gray-600">&middot;</span>
+            <span class="text-xs text-gray-400">{{ timeAgo }}</span>
+          </template>
+        </div>
+      </div>
     </div>
 
-    <!-- Target Avatar -->
-    <div class="relative flex-shrink-0">
-      <img v-if="avatarUrl && !avatarError" :src="avatarUrl" :alt="vote.profileId"
-        class="w-9 h-9 rounded-full object-cover" @error="avatarError = true" />
-      <div v-else class="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-        <span class="text-xs font-bold text-gray-500">{{ vote.profileId.substring(0, 2).toUpperCase() }}</span>
-      </div>
-      <div
-        class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center">
-        <UIcon :name="platformIcon" class="w-2.5 h-2.5 text-gray-500" />
-      </div>
-    </div>
-
-    <!-- Activity Description -->
-    <div class="flex-1 min-w-0">
-      <p class="text-sm">
-        <span class="font-mono text-xs text-gray-400">{{ truncatedVoter }}</span>
-        <span class="text-gray-500"> {{ isUpvote ? 'upvoted' : 'downvoted' }} </span>
-        <span class="font-semibold truncate">{{ targetLabel }}</span>
-      </p>
-      <div class="flex items-center gap-2 mt-0.5">
-        <span class="text-xs font-medium" :class="isUpvote ? 'text-success-500' : 'text-error-500'">
-          {{ burnDisplay }} XPI burned
-        </span>
-        <span class="text-xs text-gray-400">{{ timeAgo }}</span>
-      </div>
+    <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:198-200) -->
+    <div v-if="isTwitterPost" class="mt-2 pl-[52px]">
+      <FeedXPostEmbed :tweet-id="vote.postId" :profile-id="vote.profileId" />
     </div>
   </NuxtLink>
 </template>

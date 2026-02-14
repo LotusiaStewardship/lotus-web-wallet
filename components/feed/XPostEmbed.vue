@@ -147,8 +147,7 @@ watch(
 <template>
   <div class="x-post-embed">
     <!-- Loading Skeleton -->
-    <div v-if="loading && !error"
-      class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 animate-pulse">
+    <div v-if="loading && !error" class="animate-pulse">
       <div class="space-y-2">
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full" />
         <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-5/6" />
@@ -161,8 +160,7 @@ watch(
     </div>
 
     <!-- Rendered Tweet Content -->
-    <div v-else-if="tweet"
-      class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30 p-4">
+    <div v-else-if="tweet">
       <p class="text-[16px] font-semibold leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
         tweet.text }}</p>
     </div>
