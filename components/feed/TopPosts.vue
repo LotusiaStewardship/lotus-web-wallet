@@ -6,21 +6,22 @@
  * Fetches data from rank-backend-ts trending endpoints.
  */
 import type { TrendingItem, Timespan } from '~/composables/useRankApi'
+import { controversyScore } from '~/utils/feed'
 
 const props = withDefaults(defineProps<{
   /** Title for the section */
   title?: string
-  /** Whether to show lowest-ranked instead of top-ranked */
-  lowest?: boolean
+  /** Show most controversial instead of top-ranked (R2) */
+  controversial?: boolean
   /** Maximum items to display */
   limit?: number
 }>(), {
   title: 'Top Ranked Posts',
-  lowest: false,
+  controversial: false,
   limit: 10,
 })
 
-const { getTopRankedPosts, getLowestRankedPosts } = useRankApi()
+const { getTopRankedPosts } = useRankApi()
 
 const timespan = ref<Timespan>('today')
 const posts = ref<TrendingItem[]>([])
@@ -39,9 +40,20 @@ async function fetchPosts() {
   loading.value = true
   error.value = null
   try {
-    const fetcher = props.lowest ? getLowestRankedPosts : getTopRankedPosts
-    const result = await fetcher(timespan.value)
-    posts.value = result.slice(0, props.limit)
+    const result = await getTopRankedPosts(timespan.value)
+    if (props.controversial) {
+      // R2: Sort by burn-weighted controversy score, filter to min 5 votes
+      posts.value = result
+        .filter(p => (p.total.votesPositive + p.total.votesNegative) >= 5)
+        .sort((a, b) => {
+          const scoreA = 'satsPositive' in a ? controversyScore((a as any).satsPositive || '0', (a as any).satsNegative || '0') : 0
+          const scoreB = 'satsPositive' in b ? controversyScore((b as any).satsPositive || '0', (b as any).satsNegative || '0') : 0
+          return scoreB - scoreA
+        })
+        .slice(0, props.limit)
+    } else {
+      posts.value = result.slice(0, props.limit)
+    }
   } catch (err: any) {
     error.value = err?.message || 'Failed to load posts'
     console.error('[TopPosts] fetch error:', err)
@@ -63,7 +75,7 @@ onMounted(fetchPosts)
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
       <div class="flex items-center gap-2">
-        <UIcon :name="lowest ? 'i-lucide-trending-down' : 'i-lucide-trending-up'" class="w-5 h-5" />
+        <UIcon :name="controversial ? 'i-lucide-scale' : 'i-lucide-trending-up'" class="w-5 h-5" />
         <span class="font-semibold">{{ title }}</span>
       </div>
       <NuxtLink to="/feed" class="text-sm text-primary hover:underline">
@@ -74,11 +86,9 @@ onMounted(fetchPosts)
     <!-- Timespan Selector -->
     <div class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-800/50">
       <button v-for="opt in timespanOptions" :key="opt.value"
-        class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors"
-        :class="timespan === opt.value
+        class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors" :class="timespan === opt.value
           ? 'bg-primary-50 dark:bg-primary-900/20 text-primary'
-          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
-        @click="changeTimespan(opt.value)">
+          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="changeTimespan(opt.value)">
         {{ opt.label }}
       </button>
     </div>

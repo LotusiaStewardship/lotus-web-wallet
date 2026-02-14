@@ -30,20 +30,14 @@ const activeTab = ref<'profiles' | 'posts'>('profiles')
 
     <!-- Tab Selector -->
     <div class="flex items-center gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
-      <button
-        class="flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors"
-        :class="activeTab === 'profiles'
-          ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
-          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
-        @click="activeTab = 'profiles'">
+      <button class="flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors" :class="activeTab === 'profiles'
+        ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
+        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="activeTab = 'profiles'">
         Profiles
       </button>
-      <button
-        class="flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors"
-        :class="activeTab === 'posts'
-          ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
-          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
-        @click="activeTab = 'posts'">
+      <button class="flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors" :class="activeTab === 'posts'
+        ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
+        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="activeTab = 'posts'">
         Posts
       </button>
     </div>
@@ -51,13 +45,13 @@ const activeTab = ref<'profiles' | 'posts'>('profiles')
     <!-- Profiles Tab -->
     <template v-if="activeTab === 'profiles'">
       <FeedTopProfiles title="Top Ranked" :limit="10" />
-      <FeedTopProfiles title="Most Controversial" :lowest="true" :limit="5" />
+      <FeedTopProfiles title="Most Controversial" :controversial="true" :limit="5" />
     </template>
 
     <!-- Posts Tab -->
     <template v-if="activeTab === 'posts'">
       <FeedTopPosts title="Top Ranked" :limit="10" />
-      <FeedTopPosts title="Most Controversial" :lowest="true" :limit="5" />
+      <FeedTopPosts title="Most Controversial" :controversial="true" :limit="5" />
     </template>
   </div>
 </template>

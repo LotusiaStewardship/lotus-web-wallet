@@ -46,18 +46,19 @@ async function handleVoteClick(sentiment: 'positive' | 'negative') {
 
 <template>
   <div class="flex items-center gap-2">
-    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-      :class="disabled || !walletReady
-        ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
-        : 'bg-success-50 dark:bg-success-900/20 text-success-600 dark:text-success-400 hover:bg-success-100 dark:hover:bg-success-900/40'" :disabled="disabled || !walletReady" @click="handleVoteClick('positive')">
+    <!-- R4: Equal visual weight for upvote and downvote (cost symmetry) -->
+    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="disabled || !walletReady
+      ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
+      : 'bg-primary/10 text-primary hover:bg-primary/20'" :disabled="disabled || !walletReady"
+      @click="handleVoteClick('positive')">
       <UIcon name="i-lucide-thumbs-up" class="w-4 h-4" />
       <span>Upvote</span>
     </button>
 
-    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-      :class="disabled || !walletReady
-        ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
-        : 'bg-error-50 dark:bg-error-900/20 text-error-600 dark:text-error-400 hover:bg-error-100 dark:hover:bg-error-900/40'" :disabled="disabled || !walletReady" @click="handleVoteClick('negative')">
+    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="disabled || !walletReady
+      ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
+      : 'bg-primary/10 text-primary hover:bg-primary/20'" :disabled="disabled || !walletReady"
+      @click="handleVoteClick('negative')">
       <UIcon name="i-lucide-thumbs-down" class="w-4 h-4" />
       <span>Downvote</span>
     </button>

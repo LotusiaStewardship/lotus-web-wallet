@@ -72,6 +72,22 @@ export interface VoterDetails {
   votesNeutral: number
 }
 
+/** Metadata about the voter's activity on a profile, from authorized API responses */
+export interface VoterProfileMetadata {
+  hasWalletUpvoted: boolean
+  hasWalletDownvoted: boolean
+}
+
+/** Metadata about the voter's activity on a post, from authorized API responses */
+export interface VoterPostMetadata {
+  hasWalletUpvoted: boolean
+  hasWalletDownvoted: boolean
+  satsUpvoted: string
+  satsDownvoted: string
+  txidsUpvoted: string[]
+  txidsDownvoted: string[]
+}
+
 /** Profile data from RANK API */
 export interface ProfileData {
   platform: ScriptChunkPlatformUTF8
@@ -82,6 +98,7 @@ export interface ProfileData {
   votesPositive: number
   votesNegative: number
   voters: VoterDetails[]
+  profileMeta?: VoterProfileMetadata | null
 }
 
 /** Profile list item */
@@ -164,6 +181,15 @@ export interface PostData {
   satsNegative: string
   votesPositive: number
   votesNegative: number
+  postMeta?: VoterPostMetadata | null
+  profile?: {
+    ranking: string
+    satsPositive: string
+    satsNegative: string
+    votesPositive: number
+    votesNegative: number
+    profileMeta?: VoterProfileMetadata | null
+  }
 }
 
 /** Trending API response (profiles/posts) */
@@ -458,15 +484,19 @@ export const useRankApi = () => {
   }
 
   /**
-   * Fetch ranking data for a specific post
+   * Fetch ranking data for a specific post.
+   * When scriptPayload is provided, the API returns postMeta and profile.profileMeta
+   * indicating whether the wallet has voted on this content (R1 Vote-to-Reveal).
    */
   const getPostRanking = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
     postId: string,
+    scriptPayload?: string,
   ): Promise<PostData | null> => {
     try {
-      const url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
+      let url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
+      if (scriptPayload) url += `/${scriptPayload}`
       const response = await fetch(url)
       if (!response.ok) {
         console.error(`Failed to fetch post ranking: ${response.status}`)
@@ -480,7 +510,8 @@ export const useRankApi = () => {
   }
 
   /**
-   * Fetch wallet activity
+   * Fetch wallet activity (authenticated endpoint).
+   * Requires wallet to be initialized for BlockDataSig auth.
    */
   const getWalletActivity = async (
     scriptPayload: string,
@@ -488,12 +519,14 @@ export const useRankApi = () => {
     endTime?: string,
   ): Promise<WalletActivity[]> => {
     try {
-      let url = `${getRankApiUrl()}/wallet/${scriptPayload}`
+      const { authorizedFetch, getInstanceId } = useRankAuth()
+      const instanceId = await getInstanceId()
+      let url = `${getRankApiUrl()}/wallet/${instanceId}/${scriptPayload}`
       if (startTime) url += `/${startTime}`
       if (endTime) url += `/${endTime}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        console.error(`Failed to fetch wallet activity: ${response.status}`)
+      const response = await authorizedFetch(url)
+      if (!response || !response.ok) {
+        console.error(`Failed to fetch wallet activity: ${response?.status}`)
         return []
       }
       return await response.json()
@@ -504,7 +537,8 @@ export const useRankApi = () => {
   }
 
   /**
-   * Fetch wallet activity summary
+   * Fetch wallet activity summary (authenticated endpoint).
+   * Requires wallet to be initialized for BlockDataSig auth.
    */
   const getWalletActivitySummary = async (
     scriptPayload: string,
@@ -512,12 +546,14 @@ export const useRankApi = () => {
     endTime?: Timespan,
   ): Promise<WalletActivitySummary | null> => {
     try {
-      let url = `${getRankApiUrl()}/wallet/summary/${scriptPayload}`
+      const { authorizedFetch, getInstanceId } = useRankAuth()
+      const instanceId = await getInstanceId()
+      let url = `${getRankApiUrl()}/wallet/summary/${instanceId}/${scriptPayload}`
       if (startTime) url += `/${startTime}`
       if (endTime) url += `/${endTime}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        console.error(`Failed to fetch wallet summary: ${response.status}`)
+      const response = await authorizedFetch(url)
+      if (!response || !response.ok) {
+        console.error(`Failed to fetch wallet summary: ${response?.status}`)
         return null
       }
       return await response.json()

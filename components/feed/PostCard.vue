@@ -8,6 +8,7 @@
 import type { TrendingItem, PostListItem } from '~/composables/useRankApi'
 import { PlatformIcon, PlatformURL } from '~/composables/useRankApi'
 import { formatXPI } from '~/utils/formatting'
+import { isControversial as checkControversial, bucketVoteCount } from '~/utils/feed'
 
 const props = defineProps<{
   /** Post data from trending or list endpoint */
@@ -18,7 +19,13 @@ const props = defineProps<{
   profileId: string
   /** Show rank position number */
   rank?: number
+  /** R1 Vote-to-Reveal: whether sentiment is revealed (default true until backend R1 deployed) */
+  revealed?: boolean
 }>()
+
+// R1: Default to revealed until backend enforces conditional response
+const isRevealed = computed(() => props.revealed !== false)
+const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
 
 const postId = computed(() => {
   if ('postId' in props.post && props.post.postId) return props.post.postId
@@ -51,11 +58,19 @@ const rankingDisplay = computed(() => {
 const isPositive = computed(() => BigInt(ranking.value) > 0n)
 const isNegative = computed(() => BigInt(ranking.value) < 0n)
 
-const isControversial = computed(() => {
-  if (totalVotes.value < 5) return false
-  const ratio = votesPositive.value / totalVotes.value
-  return ratio > 0.35 && ratio < 0.65
+const satsPositive = computed(() => {
+  if ('total' in props.post) return '0'
+  return props.post.satsPositive
 })
+
+const satsNegative = computed(() => {
+  if ('total' in props.post) return '0'
+  return props.post.satsNegative
+})
+
+const isControversial = computed(() =>
+  checkControversial(satsPositive.value, satsNegative.value, totalVotes.value),
+)
 
 const externalUrl = computed(() => {
   const urlHelper = PlatformURL[props.platform]
@@ -68,6 +83,15 @@ const feedUrl = computed(() =>
 )
 
 const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-globe')
+
+const { getAvatar } = useAvatars()
+const avatarUrl = ref<string | null>(null)
+const avatarError = ref(false)
+
+onMounted(async () => {
+  const avatar = await getAvatar(props.platform, props.profileId)
+  avatarUrl.value = avatar.src
+})
 </script>
 
 <template>
@@ -84,7 +108,11 @@ const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-gl
       <!-- Post Info -->
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 mb-1">
-          <UIcon :name="platformIcon" class="w-4 h-4 text-gray-400 flex-shrink-0" />
+          <div class="relative flex-shrink-0">
+            <img v-if="avatarUrl && !avatarError" :src="avatarUrl" :alt="profileId"
+              class="w-5 h-5 rounded-full object-cover" @error="avatarError = true" />
+            <UIcon v-else :name="platformIcon" class="w-5 h-5 text-gray-400" />
+          </div>
           <span class="text-sm text-gray-500 truncate">{{ profileId }}/{{ postId }}</span>
           <UBadge v-if="isControversial" color="warning" size="xs" variant="subtle">
             Controversial
@@ -95,8 +123,8 @@ const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-gl
           </a>
         </div>
 
-        <!-- Vote Stats -->
-        <div class="flex items-center gap-4 text-sm">
+        <!-- R1: Vote Stats (revealed) or bucketed count (blind) -->
+        <div v-if="isRevealed" class="flex items-center gap-4 text-sm">
           <span class="flex items-center gap-1 text-success-500">
             <UIcon name="i-lucide-thumbs-up" class="w-3.5 h-3.5" />
             {{ votesPositive }}
@@ -106,15 +134,23 @@ const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-gl
             {{ votesNegative }}
           </span>
         </div>
+        <div v-else class="text-xs text-gray-400">
+          {{ bucketedVotes }}
+        </div>
       </div>
 
-      <!-- Ranking Score -->
+      <!-- Ranking Score (revealed) or blind -->
       <div class="flex-shrink-0 text-right">
-        <div class="font-mono font-bold text-sm"
-          :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
-          {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
-        </div>
-        <div class="text-xs text-gray-500">XPI</div>
+        <template v-if="isRevealed">
+          <div class="font-mono font-bold text-sm"
+            :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
+            {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
+          </div>
+          <div class="text-xs text-gray-500">XPI</div>
+        </template>
+        <template v-else>
+          <div class="text-xs text-gray-400">{{ bucketedVotes }}</div>
+        </template>
       </div>
     </div>
   </NuxtLink>
