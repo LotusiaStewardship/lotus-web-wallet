@@ -195,46 +195,49 @@ onMounted(fetchData)
         </div>
 
         <!-- R1 Vote-to-Reveal: Pre-vote blind state -->
-        <div v-if="!hasVoted" class="text-center py-4 mb-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-          <div class="text-lg font-medium text-gray-600 dark:text-gray-400">{{ bucketedVotes }}</div>
-          <p class="text-sm text-gray-400 mt-1">Vote to reveal community sentiment</p>
-        </div>
-
-        <!-- R1 Vote-to-Reveal: Post-vote revealed state -->
-        <template v-else>
-          <!-- Ranking Score (Hero) -->
-          <div class="text-center py-3 mb-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-            <div class="text-3xl font-mono font-bold"
-              :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
-              {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
-            </div>
-            <div class="text-sm text-gray-500">XPI ranking</div>
+        <Transition name="fade" mode="out-in">
+          <div v-if="!hasVoted" key="blind" class="text-center py-4 mb-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+            <div class="text-lg font-medium text-gray-600 dark:text-gray-400">{{ bucketedVotes }}</div>
+            <p class="text-sm text-gray-400 mt-1">Vote to reveal community sentiment</p>
           </div>
 
-          <!-- Sentiment Breakdown -->
-          <div class="grid grid-cols-3 gap-2 mb-3">
-            <div class="text-center p-2.5 rounded-lg bg-success-50 dark:bg-success-900/10">
-              <div class="text-base font-bold text-success-600 dark:text-success-400">{{ profile.votesPositive }}</div>
-              <div class="text-[11px] text-success-500">Upvotes</div>
-              <div class="text-[11px] text-gray-500 mt-0.5">{{ satsPositiveDisplay }} XPI</div>
+          <!-- R1 Vote-to-Reveal: Post-vote revealed state (animated) -->
+          <div v-else key="revealed">
+            <!-- Ranking Score (Hero) -->
+            <div class="text-center py-3 mb-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
+              <div class="text-3xl font-mono font-bold"
+                :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
+                {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
+              </div>
+              <div class="text-sm text-gray-500">XPI sentiment</div>
             </div>
-            <div class="text-center p-2.5 rounded-lg bg-error-50 dark:bg-error-900/10">
-              <div class="text-base font-bold text-error-600 dark:text-error-400">{{ profile.votesNegative }}</div>
-              <div class="text-[11px] text-error-500">Downvotes</div>
-              <div class="text-[11px] text-gray-500 mt-0.5">{{ satsNegativeDisplay }} XPI</div>
-            </div>
-            <div class="text-center p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800">
-              <div class="text-base font-bold">{{ totalVotes }}</div>
-              <div class="text-[11px] text-gray-500">Total Votes</div>
-              <div class="text-[11px] text-gray-500 mt-0.5">{{ sentimentRatio }}% positive</div>
-            </div>
-          </div>
 
-          <!-- Sentiment Bar -->
-          <div class="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-            <div class="h-full bg-success-500 rounded-full transition-all" :style="{ width: `${sentimentRatio}%` }" />
+            <!-- Sentiment Breakdown -->
+            <div class="grid grid-cols-3 gap-2 mb-3">
+              <div class="text-center p-2.5 rounded-lg bg-success-50 dark:bg-success-900/10">
+                <div class="text-base font-bold text-success-600 dark:text-success-400">{{ profile.votesPositive }}
+                </div>
+                <div class="text-[11px] text-success-500">Upvotes</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">{{ satsPositiveDisplay }} XPI</div>
+              </div>
+              <div class="text-center p-2.5 rounded-lg bg-error-50 dark:bg-error-900/10">
+                <div class="text-base font-bold text-error-600 dark:text-error-400">{{ profile.votesNegative }}</div>
+                <div class="text-[11px] text-error-500">Downvotes</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">{{ satsNegativeDisplay }} XPI</div>
+              </div>
+              <div class="text-center p-2.5 rounded-lg bg-gray-50 dark:bg-gray-800">
+                <div class="text-base font-bold">{{ totalVotes }}</div>
+                <div class="text-[11px] text-gray-500">Total Votes</div>
+                <div class="text-[11px] text-gray-500 mt-0.5">{{ sentimentRatio }}% positive</div>
+              </div>
+            </div>
+
+            <!-- Sentiment Bar -->
+            <div class="h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+              <div class="h-full bg-success-500 rounded-full transition-all" :style="{ width: `${sentimentRatio}%` }" />
+            </div>
           </div>
-        </template>
+        </Transition>
 
         <!-- Vote Button -->
         <div class="mt-4 pt-3 border-t border-gray-100 dark:border-gray-800">
@@ -266,7 +269,7 @@ onMounted(fetchData)
       <!-- Comment Thread -->
       <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
         <FeedCommentThread :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId"
-          @commented="fetchData" />
+          :has-voted="hasVoted" @commented="fetchData" />
       </div>
     </template>
   </div>

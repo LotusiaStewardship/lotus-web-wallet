@@ -89,7 +89,7 @@ function close() {
         </div>
 
         <p class="text-sm text-gray-500">
-          Choose how much XPI to burn with your vote. Higher burns have more impact on rankings.
+          Choose how much XPI to burn with your vote. This burn is permanent and irreversible.
         </p>
 
         <!-- Burn Presets -->

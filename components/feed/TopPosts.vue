@@ -16,7 +16,7 @@ const props = withDefaults(defineProps<{
   /** Maximum items to display */
   limit?: number
 }>(), {
-  title: 'Top Ranked Posts',
+  title: 'Trending Posts',
   controversial: false,
   limit: 10,
 })

@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 @import '@nuxt/ui-pro';
 
+/* R1 Vote-to-Reveal fade transition */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.4s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
 /* Global button cursor fix */
 button,
 [role='button'],

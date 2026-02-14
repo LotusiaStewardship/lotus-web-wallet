@@ -122,27 +122,16 @@ function close() {
 
         <!-- Comment Input -->
         <div class="space-y-1">
-          <textarea
-            v-model="commentText"
-            rows="4"
-            placeholder="Share your perspective..."
+          <textarea v-model="commentText" rows="4" placeholder="Share your perspective..."
             class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none resize-none"
-            :disabled="isPosting || status === 'success'"
-          />
+            :disabled="isPosting || status === 'success'" />
           <div class="flex items-center justify-between text-xs">
-            <span
-              :class="byteLength > MAX_COMMENT_BYTES ? 'text-error-500' : 'text-gray-400'"
-            >
+            <span :class="byteLength > MAX_COMMENT_BYTES ? 'text-error-500' : 'text-gray-400'">
               {{ byteLength }}/{{ MAX_COMMENT_BYTES }} bytes
             </span>
-            <div
-              class="w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden"
-            >
-              <div
-                class="h-full rounded-full transition-all"
-                :class="byteLimitPct > 90 ? 'bg-error-500' : 'bg-primary'"
-                :style="{ width: `${byteLimitPct}%` }"
-              />
+            <div class="w-16 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+              <div class="h-full rounded-full transition-all" :class="byteLimitPct > 90 ? 'bg-error-500' : 'bg-primary'"
+                :style="{ width: `${byteLimitPct}%` }" />
             </div>
           </div>
         </div>
@@ -151,26 +140,23 @@ function close() {
         <p class="text-sm text-gray-500">
           Comments require a burn of at least
           <span class="font-medium text-primary">{{ formattedMinBurn }} XPI</span>
-          ({{ byteLength }} bytes × fee rate). Higher burns rank your comment higher.
+          ({{ byteLength }} bytes × fee rate). This burn is permanent and irreversible.
         </p>
 
         <!-- Burn Presets -->
         <div class="grid grid-cols-4 gap-2">
           <button v-for="preset in COMMENT_BURN_PRESETS" :key="preset.label"
-            class="py-2 px-3 rounded-lg text-sm font-medium transition-colors border"
-            :class="selectedBurnSats === preset.sats
+            class="py-2 px-3 rounded-lg text-sm font-medium transition-colors border" :class="selectedBurnSats === preset.sats
               ? 'border-primary bg-primary-50 dark:bg-primary-900/20 text-primary'
               : 'border-gray-200 dark:border-gray-700 hover:border-primary-300'"
-            :disabled="!canAffordComment(preset.sats)"
-            @click="selectPreset(preset.sats)">
+            :disabled="!canAffordComment(preset.sats)" @click="selectPreset(preset.sats)">
             {{ preset.label }}
           </button>
         </div>
 
         <!-- Custom Amount -->
         <div class="flex items-center gap-2">
-          <input v-model="customBurnInput" type="number" step="any" min="0"
-            placeholder="Custom XPI amount"
+          <input v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
             class="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none"
             @change="applyCustomBurn" />
           <span class="text-sm text-gray-500">XPI</span>
@@ -201,7 +187,8 @@ function close() {
         </div>
 
         <!-- Success Display -->
-        <div v-if="status === 'success'" class="text-sm text-success-500 text-center flex items-center justify-center gap-2">
+        <div v-if="status === 'success'"
+          class="text-sm text-success-500 text-center flex items-center justify-center gap-2">
           <UIcon name="i-lucide-check-circle" class="w-4 h-4" />
           <span>Comment posted on-chain!</span>
         </div>
@@ -209,8 +196,7 @@ function close() {
         <!-- Submit Button -->
         <button
           class="w-full py-3 rounded-xl font-semibold text-white transition-colors bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="!canSubmit"
-          @click="confirmComment">
+          :disabled="!canSubmit" @click="confirmComment">
           <template v-if="!canAffordComment(selectedBurnSats)">
             Insufficient Balance
           </template>

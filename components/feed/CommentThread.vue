@@ -2,7 +2,9 @@
 /**
  * Comment Thread Component
  *
- * Displays a threaded list of RNKC comments sorted by net burn descending.
+ * Displays a threaded list of RNKC comments.
+ * R1: When user has voted, sorts by net burn descending (highest burn first).
+ *     When user has NOT voted, sorts chronologically to prevent sentiment leakage.
  * Negative net burn comments are collapsed by default (handled by CommentItem).
  * Includes a "Add Comment" button that opens the CommentSlideover.
  */
@@ -14,6 +16,8 @@ const props = defineProps<{
   platform: ScriptChunkPlatformUTF8
   profileId: string
   postId?: string
+  /** R1: Whether the user has voted on the parent content */
+  hasVoted?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,14 +36,21 @@ const numPages = ref(1)
 
 const walletReady = computed(() => walletStore.isReadyForSigning())
 
-/** Sort comments by net burn descending (highest burn first) */
+/** R1: Sort by net burn when voted, chronologically when not voted (prevents sentiment leakage) */
 const sortedComments = computed(() => {
   return [...comments.value].sort((a, b) => {
-    const netA = BigInt(a.netBurn || a.sats || '0')
-    const netB = BigInt(b.netBurn || b.sats || '0')
-    if (netB > netA) return 1
-    if (netB < netA) return -1
-    return 0
+    if (props.hasVoted) {
+      // Post-vote: sort by net burn descending (highest burn first)
+      const netA = BigInt(a.netBurn || a.sats || '0')
+      const netB = BigInt(b.netBurn || b.sats || '0')
+      if (netB > netA) return 1
+      if (netB < netA) return -1
+      return 0
+    }
+    // Pre-vote: sort chronologically (oldest first) to avoid leaking sentiment
+    const tsA = new Date(a.timestamp || a.firstSeen).getTime()
+    const tsB = new Date(b.timestamp || b.firstSeen).getTime()
+    return tsA - tsB
   })
 })
 
@@ -99,14 +110,10 @@ onMounted(() => {
           ({{ comments.length }})
         </span>
       </h3>
-      <button
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-        :class="walletReady
-          ? 'bg-primary/10 text-primary hover:bg-primary/20'
-          : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'"
-        :disabled="!walletReady"
-        @click="handleAddComment"
-      >
+      <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="walletReady
+        ? 'bg-primary/10 text-primary hover:bg-primary/20'
+        : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'" :disabled="!walletReady"
+        @click="handleAddComment">
         <UIcon name="i-lucide-message-square-plus" class="w-4 h-4" />
         <span>Comment</span>
       </button>
@@ -131,19 +138,12 @@ onMounted(() => {
 
     <!-- Comment list -->
     <div v-else class="space-y-1 divide-y divide-gray-100 dark:divide-gray-800">
-      <FeedCommentItem
-        v-for="comment in sortedComments"
-        :key="comment.txid"
-        :comment="comment"
-      />
+      <FeedCommentItem v-for="comment in sortedComments" :key="comment.txid" :comment="comment" />
     </div>
 
     <!-- Load more -->
-    <button
-      v-if="!loading && page < numPages"
-      class="w-full py-2 text-sm text-primary hover:underline"
-      @click="loadMore"
-    >
+    <button v-if="!loading && page < numPages" class="w-full py-2 text-sm text-primary hover:underline"
+      @click="loadMore">
       Load more comments
     </button>
   </div>

@@ -18,8 +18,8 @@ const activeTab = ref<'profiles' | 'posts'>('profiles')
     <!-- Page Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-xl font-bold">RANK Feed</h1>
-        <p class="text-sm text-gray-500">Community-ranked social content</p>
+        <h1 class="text-xl font-bold">Curated Feed</h1>
+        <p class="text-sm text-gray-500">Community-curated social content</p>
       </div>
       <NuxtLink to="/feed/search"
         class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
@@ -44,13 +44,13 @@ const activeTab = ref<'profiles' | 'posts'>('profiles')
 
     <!-- Profiles Tab -->
     <template v-if="activeTab === 'profiles'">
-      <FeedTopProfiles title="Top Ranked" :limit="10" />
+      <FeedTopProfiles title="Trending" :limit="10" />
       <FeedTopProfiles title="Most Controversial" :controversial="true" :limit="5" />
     </template>
 
     <!-- Posts Tab -->
     <template v-if="activeTab === 'posts'">
-      <FeedTopPosts title="Top Ranked" :limit="10" />
+      <FeedTopPosts title="Trending" :limit="10" />
       <FeedTopPosts title="Most Controversial" :controversial="true" :limit="5" />
     </template>
   </div>
