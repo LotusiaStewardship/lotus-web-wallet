@@ -24,7 +24,7 @@ const activityStore = useActivityStore()
 
 const navItems = computed<NavItem[]>(() => [
   { to: '/', icon: 'i-lucide-home', label: 'Home' },
-  { to: '/people', icon: 'i-lucide-users', label: 'People' },
+  { to: '/feed', icon: 'i-lucide-flame', label: 'Feed' },
   { to: '#action', icon: 'i-lucide-plus', label: '', isAction: true },
   {
     to: '/activity',

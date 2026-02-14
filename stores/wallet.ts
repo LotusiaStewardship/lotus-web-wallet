@@ -5,8 +5,9 @@
 import { defineStore } from 'pinia'
 import { useNetworkStore } from './network'
 import { useNotificationStore } from './notifications'
-import type { ChronikSubscription } from '~/plugins/02.chronik.client'
+import type { ChronikSubscription } from '~/plugins/chronik.client'
 import type * as Bitcore from 'xpi-ts/lib/bitcore'
+import type { Buffer } from 'buffer/'
 
 // Note: ParsedTransaction type is available from ~/composables/useExplorerApi
 
@@ -57,7 +58,7 @@ export const useWalletStore = defineStore('wallet', () => {
   const _accountKeys = new Map<AccountPurpose, RuntimeKeyData>()
   let _signingKey: any = null
   let _script: any = null
-  let _internalPubKey: any = undefined
+  let _internalPubKey: Bitcore.PublicKey | undefined = undefined
   let _merkleRoot: Buffer | undefined = undefined
 
   // =========================================================================
@@ -388,7 +389,8 @@ export const useWalletStore = defineStore('wallet', () => {
           result.internalPubKeyHex,
         )
         const commitment = new PublicKey(commitmentHex)
-        script = $bitcore.buildPayToTaproot(commitment)
+        internalPubKey = $bitcore.PublicKey.fromString(commitmentHex)
+        script = $bitcore.Script.buildTaprootOut(commitment)
       } else {
         const addr = Address.fromString(result.address)
         script = Script.fromAddress(addr)
@@ -442,10 +444,10 @@ export const useWalletStore = defineStore('wallet', () => {
       if (addressType.value === 'p2tr-commitment') {
         internalPubKey = signingKey.publicKey
         // key-path only Taproot needs 32-byte merkle root of all-zeroes
-        merkleRoot = Buffer.alloc(32)
+        merkleRoot = $bitcore.BufferUtil.alloc(32)
         const commitment = $bitcore.tweakPublicKey(internalPubKey, merkleRoot)
         addr = Address.fromTaprootCommitment(commitment, network)
-        script = $bitcore.buildPayToTaproot(commitment)
+        script = $bitcore.Script.buildTaprootOut(commitment)
       } else {
         addr = signingKey.toAddress(network)
         script = Script.fromAddress(addr)
@@ -905,8 +907,11 @@ export const useWalletStore = defineStore('wallet', () => {
         let counterpartyAddress = ''
         if (counterpartyScript) {
           try {
-            const scriptBuf = Buffer.from(counterpartyScript, 'hex')
-            const script = new $bitcore.Script(scriptBuf)
+            const scriptBuf = $bitcore.BufferUtil.from(
+              counterpartyScript,
+              'hex',
+            )
+            const script = $bitcore.Script.fromBuffer(scriptBuf)
             const addr = script.toAddress()
             if (addr) {
               counterpartyAddress = addr.toXAddress()

@@ -185,6 +185,42 @@ export interface TrendingItem {
   votesTimespan: string[]
 }
 
+/** RNKC comment from API */
+export interface RnkcComment {
+  txid: string
+  platform: ScriptChunkPlatformUTF8
+  profileId: string
+  postId?: string
+  /** Comment text (UTF-8 decoded from on-chain data) */
+  content: string
+  /** Author's script payload (20-byte P2PKH) */
+  scriptPayload: string
+  /** Burn amount in sats (string for bigint compat) */
+  sats: string
+  /** Net burn = satsPositive - satsNegative from community votes on this comment */
+  netBurn?: string
+  /** Positive sats from community votes */
+  satsPositive?: string
+  /** Negative sats from community votes */
+  satsNegative?: string
+  /** Parent comment txid for threading */
+  inReplyTo?: string
+  /** Nested replies */
+  replies?: RnkcComment[]
+  /** Block height (undefined if mempool) */
+  height?: number
+  /** Timestamp */
+  timestamp: string
+  /** First seen */
+  firstSeen: string
+}
+
+/** Comments API response */
+export interface CommentsResponse {
+  comments: RnkcComment[]
+  numPages: number
+}
+
 /** Wallet activity item */
 export interface WalletActivity {
   date: string
@@ -512,6 +548,53 @@ export const useRankApi = () => {
     }
   }
 
+  /**
+   * Fetch comments for a specific profile
+   */
+  const getProfileComments = async (
+    platform: ScriptChunkPlatformUTF8,
+    profileId: string,
+    page: number = 1,
+    pageSize: number = 20,
+  ): Promise<CommentsResponse | null> => {
+    try {
+      const url = `${getRankApiUrl()}/comments/${platform}/${profileId}/${page}/${pageSize}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        console.error(`Failed to fetch profile comments: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching profile comments:', error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch comments for a specific post
+   */
+  const getPostComments = async (
+    platform: ScriptChunkPlatformUTF8,
+    profileId: string,
+    postId: string,
+    page: number = 1,
+    pageSize: number = 20,
+  ): Promise<CommentsResponse | null> => {
+    try {
+      const url = `${getRankApiUrl()}/comments/${platform}/${profileId}/${postId}/${page}/${pageSize}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        console.error(`Failed to fetch post comments: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching post comments:', error)
+      return null
+    }
+  }
+
   return {
     // Profile methods
     getProfiles,
@@ -520,6 +603,9 @@ export const useRankApi = () => {
     getProfileRankTransactions,
     // Post methods
     getPostRanking,
+    // Comment methods
+    getProfileComments,
+    getPostComments,
     // Activity methods
     getVoteActivity,
     getWalletActivity,

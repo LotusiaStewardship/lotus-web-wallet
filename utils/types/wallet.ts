@@ -1,5 +1,6 @@
 import type { Utxo } from 'chronik-client'
 import type * as Bitcore from 'xpi-ts/lib/bitcore'
+import type { Buffer } from 'buffer/'
 
 /**
  * Wallet Types
