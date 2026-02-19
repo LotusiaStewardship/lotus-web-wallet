@@ -24,6 +24,8 @@ const props = withDefaults(defineProps<{
   profileId: string
   /** Avatar size: xs, sm, md, lg, xl */
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+  /** Compact mode for smaller spaces */
+  compact?: boolean
   /** Show platform badge overlay on avatar */
   showPlatformBadge?: boolean
   /** Formatted timestamp string (e.g. "2h ago") */
@@ -36,6 +38,7 @@ const props = withDefaults(defineProps<{
   connectorMinHeight?: string
 }>(), {
   size: 'md',
+  compact: false,
   showPlatformBadge: true,
   connectorMinHeight: '16px',
 })
@@ -58,6 +61,7 @@ const badgeSize = computed(() => {
     case 'md': return { outer: 'w-4 h-4', icon: 'w-2.5 h-2.5' }
     case 'lg': return { outer: 'w-4 h-4', icon: 'w-2.5 h-2.5' }
     case 'xl': return { outer: 'w-5 h-5', icon: 'w-3 h-3' }
+    // Default to medium
     default: return { outer: 'w-4 h-4', icon: 'w-2.5 h-2.5' }
   }
 })
@@ -72,7 +76,7 @@ onMounted(async () => {
   <div class="flex gap-2.5">
     <!-- Left column: avatar + optional connector -->
     <div class="flex flex-col items-center flex-shrink-0" :class="showConnector ? 'pb-0' : ''">
-      <component :is="to ? resolveComponent('NuxtLink') : 'div'" :to="to" class="flex-shrink-0">
+      <NuxtLink :to="to" class="flex-shrink-0">
         <div class="relative">
           <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="avatarInitials" :size="size"
             :class="identity.isOwn ? 'ring-2 ring-primary/40' : ''" />
@@ -83,7 +87,7 @@ onMounted(async () => {
             <UIcon :name="platformIcon" class="text-gray-500 dark:text-gray-100" :class="badgeSize.icon" />
           </div>
         </div>
-      </component>
+      </NuxtLink>
       <!-- Vertical connector line -->
       <div v-if="showConnector" class="w-0.5 flex-1 mt-1 bg-gray-200 dark:bg-gray-700 rounded-full"
         :style="{ minHeight: connectorMinHeight }" />
@@ -91,22 +95,47 @@ onMounted(async () => {
 
     <!-- Right column: name + time + slot -->
     <div class="flex-1 min-w-0">
-      <!-- Author row -->
-      <div class="flex items-center gap-1 flex-wrap">
-        <component :is="to ? resolveComponent('NuxtLink') : 'span'" :to="to" class="text-[15px] font-bold leading-5"
-          :class="[
+      <NuxtLink :to="to">
+        <!-- Compact mode: single line with name and time -->
+        <div v-if="compact" class="flex items-center gap-1 flex-wrap">
+          <span class="text-[15px] font-bold leading-5" :class="[
             to ? 'hover:underline' : '',
             identity.isOwn ? 'text-primary' : '',
           ]" :title="identity.lotusAddress || profileId">
-          {{ identity.displayName }}
-        </component>
-        <span v-if="time" class="text-[13px] text-gray-500 dark:text-gray-400">
-          <span class="text-gray-300 dark:text-gray-600 mx-0.5">&middot;</span>
-          {{ time }}
-        </span>
-        <!-- Extra inline content (badges, vote counts, external links) -->
-        <slot name="inline" />
-      </div>
+            {{ identity.displayName }}
+          </span>
+          <span v-if="time" class="text-[13px] text-gray-500 dark:text-gray-400">
+            <span class="text-gray-500 dark:text-gray-400 mx-0.5">&middot;</span>
+            {{ time }}
+          </span>
+          <!-- Extra inline content (badges, vote counts, external links) -->
+          <slot name="inline" />
+        </div>
+
+        <!-- Non-compact mode: two-line layout -->
+        <div v-else>
+          <!-- Line 1: Author name -->
+          <div class="flex items-center gap-1 flex-wrap">
+            <span class="text-[15px] font-bold leading-5" :class="[
+              to ? 'hover:underline' : '',
+              identity.isOwn ? 'text-primary' : '',
+            ]" :title="identity.lotusAddress || profileId">
+              {{ identity.displayName }}
+            </span>
+            <!-- Extra inline content (badges, vote counts, external links) -->
+            <slot name="inline" />
+          </div>
+          <!-- Line 2: Platform and time -->
+          <div class="flex items-center gap-1 text-[13px] text-gray-500 dark:text-gray-400">
+            <span class="capitalize">{{ platform }}</span>
+            <span v-if="time">
+              <span class="text-gray-500 dark:text-gray-400 mx-0.5">&middot;</span>
+              {{ time }}
+            </span>
+          </div>
+        </div>
+      </NuxtLink>
+
       <!-- Main content below author row -->
       <slot />
     </div>

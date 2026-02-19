@@ -100,7 +100,7 @@ const hasReplies = computed(() => directReplies.value.length > 0)
 const replyCount = computed(() => directReplies.value.length)
 const showInlineReplies = computed(() => depth.value < 2 && hasReplies.value)
 const showViewMoreLink = computed(() => depth.value >= 2 && hasReplies.value)
-const hasConnector = computed(() => showInlineReplies.value || isReplyActive.value)
+const hasConnector = computed(() => showInlineReplies.value)
 
 const commentDetailUrl = computed(() =>
   `/feed/${props.comment.platform}/${props.comment.profileId}/${props.comment.id}`,
@@ -153,10 +153,10 @@ function handleReplyCancelled() { emit('replyCancelled') }
       <span>Hidden · low score · tap to show</span>
     </div>
 
-    <!-- Expanded state: mirrors ActivityItem px-4 py-3 wrapper exactly -->
-    <div v-else class="px-4 py-3">
-      <FeedAuthorDisplay :platform="comment.platform" :profile-id="comment.profileId" size="md" :to="commentDetailUrl"
-        :time="formattedTime" :show-connector="hasConnector">
+    <!-- Expanded state: mirrors ActivityItem py-3 wrapper exactly -->
+    <div v-else class="py-3">
+      <FeedAuthorDisplay :compact="true" :platform="comment.platform" :profile-id="comment.profileId" size="md"
+        :to="commentDetailUrl" :time="formattedTime" :show-connector="hasConnector">
         <template #inline>
           <!-- R1: Sentiment badges — revealed state only -->
           <template v-if="isRevealed">
@@ -176,7 +176,7 @@ function handleReplyCancelled() { emit('replyCancelled') }
         </template>
 
         <!-- Comment text: matches ActivityItem content block exactly -->
-        <div class="mb-1 mt-0.5">
+        <div class="mb-4 mt-1">
           <NuxtLink :to="commentDetailUrl" @click.stop>
             <p
               class="text-[15px] leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words hover:opacity-90 transition-opacity">
@@ -186,7 +186,7 @@ function handleReplyCancelled() { emit('replyCancelled') }
         </div>
 
         <!-- Action row: matches ActivityItem justify-between mt-1 exactly -->
-        <div class="flex items-center justify-between mt-1">
+        <div class="flex items-center justify-between">
           <!-- R4: Endorse button -->
           <UButton icon="i-lucide-thumbs-up" size="xs" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
             :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="!walletReady || voting"
@@ -234,14 +234,14 @@ function handleReplyCancelled() { emit('replyCancelled') }
             @posted="handleReplyPosted" @cancel="handleReplyCancelled" />
         </div>
       </FeedAuthorDisplay>
-    </div>
 
-    <!-- Twitter-style inline reply chain (depth 0→1 and 1→2 only) -->
-    <div v-if="showInlineReplies">
-      <FeedCommentItem v-for="reply in directReplies" :key="reply.id" :comment="reply" :depth="depth + 1"
-        :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
-        :post-id="postId" @reply="$emit('reply', $event)" @reply-posted="$emit('replyPosted', $event)"
-        @reply-cancelled="$emit('replyCancelled')" />
+      <!-- Twitter-style inline reply chain (depth 0→1 and 1→2 only) -->
+      <div v-if="showInlineReplies">
+        <FeedCommentItem v-for="reply in directReplies" :key="reply.id" :comment="reply" :depth="depth + 1"
+          :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
+          :post-id="postId" @reply="$emit('reply', $event)" @reply-posted="$emit('replyPosted', $event)"
+          @reply-cancelled="$emit('replyCancelled')" />
+      </div>
     </div>
   </div>
 </template>

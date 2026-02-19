@@ -17,6 +17,10 @@ import { FeedSortLabel } from '~/composables/useRankApi'
 const feedStore = useFeedStore()
 const { getFeedPosts } = useRankApi()
 
+const props = defineProps<{
+  scriptPayload: string
+}>()
+
 const seenPostIds = new Set<string>()
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -85,6 +89,7 @@ async function fetchPosts(append: boolean = false) {
       sortBy: feedStore.sortMode,
       page: feedStore.page,
       pageSize,
+      scriptPayload: props.scriptPayload
     })
     if (!result) {
       error.value = 'Failed to load feed'

@@ -123,7 +123,7 @@ async function fetchData() {
   loading.value = true
   error.value = null
   try {
-    // Fetch post data first (works without wallet, just won't have postMeta)
+    /* // Fetch post data first (works without wallet, just won't have postMeta)
     const postData = await getPostRanking(
       platform.value as ScriptChunkPlatformUTF8,
       profileId.value,
@@ -136,7 +136,7 @@ async function fetchData() {
       error.value = 'Post not found'
       loading.value = false
       return
-    }
+    } */
 
     // Wait for wallet to be initialized before fetching authenticated data
     await walletStore.waitForInitialization()
@@ -228,32 +228,35 @@ onMounted(fetchData)
           <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
           <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
           <div class="flex">
-            <div class="flex flex-col items-center flex-shrink-0 w-8 pb-1">
+            <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-6">
               <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
             </div>
           </div>
         </template>
 
-        <!-- Post Header: External link button -->
-        <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
-          class="text-sm text-primary hover:underline absolute top-4 right-4">
-          <UIcon name="i-lucide-external-link" class="w-5 h-5" />
-        </a>
-
         <!-- Post Header: Author info -->
         <!-- size="md" matches AncestorItem so the thread connector aligns -->
-        <div class="mb-2">
+        <div class="mb-1">
           <FeedAuthorDisplay :platform="platform" :profile-id="profileId" size="md"
-            :to="`/feed/${platform}/${profileId}`" :time="formattedTime" />
+            :to="`/feed/${platform}/${profileId}`" :time="formattedTime">
+            <template #inline>
+              <!-- External link for non-Lotusia posts -->
+              <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
+                class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
+                <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
+              </a>
+            </template>
+          </FeedAuthorDisplay>
         </div>
 
         <!-- Post Content -->
         <div class="mb-3">
           <p v-if="platform === 'lotusia'"
-            class="text-md leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
+            class="text-lg leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
               post.data }}</p>
           <!-- Embedded X Post (Twitter only) -->
-          <FeedXPostEmbed v-else-if="platform === 'twitter'" :tweet-id="postId" :profile-id="profileId" />
+          <FeedXPostEmbed font-size="lg" v-else-if="platform === 'twitter'" :tweet-id="postId"
+            :profile-id="profileId" />
         </div>
 
         <!-- Post ID (subtle metadata) -->
@@ -289,7 +292,7 @@ onMounted(fetchData)
             class="flex items-center justify-center gap-2 py-3 mb-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
             <UIcon name="i-lucide-eye-off" class="w-5 h-5 text-gray-400" />
             <span class="text-sm font-medium text-gray-500">{{ bucketedVotes }}</span>
-            <span class="text-xs text-gray-400">&middot; Vote to reveal community sentiment</span>
+            <span class="text-xs text-gray-400">&middot; Vote to show sentiment data</span>
           </div>
 
           <!-- R1 Vote-to-Reveal: Post-vote revealed state -->
@@ -346,7 +349,7 @@ onMounted(fetchData)
         </div>
         <UCard>
           <FeedCommentThread :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId" :post-id="postId"
-            :has-voted="hasVoted" @commented="fetchData" />
+            :has-voted="hasVoted" :comments="post?.comments" @commented="fetchData" />
         </UCard>
       </div>
     </template>

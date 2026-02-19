@@ -29,6 +29,8 @@ const props = defineProps<{
   parentText?: string
   /** Placeholder text override */
   placeholder?: string
+  /** Hide the "Posting as You" label — use when the parent context already identifies the user */
+  hideAuthorLabel?: boolean
 }>()
 
 const walletStore = useWalletStore()
@@ -150,79 +152,90 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-2">
+  <div class="space-y-0">
     <!-- Reply context: show parent text snippet instead of raw txid -->
     <div v-if="props.inReplyTo"
-      class="flex items-start gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border-l-2 border-gray-300 dark:border-gray-600">
+      class="flex items-start gap-2 px-3 py-2 mb-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border-l-2 border-primary/40">
       <UIcon name="i-lucide-corner-down-right" class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
       <p class="text-xs text-gray-500 line-clamp-2 flex-1">{{ parentTextSnippet }}</p>
       <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="flex-shrink-0 -mt-0.5"
         @click="handleCancel" />
     </div>
 
-    <!-- Composer row: author avatar + textarea + send -->
-    <div class="flex gap-2.5 items-start">
-      <!-- Author avatar (wallet identity) -->
-      <div v-if="authorDisplay" class="flex-shrink-0 mt-1">
-        <UAvatar :src="avatarUrl || undefined" :text="avatarInitials" size="sm" />
+    <!-- Twitter-style composer: avatar left column + content right column -->
+    <div class="flex gap-3 items-start">
+      <!-- Left column: avatar -->
+      <div v-if="authorDisplay" class="flex-shrink-0 pt-0.5">
+        <UAvatar :src="avatarUrl || undefined" :text="avatarInitials" size="md" />
       </div>
 
-      <!-- Input column -->
-      <div class="flex-1 min-w-0">
-        <!-- Author identity label -->
-        <div v-if="authorDisplay && !props.inReplyTo" class="text-[11px] text-gray-400 mb-1">
-          Posting as <span class="font-mono">{{ authorDisplay }}</span>
+      <!-- Right column: label + textarea + footer -->
+      <div class="flex-1 min-w-0 flex flex-col gap-1">
+        <!-- Author identity label (hidden when hideAuthorLabel or in reply mode) -->
+        <!-- <div v-if="authorDisplay && !props.inReplyTo && !props.hideAuthorLabel"
+          class="text-[13px] font-semibold text-gray-700 dark:text-gray-200">
+          Posting as You
+        </div> -->
+
+        <!-- Textarea: borderless, blends into the card background -->
+        <UTextarea ref="textareaRef" v-model="commentText" class="w-full"
+          :ui="{ base: 'bg-transparent border-0 focus:ring-0 shadow-none resize-none placeholder:text-gray-400 dark:placeholder:text-gray-500 text-[15px] px-2 py-2 mb-1' }"
+          :rows="props.inReplyTo ? 2 : 3" autofocus autoresize :maxrows="5"
+          :placeholder="placeholder || 'Share your perspective...'" :disabled="isPosting || status === 'success'"
+          @keydown="handleKeydown" />
+
+        <!-- Footer row: byte counter + burn cost + action buttons -->
+        <div class="flex items-center justify-between">
+          <!-- Left: byte progress -->
+          <div class="flex items-center gap-2">
+            <Transition name="fade" :duration="100" appear>
+              <div v-if="hasContent" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                <div class="w-12 h-2 rounded-full bg-gray-300 dark:bg-gray-700 overflow-hidden">
+                  <div class="h-full rounded-full transition-all"
+                    :class="byteLimitPct > 90 ? 'bg-error-500' : 'bg-primary/60'"
+                    :style="{ width: `${byteLimitPct}%` }" />
+                </div>
+                <span class="tabular-nums"
+                  :class="byteLength > MAX_COMMENT_BYTES ? 'text-error-500 dark:text-error-400' : 'text-gray-500 dark:text-gray-400'">
+                  {{ MAX_COMMENT_BYTES - byteLength }}
+                </span>
+              </div>
+            </Transition>
+          </div>
+
+          <!-- Right: burn cost + buttons -->
+          <div class="flex items-center gap-1.5">
+            <!-- Auto-calculated burn cost (informational, R3) -->
+            <Transition name="fade" :duration="100" appear>
+              <span v-if="hasContent" class="text-xs text-gray-500 dark:text-gray-400">
+                {{ formattedBurn }} XPI
+              </span>
+            </Transition>
+            <!-- Cancel -->
+            <UButton variant="ghost" color="neutral" size="xs" @click="handleCancel">
+              Cancel
+            </UButton>
+
+            <!-- Send / Reply button -->
+            <UButton :loading="isPosting" :disabled="!canSubmit" size="xs" variant="outline" @click="submitComment">
+              <template v-if="!isPosting">
+                {{ props.inReplyTo ? 'Reply' : 'Post' }}
+              </template>
+            </UButton>
+          </div>
         </div>
 
-        <UTextarea ref="textareaRef" v-model="commentText" class="w-full" :rows="3" autoresize :maxrows="8"
-          :placeholder="placeholder || 'Share your perspective...'" size="md"
-          :disabled="isPosting || status === 'success'" @keydown="handleKeydown" />
-
-        <!-- Metadata row (visible when typing) -->
-        <Transition name="fade">
-          <div v-if="hasContent" class="flex items-center justify-between mt-1.5 px-1">
-            <!-- Byte counter -->
-            <div class="flex items-center gap-2 text-xs">
-              <span :class="byteLength > MAX_COMMENT_BYTES ? 'text-error-500' : 'text-gray-400'">
-                {{ byteLength }}/{{ MAX_COMMENT_BYTES }}
-              </span>
-              <div class="w-12 h-1 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
-                <div class="h-full rounded-full transition-all"
-                  :class="byteLimitPct > 90 ? 'bg-error-500' : 'bg-primary'" :style="{ width: `${byteLimitPct}%` }" />
-              </div>
-            </div>
-            <!-- Auto-calculated burn cost -->
-            <span class="text-xs text-gray-400">{{ formattedBurn }} XPI</span>
-          </div>
-        </Transition>
+        <!-- Status messages -->
+        <p v-if="hasContent && !canAffordComment(autoBurn)" class="text-xs text-warning-500 dark:text-warning-400">
+          Insufficient balance ({{ formattedBurn }} XPI required)
+        </p>
+        <p v-if="error" class="text-xs text-error-500 dark:text-error-400">{{ error }}</p>
+        <div v-if="status === 'success'"
+          class="flex items-center gap-1.5 text-xs text-success-500 dark:text-success-400">
+          <UIcon name="i-lucide-check-circle" class="w-3.5 h-3.5" />
+          <span>Posted on-chain</span>
+        </div>
       </div>
-
-      <!-- Send button (only shown when no reply context cancel button) -->
-      <UButton v-if="!props.inReplyTo" :icon="isPosting ? 'i-lucide-loader-2' : 'i-lucide-send'" :loading="isPosting"
-        :disabled="!canSubmit" size="sm" @click="submitComment" />
-    </div>
-
-    <!-- Send + cancel row for replies -->
-    <div v-if="props.inReplyTo" class="flex items-center justify-end gap-2">
-      <UButton variant="ghost" color="neutral" size="xs" @click="handleCancel">Cancel</UButton>
-      <UButton :icon="isPosting ? 'i-lucide-loader-2' : 'i-lucide-send'" :loading="isPosting" :disabled="!canSubmit"
-        size="xs" @click="submitComment">
-        Reply
-      </UButton>
-    </div>
-
-    <!-- Insufficient balance warning -->
-    <p v-if="hasContent && !canAffordComment(autoBurn)" class="text-xs text-warning-500 px-1">
-      Insufficient balance ({{ formattedBurn }} XPI required)
-    </p>
-
-    <!-- Error display -->
-    <p v-if="error" class="text-xs text-error-500 px-1">{{ error }}</p>
-
-    <!-- Success display -->
-    <div v-if="status === 'success'" class="flex items-center gap-1.5 text-xs text-success-500 px-1">
-      <UIcon name="i-lucide-check-circle" class="w-3.5 h-3.5" />
-      <span>Posted on-chain</span>
     </div>
   </div>
 </template>

@@ -179,7 +179,7 @@ watch(
 
     <!-- Rendered Tweet Content -->
     <div v-else-if="tweet" class="select-text">
-      <p :class="`text-${fontSize || 'md'} leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line`">
+      <p :class="`text-${fontSize || 'md'} leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line`">
         {{ tweet.text }}
       </p>
 
@@ -199,8 +199,6 @@ watch(
       class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2">
       <p class="text-md text-gray-500 dark:text-gray-400 mb-2">This content is currently unavailable. It may have been
         deleted.</p>
-      <p class="text-md text-gray-500 dark:text-gray-400">If the post was deleted from X, it is recommended to not vote
-        on it.</p>
     </div>
   </div>
 </template>

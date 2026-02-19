@@ -16,7 +16,7 @@
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import { useWalletStore } from '~/stores/wallet'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** Platform identifier */
   platform: ScriptChunkPlatformUTF8
   /** Profile ID */
@@ -27,7 +27,11 @@ const props = defineProps<{
   postMeta?: VoterPostMetadata | null
   /** Disable voting (e.g. not authenticated) */
   disabled?: boolean
-}>()
+  /** Compact mode for smaller buttons */
+  compact?: boolean
+}>(), {
+  compact: false
+})
 
 const emit = defineEmits<{
   voted: [txid: string, sentiment: 'positive' | 'negative']
@@ -62,6 +66,7 @@ async function handleVoteClick(sentiment: 'positive' | 'negative') {
 
     if (result?.txid) {
       votedSentiment.value = sentiment
+      // Notify parent component of successful vote for feed refresh or UI updates
       emit('voted', result.txid, sentiment)
     }
   } finally {
@@ -74,14 +79,16 @@ async function handleVoteClick(sentiment: 'positive' | 'negative') {
   <div class="flex items-center gap-6">
     <!-- R4: Equal visual weight for endorse and flag (cost symmetry) -->
     <!-- R38: Curation language — "Endorse"/"Flag" not "upvote"/"downvote" -->
-    <UButton icon="i-lucide-thumbs-up" size="sm" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
-      :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="disabled || !walletReady || voting"
-      title="Endorse this content" @click="handleVoteClick('positive')">
+    <UButton icon="i-lucide-thumbs-up" :size="compact ? 'sm' : 'md'"
+      :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
+      :class="votedSentiment === 'positive' ? 'text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'"
+      :disabled="disabled || !walletReady || voting" title="Endorse this content" @click="handleVoteClick('positive')">
       <span v-if="votedSentiment === 'positive'" class="text-xs">Endorsed</span>
     </UButton>
-    <UButton icon="i-lucide-thumbs-down" size="sm" :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
-      :color="votedSentiment === 'negative' ? 'error' : 'neutral'" :disabled="disabled || !walletReady || voting"
-      title="Flag this content" @click="handleVoteClick('negative')">
+    <UButton icon="i-lucide-thumbs-down" :size="compact ? 'sm' : 'md'"
+      :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
+      :class="votedSentiment === 'negative' ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'"
+      :disabled="disabled || !walletReady || voting" title="Flag this content" @click="handleVoteClick('negative')">
       <span v-if="votedSentiment === 'negative'" class="text-xs">Flagged</span>
     </UButton>
   </div>

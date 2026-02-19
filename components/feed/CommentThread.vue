@@ -26,6 +26,8 @@ const props = defineProps<{
   postId?: string
   /** R1: Whether the user has voted on the parent content */
   hasVoted?: boolean
+  /** Pre-loaded comments (from parent) */
+  comments?: RnkcComment[]
 }>()
 
 const emit = defineEmits<{
@@ -101,8 +103,13 @@ async function handleCommentPosted(txid: string) {
   await fetchComments()
 }
 
-function handleReply(parentTxid: string) {
-  activeReplyTo.value = parentTxid
+/**
+ * Handles a reply action from a CommentItem.
+ * Sets the active reply target and hides the root comment input.
+ * @param parentPostId - The txid of the comment being replied to
+ */
+function handleReply(parentPostId: string) {
+  activeReplyTo.value = parentPostId
   showCommentInput.value = false
 }
 
@@ -115,12 +122,14 @@ function handleCancelComment() {
 }
 
 onMounted(async () => {
-  fetchComments()
+  //fetchComments()
+  comments.value = props.comments || []
   const sp = walletStore.scriptPayload
   if (sp) {
     const avatar = await getAvatar('lotusia', sp)
     authorAvatarUrl.value = avatar.src
   }
+  loading.value = false
 })
 </script>
 

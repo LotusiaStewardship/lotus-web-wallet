@@ -521,9 +521,12 @@ export const useRankApi = () => {
   const getProfileRanking = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
+    scriptPayload?: string,
   ): Promise<ProfileData | null> => {
     try {
-      const url = `${getRankApiUrl()}/${platform}/${profileId}`
+      const url = `${getRankApiUrl()}/${platform}/${profileId}${
+        scriptPayload ? `/${scriptPayload}` : ''
+      }`
       const response = await fetch(url)
       if (!response.ok) {
         console.error(`Failed to fetch profile ranking: ${response.status}`)

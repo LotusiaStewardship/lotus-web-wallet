@@ -20,6 +20,7 @@ definePageMeta({
 })
 
 const walletStore = useWalletStore()
+const { openNewPostSlideover } = useOverlays()
 
 const activeTab = ref('activity')
 
@@ -32,10 +33,8 @@ const tabItems = [
 const INTRO_DISMISSED_KEY = 'feed-intro-dismissed'
 const showIntro = ref(false)
 
-/** FAB compose modal state */
-const showComposeModal = ref(false)
-
 const walletReady = computed(() => walletStore.isReadyForSigning())
+const isSlideoverOpen = ref(false)
 
 /** The wallet's own Lotusia identity (scriptPayload used as profileId for native posts) */
 const lotusiaProfileId = computed(() => walletStore.scriptPayload || '')
@@ -49,12 +48,14 @@ function dismissIntro() {
   localStorage.setItem(INTRO_DISMISSED_KEY, '1')
 }
 
-function openCompose() {
-  showComposeModal.value = true
-}
-
-function handlePostPosted(_txid: string) {
-  showComposeModal.value = false
+async function openCompose() {
+  if (!lotusiaProfileId.value) return
+  isSlideoverOpen.value = true
+  await openNewPostSlideover({
+    platform: 'lotusia',
+    profileId: lotusiaProfileId.value,
+  })
+  isSlideoverOpen.value = false
 }
 </script>
 
@@ -66,7 +67,7 @@ function handlePostPosted(_txid: string) {
         <h1 class="text-xl font-bold">Social Feed</h1>
         <p class="text-sm text-gray-500">Community-curated social content, sourced from across the Internet</p>
       </div>
-      <UButton icon="i-lucide-search" variant="soft" color="neutral" size="sm" to="/feed/search">
+      <UButton icon="i-lucide-search" variant="soft" color="neutral" size="md" to="/feed/search">
         Search
       </UButton>
     </div>
@@ -77,11 +78,11 @@ function handlePostPosted(_txid: string) {
       color="primary" variant="subtle" close @update:open="dismissIntro" />
 
     <!-- Tab Selector -->
-    <UTabs v-model="activeTab" :items="tabItems" :content="false" class="w-full" variant="pill" :ui="{
-    }" />
+    <!-- <UTabs v-model="activeTab" :items="tabItems" :content="false" class="w-full" variant="pill" :ui="{
+    }" /> -->
 
     <!-- Activity Tab (default — the general scrollable feed) -->
-    <FeedActivityStream v-if="activeTab === 'activity'" />
+    <FeedActivityStream v-if="activeTab === 'activity'" :scriptPayload="lotusiaProfileId" />
 
     <!-- Profiles Tab (discovery) -->
     <template v-if="activeTab === 'profiles'">
@@ -98,28 +99,13 @@ function handlePostPosted(_txid: string) {
     <!-- FAB: Compose a Lotusia post (only when wallet is ready) -->
     <Teleport to="body">
       <Transition name="fab">
-        <button v-if="walletReady && lotusiaProfileId"
-          class="fixed bottom-20 right-4 z-40 w-14 h-14 rounded-full bg-primary shadow-lg flex items-center justify-center text-white hover:bg-primary/90 active:scale-95 transition-all"
+        <button v-if="walletReady && lotusiaProfileId && !isSlideoverOpen"
+          class="fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-primary shadow-lg flex items-center justify-center text-white hover:bg-primary/90 active:scale-95 transition-all"
           title="Write a post" @click="openCompose">
           <UIcon name="i-lucide-pencil" class="w-6 h-6" />
         </button>
       </Transition>
     </Teleport>
-
-    <!-- Compose Modal -->
-    <UModal v-model:open="showComposeModal" title="New Post" :ui="{ content: 'max-w-lg' }">
-      <template #body>
-        <div class="space-y-3">
-          <p class="text-xs text-gray-400">
-            Posting as <span class="font-mono">{{ lotusiaProfileId.slice(0, 6) }}...{{ lotusiaProfileId.slice(-6)
-              }}</span>
-            on the Lotusia network. This post will be permanently recorded on-chain.
-          </p>
-          <FeedCommentInput platform="lotusia" :profile-id="lotusiaProfileId" placeholder="What's on your mind?"
-            @posted="handlePostPosted" @cancel="showComposeModal = false" />
-        </div>
-      </template>
-    </UModal>
   </div>
 </template>
 

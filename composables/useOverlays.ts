@@ -47,12 +47,14 @@
  * })
  * ```
  */
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import {
   LazyActionsSendModal,
   LazyActionsReceiveModal,
   LazyActionsScanModal,
   LazyNavigationActionSheet,
   LazyFeedVoteSlideover,
+  LazyFeedNewPostSlideover,
   LazyPeopleAddContactModal,
   LazyPeopleShareContactModal,
   LazyPeopleShareMyContactModal,
@@ -109,6 +111,15 @@ export interface VoteSlideoverProps {
 }
 
 export interface VoteSlideoverResult {
+  txid: string
+}
+
+export interface NewPostSlideoverProps {
+  platform: ScriptChunkPlatformUTF8
+  profileId: string
+}
+
+export interface NewPostSlideoverResult {
   txid: string
 }
 
@@ -255,6 +266,7 @@ type ModalMap = {
   scanModal: typeof LazyActionsScanModal
   actionSheet: typeof LazyNavigationActionSheet
   voteSlideover: typeof LazyFeedVoteSlideover
+  newPostSlideover: typeof LazyFeedNewPostSlideover
   addContactModal: typeof LazyPeopleAddContactModal
   shareContactModal: typeof LazyPeopleShareContactModal
   shareMyContactModal: typeof LazyPeopleShareMyContactModal
@@ -336,6 +348,7 @@ export async function prewarmOverlays(): Promise<void> {
       import('~/components/actions/ScanModal.vue'),
       import('~/components/navigation/ActionSheet.vue'),
       import('~/components/feed/VoteSlideover.vue'),
+      import('~/components/feed/NewPostSlideover.vue'),
       import('~/components/people/AddContactModal.vue'),
       import('~/components/people/ShareContactModal.vue'),
       import('~/components/people/ShareMyContactModal.vue'),
@@ -359,6 +372,7 @@ export async function prewarmOverlays(): Promise<void> {
   getModal('scanModal', LazyActionsScanModal)
   getModal('actionSheet', LazyNavigationActionSheet)
   getModal('voteSlideover', LazyFeedVoteSlideover)
+  getModal('newPostSlideover', LazyFeedNewPostSlideover)
   getModal('addContactModal', LazyPeopleAddContactModal)
   getModal('shareContactModal', LazyPeopleShareContactModal)
   getModal('shareMyContactModal', LazyPeopleShareMyContactModal)
@@ -533,6 +547,16 @@ export function useOverlays() {
     return result as VoteSlideoverResult | undefined
   }
 
+  async function openNewPostSlideover(
+    props: NewPostSlideoverProps,
+  ): Promise<NewPostSlideoverResult | undefined> {
+    const modal = getModal('newPostSlideover', LazyFeedNewPostSlideover)
+    pushHistoryState('newPostSlideover', modal.id, () => modal.close())
+    const result = await modal.open(props)
+    await cleanupHistoryAfterClose('newPostSlideover')
+    return result as NewPostSlideoverResult | undefined
+  }
+
   // --------------------------------------------------------------------------
   // People Modals
   // --------------------------------------------------------------------------
@@ -618,6 +642,7 @@ export function useOverlays() {
 
     // Vote slideover
     openVoteSlideover,
+    openNewPostSlideover,
 
     // People modals
     openAddContactModal,

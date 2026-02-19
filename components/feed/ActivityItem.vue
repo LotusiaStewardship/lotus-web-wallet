@@ -28,6 +28,16 @@ const walletReady = computed(() => walletStore.isReadyForSigning())
 const { useResolve } = useFeedIdentity()
 const identity = useResolve(() => props.post.platform, () => props.post.profileId)
 
+const hasAncestors = computed(() => {
+  return props.post.ancestors && props.post.ancestors.length > 0
+})
+
+const externalUrl = computed(() => {
+  const urlHelper = PlatformURL[props.post.platform]
+  if (!urlHelper) return null
+  return urlHelper.post(props.post.profileId, props.post.id)
+})
+
 /** R1: Determine if the current user has voted on this post */
 const hasUserVoted = computed(() => {
   return !!(props.post.postMeta?.hasWalletUpvoted || props.post.postMeta?.hasWalletDownvoted)
@@ -132,63 +142,69 @@ const totalVotes = computed(() => props.post.votesPositive + props.post.votesNeg
 </script>
 
 <template>
-  <NuxtLink :to="feedUrl" class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-    <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="md" :to="feedUrl"
-      :time="formattedTime">
-      <template #inline>
-        <!-- R1: Only show sentiment badge in revealed state -->
-        <template v-if="isRevealed">
-          <UBadge :color="sentimentColor" size="sm" variant="subtle">
-            {{ sentimentLabel }}
-          </UBadge>
-          <!-- R2: Controversial flag -->
-          <UBadge v-if="isControversialFlag" color="warning" size="sm" variant="subtle">
-            Controversial
-          </UBadge>
-        </template>
-      </template>
+  <div class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
+    <!-- Ancestor chain: Twitter-style conversation context above the focal post -->
+    <template v-if="hasAncestors">
+      <FeedAncestorItem font-size="md" v-for="ancestor in props.post.ancestors" :key="ancestor.id" :post="ancestor"
+        :show-connector="true" />
+      <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
+      <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
+      <div class="flex">
+        <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-6">
+          <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
+        </div>
+      </div>
+    </template>
+    <NuxtLink :to="feedUrl">
+      <!-- Post Header: Author info -->
+      <div class="mb-2">
+        <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="md" :to="feedUrl"
+          :time="formattedTime">
+          <template #inline>
+            <!-- R1: Only show sentiment badge in revealed state -->
+            <template v-if="isRevealed">
+              <!-- NOTE: The sentiment badge is already shown in the FeedVoteButton component -->
+              <!-- R2: Controversial flag -->
+              <UBadge v-if="isControversialFlag" color="warning" size="sm" variant="subtle">
+                Controversial
+              </UBadge>
+            </template>
+            <!-- External link for non-Lotusia posts -->
+            <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
+              class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
+              <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
+            </a>
+          </template>
+        </FeedAuthorDisplay>
+      </div>
 
-      <!-- Post content div -->
-      <div class="mb-1 mt-0.5">
+      <!-- Post Content -->
+      <div class="mb-2">
         <!-- Lotusia post content has data property -->
-        <p v-if="post.data" class="text-[15px] leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
+        <p v-if="post.data" class="text-md leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
           post.data }}</p>
-        <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:198-200) -->
+        <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:256) -->
         <FeedXPostEmbed v-else-if="isTwitterPost" :tweet-id="post.id" :profile-id="post.profileId" />
       </div>
+    </NuxtLink>
 
-      <!-- Bottom action row: vote buttons + ranking metric (standard social media layout) -->
-      <div class="flex items-center justify-between mt-1">
-        <!-- R4: Upvote button (equal visual weight) -->
-        <UButton icon="i-lucide-thumbs-up" size="xs" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
-          :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="!walletReady || voting"
-          title="Endorse this content" @click="handleVoteClick('positive', $event)">
-          <span v-if="votedSentiment === 'positive'" class="text-xs">Voted</span>
-          <!-- R1: Show exact count only when revealed, otherwise hide -->
-          <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ post.votesPositive }}</span>
-        </UButton>
+    <!-- Bottom action row: vote buttons + ranking metric (standard social media layout) -->
+    <div class="flex items-center justify-between mt-1">
+      <!-- TODO: Add handleVoted() to capture the vote transaction ID and update local state -->
+      <FeedVoteButton :platform="post.platform" :profile-id="post.profileId" :post-id="post.id"
+        :post-meta="post.postMeta" :disabled="!walletReady" :compact="true" />
 
-        <!-- R4: Downvote button (equal visual weight) -->
-        <UButton icon="i-lucide-thumbs-down" size="xs" :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
-          :color="votedSentiment === 'negative' ? 'error' : 'neutral'" :disabled="!walletReady || voting"
-          title="Flag this content" @click="handleVoteClick('negative', $event)">
-          <span v-if="votedSentiment === 'negative'" class="text-xs">Voted</span>
-          <!-- R1: Show exact count only when revealed, otherwise hide -->
-          <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ post.votesNegative }}</span>
-        </UButton>
-
-        <!-- R1: Ranking and vote display -->
-        <span class="text-xs text-gray-400">
-          <template v-if="isRevealed">
-            <!-- Revealed: Show full sentiment breakdown -->
-            {{ rankingDisplay }} XPI ({{ post.votesPositive }}↑ / {{ post.votesNegative }}↓)
-          </template>
-          <template v-else>
-            <!-- Blind: Show only bucketed vote count per R1 spec -->
-            {{ bucketedVotesDisplay }}
-          </template>
-        </span>
-      </div>
-    </FeedAuthorDisplay>
-  </NuxtLink>
+      <!-- R1: Ranking and vote display -->
+      <span class="text-xs text-gray-500 dark:text-gray-400">
+        <template v-if="isRevealed">
+          <!-- Revealed: Show full sentiment breakdown -->
+          {{ rankingDisplay }} XPI ({{ post.votesPositive }}↑ / {{ post.votesNegative }}↓)
+        </template>
+        <template v-else>
+          <!-- Blind: Show only bucketed vote count per R1 spec -->
+          {{ bucketedVotesDisplay }}
+        </template>
+      </span>
+    </div>
+  </div>
 </template>

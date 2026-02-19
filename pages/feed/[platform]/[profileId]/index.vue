@@ -128,9 +128,12 @@ async function fetchData() {
   loading.value = true
   error.value = null
   try {
+    // Wait for wallet to be initialized before fetching data that requires authentication
+    await walletStore.waitForInitialization()
+
     // Fetch profile and posts first (don't require wallet)
     const [profileData, postsData, avatar] = await Promise.all([
-      getProfileRanking(platform.value as ScriptChunkPlatformUTF8, profileId.value),
+      getProfileRanking(platform.value as ScriptChunkPlatformUTF8, profileId.value, walletStore.scriptPayload),
       getProfilePosts(platform.value as ScriptChunkPlatformUTF8, profileId.value),
       getAvatar(platform.value, profileId.value),
     ])
@@ -138,30 +141,10 @@ async function fetchData() {
     posts.value = postsData
     avatarUrl.value = avatar.src
 
-    // Wait for wallet to be initialized before fetching data that requires authentication
-    await walletStore.waitForInitialization()
-
     // R1: Determine hasVoted for this profile - requires wallet to be initialized
-    // This uses walletStore.scriptPayload which requires initialization
-    if (!walletStore.scriptPayload) {
-      hasVoted.value = false
-    } else if (postsData?.posts?.length) {
-      // Fetch the first post with scriptPayload to get profile.profileMeta
-      const firstPost = postsData.posts[0]
-      const postWithMeta = await getPostRanking(
-        platform.value as ScriptChunkPlatformUTF8,
-        profileId.value,
-        firstPost.id,
-        walletStore.scriptPayload,
-      )
-      const meta = postWithMeta?.profile?.profileMeta
-      hasVoted.value = meta
-        ? meta.hasWalletUpvoted || meta.hasWalletDownvoted
-        : false
-    } else {
-      // No posts = no herding risk, show revealed state
-      hasVoted.value = true
-    }
+    // Backend API updated to include profileMeta via getProfileRanking
+    hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || false
+
   } catch (err: any) {
     error.value = err?.message || 'Failed to load profile'
   } finally {
@@ -221,8 +204,8 @@ onMounted(fetchData)
             <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="profileId.substring(0, 2).toUpperCase()"
               size="3xl" />
             <div
-              class="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
-              <UIcon :name="platformIcon" class="w-4 h-4 text-gray-500" />
+              class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
+              <UIcon :name="platformIcon" class="w-3 h-3 text-gray-500" />
             </div>
           </div>
 

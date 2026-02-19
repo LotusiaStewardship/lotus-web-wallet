@@ -26,6 +26,7 @@ import { useTime } from '~/composables/useTime'
 
 const props = defineProps<{
   post: PostData
+  fontSize?: 'sm' | 'md'
   /** Whether to draw the vertical connector line below this ancestor */
   showConnector?: boolean
 }>()
@@ -58,13 +59,13 @@ const formattedTime = computed(() => {
 </script>
 
 <template>
-  <div class="py-1.5 pb-0">
-    <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="md" :to="detailUrl"
+  <div class="pb-2">
+    <FeedAuthorDisplay :compact="true" :platform="post.platform" :profile-id="post.profileId" size="md" :to="detailUrl"
       :time="formattedTime" :show-connector="showConnector" connector-min-height="16px">
       <template #inline>
         <!-- R1: Bucketed vote count only — no burn amount or sentiment direction -->
-        <span class="text-xs text-gray-300 dark:text-gray-600">&middot;</span>
-        <span class="text-xs text-gray-400">{{ bucketedVotesDisplay }}</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">&middot;</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">{{ bucketedVotesDisplay }}</span>
         <!-- External link for non-Lotusia posts -->
         <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
           class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
@@ -73,18 +74,21 @@ const formattedTime = computed(() => {
       </template>
 
       <!-- Content: Lotusia text or Twitter embed or platform link -->
-      <NuxtLink :to="detailUrl" class="block group mt-0.5 mb-1">
+      <NuxtLink :to="detailUrl" class="block group mb-2">
         <p v-if="isLotusia && post.data"
-          class="text-[14px] leading-snug text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words group-hover:opacity-90 transition-opacity line-clamp-3">
+          :class="`mt-1 text-${props.fontSize || 'md'} leading-snug text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words group-hover:opacity-90 transition-opacity line-clamp-3`">
           {{ post.data }}
         </p>
         <div v-else-if="isTwitter" class="mt-1">
-          <FeedXPostEmbed font-size="sm" :tweet-id="post.id" :profile-id="post.profileId" />
+          <FeedXPostEmbed :font-size="props.fontSize || 'md'" :tweet-id="post.id" :profile-id="post.profileId" />
         </div>
         <p v-else class="text-sm text-gray-400 italic">
           {{ post.platform }} post · {{ post.id.slice(0, 12) }}...
         </p>
       </NuxtLink>
+
+      <FeedVoteButton :platform="post.platform" :profile-id="post.profileId" :post-id="post.id"
+        :post-meta="post.postMeta" :compact="true" />
     </FeedAuthorDisplay>
   </div>
 </template>
