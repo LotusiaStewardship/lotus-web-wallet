@@ -2,72 +2,91 @@
 /**
  * Activity Item Component
  *
- * Displays a single RANK vote in the activity stream.
- * Target-focused layout: the profile/post being curated is the subject,
- * with sentiment shown as a subtle badge.
+ * Displays a post in the activity stream with full RANK strategy compliance:
+ *   - R1 (Vote-to-Reveal): Blind state until user votes, then reveal full sentiment
+ *   - R2 (Controversial badge): Shows when controversy score > 0.3
+ *   - R4 (Cost symmetry): Equal visual weight for up/down vote buttons
+ *   - R38 (Curation language): "Endorsed/Flagged/Noted" instead of up/down
  *
- * Design language matches the post/profile detail pages:
- *   - Same avatar + platform overlay pattern
- *   - Profile name as plain text, platform capitalized
- *   - Post ID in mono font
- *   - Sentiment as a compact badge (not colored verb text)
- *
- * R1-safe: Does NOT reveal aggregate sentiment — only shows individual vote data.
- * Individual vote sentiment is an acceptable information channel per R1 spec
- * (echo-chamber-mitigation.md:147).
- *
- * R38-compliant: Uses curation language per psychopolitics-and-digital-power.md:254-270.
- *
- * Vote buttons and metrics are in a bottom action row (standard social media layout).
- * R4: Equal visual weight for up/down buttons.
- * Burn amount shown is the individual voter's burn — R1-safe (not aggregate).
- *
- * Optimistic update: After voting, the button highlights immediately without
- * refreshing the feed (preserves scroll position). Mirrors rank-extension-ts pattern.
+ * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R2, R4
+ * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
-import type { RankTransaction } from '~/composables/useRankApi'
-import { PlatformIcon } from '~/composables/useRankApi'
+import type { PostData } from '~/composables/useRankApi'
 import { formatXPICompact } from '~/utils/formatting'
+import { bucketVoteCount, isControversial } from '~/utils/feed'
 import { useWalletStore } from '~/stores/wallet'
+import { useTime } from '~/composables/useTime'
 
 const props = defineProps<{
-  vote: RankTransaction
+  post: PostData
 }>()
-
-const sentimentType = computed(() => {
-  if (props.vote.sentiment === 'positive') return 'positive'
-  if (props.vote.sentiment === 'negative') return 'negative'
-  return 'neutral'
-})
-
-/** Sentiment badge color — matches UBadge color prop */
-const sentimentBadgeColor = computed(() => {
-  if (sentimentType.value === 'positive') return 'success'
-  if (sentimentType.value === 'negative') return 'error'
-  return 'neutral'
-})
-
-/** Sentiment badge label — R38 curation-aligned language */
-const sentimentLabel = computed(() => {
-  if (sentimentType.value === 'positive') return 'Endorsed'
-  if (sentimentType.value === 'negative') return 'Flagged'
-  return 'Noted'
-})
 
 const walletStore = useWalletStore()
 const { openVoteSlideover } = useOverlays()
+const { timeAgo } = useTime()
 const walletReady = computed(() => walletStore.isReadyForSigning())
+const { useResolve } = useFeedIdentity()
+const identity = useResolve(() => props.post.platform, () => props.post.profileId)
 
-/** R1-safe: Individual burn amount (this voter's burn, not aggregate) */
-const burnDisplay = computed(() => {
-  if (!props.vote.sats || props.vote.sats === '0') return null
-  return formatXPICompact(props.vote.sats)
+/** R1: Determine if the current user has voted on this post */
+const hasUserVoted = computed(() => {
+  return !!(props.post.postMeta?.hasWalletUpvoted || props.post.postMeta?.hasWalletDownvoted)
+})
+
+/** R1: Determine user's voted sentiment if they've voted */
+const userSentiment = computed(() => {
+  if (props.post.postMeta?.hasWalletUpvoted) return 'positive'
+  if (props.post.postMeta?.hasWalletDownvoted) return 'negative'
+  return null
+})
+
+/** R1: Revealed state shows full sentiment, blind shows only bucketed count */
+const isRevealed = computed(() => hasUserVoted.value)
+
+/** R2: Check if post is controversial */
+const isControversialFlag = computed(() =>
+  isControversial(
+    props.post.satsPositive || '0',
+    props.post.satsNegative || '0',
+    totalVotes.value,
+    5, // min votes threshold per R2
+  ),
+)
+
+/** R38: Curation language based on aggregate sentiment (for revealed state) */
+const sentimentLabel = computed(() => {
+  if (isPositive.value) return 'Endorsed'
+  if (isNegative.value) return 'Flagged'
+  return 'Noted'
+})
+
+/** R38: Badge color for sentiment */
+const sentimentColor = computed(() => {
+  if (isPositive.value) return 'success'
+  if (isNegative.value) return 'error'
+  return 'neutral'
+})
+
+/** R1: Bucketed vote count for blind state */
+const bucketedVotesDisplay = computed(() => bucketVoteCount(totalVotes.value))
+
+/** Formatted timestamp for display */
+const formattedTime = computed(() => {
+  const ts = props.post.lastVoted || props.post.timestamp || props.post.firstSeen
+  if (!ts) return ''
+  return timeAgo(Number(ts))
 })
 
 /** Optimistic local state: tracks the user's vote on this item without feed refresh */
 const votedSentiment = ref<'positive' | 'negative' | null>(null)
 const voting = ref(false)
+
+// R1: Initialize optimistic state with user's existing vote if they've already voted
+onMounted(() => {
+  if (userSentiment.value) {
+    votedSentiment.value = userSentiment.value
+  }
+})
 
 async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event) {
   event.preventDefault()
@@ -78,9 +97,9 @@ async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event)
   try {
     const result = await openVoteSlideover({
       sentiment,
-      platform: props.vote.platform as string,
-      profileId: props.vote.profileId,
-      postId: props.vote.postId || undefined,
+      platform: props.post.platform as string,
+      profileId: props.post.profileId,
+      postId: props.post.id || undefined,
     })
 
     if (result?.txid) {
@@ -92,114 +111,84 @@ async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event)
   }
 }
 
-const platformIcon = computed(
-  () => PlatformIcon[props.vote.platform] || 'i-lucide-globe',
-)
-
 const isTwitterPost = computed(
-  () => props.vote.platform === 'twitter' && !!props.vote.postId,
+  () => props.post.platform === 'twitter',
 )
 
 const feedUrl = computed(() => {
-  if (props.vote.postId) {
-    return `/feed/${props.vote.platform}/${props.vote.profileId}/${props.vote.postId}`
-  }
-  return `/feed/${props.vote.platform}/${props.vote.profileId}`
+  return `/feed/${props.post.platform}/${props.post.profileId}/${props.post.id}`
 })
 
-const timeAgo = computed(() => {
-  const ts = props.vote.timestamp || props.vote.firstSeen
-  if (!ts) return ''
-  const parsed = typeof ts === 'number' ? ts : Number(ts)
-  // Handle both Unix seconds and milliseconds
-  const ms = parsed > 1e12 ? parsed : parsed * 1000
-  if (isNaN(ms)) return ''
-  const diff = Date.now() - ms
-  if (diff < 0) return 'just now'
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
+const rankingDisplay = computed(() => {
+  const val = BigInt(props.post.ranking || '0')
+  return formatXPICompact(val.toString())
 })
 
-const { getAvatar } = useAvatars()
-const avatarUrl = ref<string | null>(null)
-const avatarError = ref(false)
+const isPositive = computed(() => BigInt(props.post.ranking || '0') > 0n)
+const isNegative = computed(() => BigInt(props.post.ranking || '0') < 0n)
 
-onMounted(async () => {
-  const avatar = await getAvatar(props.vote.platform, props.vote.profileId)
-  avatarUrl.value = avatar.src
-})
+const totalVotes = computed(() => props.post.votesPositive + props.post.votesNegative)
+
 </script>
 
 <template>
   <NuxtLink :to="feedUrl" class="block px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
-    <!-- Top row: Avatar + Content -->
-    <div class="flex items-center gap-3">
-      <!-- Target Avatar (matches [postId].vue:162-172) -->
-      <div class="relative flex-shrink-0">
-        <img v-if="avatarUrl && !avatarError" :src="avatarUrl" :alt="vote.profileId"
-          class="w-10 h-10 rounded-full object-cover" @error="avatarError = true" />
-        <div v-else class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-          <span class="text-sm font-bold text-gray-500">{{ vote.profileId.substring(0, 2).toUpperCase() }}</span>
-        </div>
-        <div
-          class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center">
-          <UIcon :name="platformIcon" class="w-2.5 h-2.5 text-gray-500" />
-        </div>
+    <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="md" :to="feedUrl"
+      :time="formattedTime">
+      <template #inline>
+        <!-- R1: Only show sentiment badge in revealed state -->
+        <template v-if="isRevealed">
+          <UBadge :color="sentimentColor" size="sm" variant="subtle">
+            {{ sentimentLabel }}
+          </UBadge>
+          <!-- R2: Controversial flag -->
+          <UBadge v-if="isControversialFlag" color="warning" size="sm" variant="subtle">
+            Controversial
+          </UBadge>
+        </template>
+      </template>
+
+      <!-- Post content div -->
+      <div class="mb-1 mt-0.5">
+        <!-- Lotusia post content has data property -->
+        <p v-if="post.data" class="text-[15px] leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
+          post.data }}</p>
+        <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:198-200) -->
+        <FeedXPostEmbed v-else-if="isTwitterPost" :tweet-id="post.id" :profile-id="post.profileId" />
       </div>
 
-      <!-- Content -->
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="font-semibold text-md truncate">{{ vote.profileId }}</span>
-          <UBadge :color="sentimentBadgeColor" size="sm" variant="subtle">{{ sentimentLabel }}</UBadge>
-        </div>
-        <div class="flex items-center gap-1.5 mt-0.5">
-          <span class="text-xs text-gray-500 capitalize">{{ vote.platform }}</span>
-          <template v-if="timeAgo">
-            <span class="text-xs text-gray-300 dark:text-gray-600">&middot;</span>
-            <span class="text-xs text-gray-400">{{ timeAgo }}</span>
+      <!-- Bottom action row: vote buttons + ranking metric (standard social media layout) -->
+      <div class="flex items-center justify-between mt-1">
+        <!-- R4: Upvote button (equal visual weight) -->
+        <UButton icon="i-lucide-thumbs-up" size="xs" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
+          :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="!walletReady || voting"
+          title="Endorse this content" @click="handleVoteClick('positive', $event)">
+          <span v-if="votedSentiment === 'positive'" class="text-xs">Voted</span>
+          <!-- R1: Show exact count only when revealed, otherwise hide -->
+          <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ post.votesPositive }}</span>
+        </UButton>
+
+        <!-- R4: Downvote button (equal visual weight) -->
+        <UButton icon="i-lucide-thumbs-down" size="xs" :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
+          :color="votedSentiment === 'negative' ? 'error' : 'neutral'" :disabled="!walletReady || voting"
+          title="Flag this content" @click="handleVoteClick('negative', $event)">
+          <span v-if="votedSentiment === 'negative'" class="text-xs">Voted</span>
+          <!-- R1: Show exact count only when revealed, otherwise hide -->
+          <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ post.votesNegative }}</span>
+        </UButton>
+
+        <!-- R1: Ranking and vote display -->
+        <span class="text-xs text-gray-400">
+          <template v-if="isRevealed">
+            <!-- Revealed: Show full sentiment breakdown -->
+            {{ rankingDisplay }} XPI ({{ post.votesPositive }}↑ / {{ post.votesNegative }}↓)
           </template>
-        </div>
+          <template v-else>
+            <!-- Blind: Show only bucketed vote count per R1 spec -->
+            {{ bucketedVotesDisplay }}
+          </template>
+        </span>
       </div>
-    </div>
-
-    <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:198-200) -->
-    <div v-if="isTwitterPost" class="mt-2 pl-[52px]">
-      <FeedXPostEmbed :tweet-id="vote.postId" :profile-id="vote.profileId" />
-    </div>
-
-    <!-- Bottom action row: vote buttons + burn metric (standard social media layout) -->
-    <div class="flex items-center gap-4 mt-2 pl-[52px]">
-      <!-- R4: Upvote button (equal visual weight) -->
-      <button v-if="walletReady" class="flex items-center gap-1 p-1 rounded-md text-xs transition-colors" :class="votedSentiment === 'positive'
-        ? 'text-success-500'
-        : 'text-gray-400 hover:text-success-500 hover:bg-success-500/10'" :disabled="voting"
-        title="Endorse this content" @click="handleVoteClick('positive', $event)">
-        <UIcon name="i-lucide-thumbs-up" class="w-3.5 h-3.5" />
-        <span v-if="votedSentiment === 'positive'" class="text-[11px]">Voted</span>
-      </button>
-
-      <!-- R4: Downvote button (equal visual weight) -->
-      <button v-if="walletReady" class="flex items-center gap-1 p-1 rounded-md text-xs transition-colors" :class="votedSentiment === 'negative'
-        ? 'text-error-500'
-        : 'text-gray-400 hover:text-error-500 hover:bg-error-500/10'" :disabled="voting" title="Flag this content"
-        @click="handleVoteClick('negative', $event)">
-        <UIcon name="i-lucide-thumbs-down" class="w-3.5 h-3.5" />
-        <span v-if="votedSentiment === 'negative'" class="text-[11px]">Voted</span>
-      </button>
-
-      <!-- Spacer -->
-      <div class="flex-1" />
-
-      <!-- R1-safe: Individual burn amount (this voter's burn, not aggregate) -->
-      <span v-if="burnDisplay" class="text-[11px] text-gray-400">
-        {{ burnDisplay }} XPI
-      </span>
-    </div>
+    </FeedAuthorDisplay>
   </NuxtLink>
 </template>

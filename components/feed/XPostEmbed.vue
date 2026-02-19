@@ -36,14 +36,19 @@ interface ParsedTweet {
   authorHandle: string
   date: string
   url: string
+  // images: string[] // Removed - Twitter now requires auth for pic.twitter.com
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The tweet/post ID (numeric string) */
   tweetId: string
   /** The profile username (for fallback link and URL construction) */
   profileId?: string
-}>()
+
+  fontSize?: 'sm' | 'md' | 'lg'
+}>(), {
+  fontSize: 'md',
+})
 
 const loading = ref(true)
 const error = ref(false)
@@ -77,13 +82,15 @@ function parseOEmbedHtml(html: string, authorName: string, authorUrl: string): P
     const pEl = blockquote.querySelector('p')
     if (!pEl) return null
 
-    // Convert <br> to newlines, then get text
+    // Convert <br> to newlines, then get text for display
     // We preserve the innerHTML to handle <br> tags properly
-    const textHtml = pEl.innerHTML
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<a[^>]*>(.*?)<\/a>/gi, '$1') // Flatten links to text
-      .replace(/<[^>]+>/g, '') // Strip remaining HTML
-      .trim()
+    const rawText = decodeHtmlEntities(
+      pEl.innerHTML
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<a[^>]*>(.*?)<\/a>/gi, '$1') // Flatten links to text
+        .replace(/<[^>]+>/g, '') // Strip remaining HTML
+        .trim()
+    )
 
     // Extract the date from the last <a> in the blockquote
     const links = blockquote.querySelectorAll('a')
@@ -95,16 +102,27 @@ function parseOEmbedHtml(html: string, authorName: string, authorUrl: string): P
     const handle = handleMatch ? handleMatch[1] : props.profileId || ''
 
     return {
-      text: textHtml,
+      text: rawText,
       authorName,
       authorHandle: handle,
       date: dateText,
       url: externalUrl.value,
+      // images: imageUrls, // Removed - Twitter now requires auth for pic.twitter.com
     }
   } catch (err) {
     console.warn('[XPostEmbed] Failed to parse oEmbed HTML:', err)
     return null
   }
+}
+
+/**
+ * Decode HTML entities (e.g., &gt; → >, &amp; → &, &quot; → ")
+ * Uses a DOM element for safe decoding without regex vulnerabilities.
+ */
+function decodeHtmlEntities(html: string): string {
+  const textarea = document.createElement('textarea')
+  textarea.innerHTML = html
+  return textarea.value
 }
 
 async function fetchTweetContent() {
@@ -147,11 +165,11 @@ watch(
 <template>
   <div class="x-post-embed">
     <!-- Loading Skeleton -->
-    <div v-if="loading && !error" class="animate-pulse">
+    <div v-if="loading && !error">
       <div class="space-y-2">
-        <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-full" />
-        <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-5/6" />
-        <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+        <USkeleton class="h-4 w-full" />
+        <USkeleton class="h-4 w-5/6" />
+        <USkeleton class="h-4 w-2/3" />
       </div>
       <div class="flex items-center gap-2 mt-3 text-xs text-gray-400">
         <UIcon name="i-simple-icons-x" class="w-3 h-3" />
@@ -160,21 +178,29 @@ watch(
     </div>
 
     <!-- Rendered Tweet Content -->
-    <div v-else-if="tweet">
-      <p class="text-[16px] leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
-        tweet.text }}</p>
+    <div v-else-if="tweet" class="select-text">
+      <p :class="`text-${fontSize || 'md'} leading-relaxed text-gray-900 dark:text-gray-100 whitespace-pre-line`">
+        {{ tweet.text }}
+      </p>
+
+      <!-- Note: Twitter images require authentication and cannot be embedded -->
+      <!-- Users can click the link to view the original post with images -->
+      <!-- <div class="mt-3">
+        <a :href="externalUrl" target="_blank" rel="noopener"
+          class="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+          View on X
+          <UIcon name="i-lucide-external-link" class="w-3 h-3" />
+        </a>
+      </div> -->
     </div>
 
     <!-- Error Fallback -->
     <div v-else-if="error"
-      class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-4 text-center">
-      <p class="text-sm text-gray-500 mb-2">Unable to load post content. </p>
-      <p class="text-sm text-gray-500 mb-2">The post may have been deleted.</p>
-      <!--  <a :href="externalUrl" target="_blank" rel="noopener"
-        class="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-        View on X
-        <UIcon name="i-lucide-external-link" class="w-3 h-3" />
-      </a> -->
+      class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2">
+      <p class="text-md text-gray-500 dark:text-gray-400 mb-2">This content is currently unavailable. It may have been
+        deleted.</p>
+      <p class="text-md text-gray-500 dark:text-gray-400">If the post was deleted from X, it is recommended to not vote
+        on it.</p>
     </div>
   </div>
 </template>

@@ -17,6 +17,7 @@
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type { RnkcComment } from '~/composables/useRankApi'
+import { getProfileInitials } from '~/composables/useAvatars'
 import { useWalletStore } from '~/stores/wallet'
 
 const props = defineProps<{
@@ -41,6 +42,11 @@ const showCommentInput = ref(false)
 const activeReplyTo = ref<string | null>(null)
 
 const walletReady = computed(() => walletStore.isReadyForSigning())
+const { getAvatar } = useAvatars()
+
+const authorInitials = computed(() => getProfileInitials(walletStore.scriptPayload || ''))
+
+const authorAvatarUrl = ref<string | null>(null)
 
 /**
  * R1: Sort by ranking (net burn) when voted, chronologically when not voted.
@@ -108,34 +114,31 @@ function handleCancelComment() {
   showCommentInput.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   fetchComments()
+  const sp = walletStore.scriptPayload
+  if (sp) {
+    const avatar = await getAvatar('lotusia', sp)
+    authorAvatarUrl.value = avatar.src
+  }
 })
 </script>
 
 <template>
-  <div class="space-y-3">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300">
-        Comments
-        <span v-if="comments.length > 0" class="text-gray-400 font-normal">
-          ({{ comments.length }})
-        </span>
-      </h3>
-      <button v-if="!showCommentInput"
-        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="walletReady
-          ? 'bg-primary/10 text-primary hover:bg-primary/20'
-          : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'" :disabled="!walletReady"
+  <div class="space-y-0">
+    <!-- Always-visible composer: collapsed placeholder or expanded form -->
+    <div v-if="walletReady" class="pb-3 border-b border-gray-100 dark:border-gray-800 mb-1">
+      <!-- Collapsed placeholder (click to expand) -->
+      <div v-if="!showCommentInput"
+        class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 cursor-text hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
         @click="toggleCommentInput">
-        <UIcon name="i-lucide-message-square-plus" class="w-4 h-4" />
-        <span>Comment</span>
-      </button>
+        <UAvatar :src="authorAvatarUrl || undefined" :text="authorInitials" size="sm" />
+        <span class="text-sm text-gray-400 select-none">Share your perspective...</span>
+      </div>
+      <!-- Expanded inline form -->
+      <FeedCommentInput v-else :platform="platform" :profile-id="profileId" :post-id="postId"
+        @posted="handleCommentPosted" @cancel="handleCancelComment" />
     </div>
-
-    <!-- Inline comment form (top-level) -->
-    <FeedCommentInput v-if="showCommentInput && walletReady" :platform="platform" :profile-id="profileId"
-      :post-id="postId" @posted="handleCommentPosted" @cancel="handleCancelComment" />
 
     <!-- Loading -->
     <div v-if="loading" class="flex items-center justify-center py-6">
@@ -145,20 +148,22 @@ onMounted(() => {
     <!-- Error -->
     <div v-else-if="loadError" class="text-sm text-error-500 text-center py-4">
       {{ loadError }}
-      <button class="ml-2 text-primary underline" @click="fetchComments()">Retry</button>
+      <UButton variant="link" size="xs" class="ml-2" @click="fetchComments()">Retry</UButton>
     </div>
 
     <!-- Empty state -->
-    <div v-else-if="comments.length === 0 && !showCommentInput" class="text-center py-6">
+    <div v-else-if="comments.length === 0" class="text-center py-6">
       <UIcon name="i-lucide-message-circle" class="w-8 h-8 text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-      <p class="text-sm text-gray-400">No comments yet. Be the first to share your perspective.</p>
+      <p v-if="walletReady" class="text-sm text-gray-400">No comments yet. Be the first to share your perspective.</p>
+      <p v-else class="text-sm text-gray-400">Create a wallet to join the discussion.</p>
     </div>
 
-    <!-- Comment list -->
-    <div v-if="sortedComments.length > 0" class="space-y-1 divide-y divide-gray-100 dark:divide-gray-800">
-      <FeedCommentItem v-for="comment in sortedComments" :key="comment.id" :comment="comment" :has-voted="hasVoted"
-        :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId" :post-id="postId"
-        @reply="handleReply" @reply-posted="handleCommentPosted" @reply-cancelled="handleReplyCancelled" />
+    <!-- Comment list: Twitter-style flat chain, no dividers (connector lines are the separator) -->
+    <div v-if="sortedComments.length > 0">
+      <FeedCommentItem v-for="comment in sortedComments" :key="comment.id" :comment="comment" :depth="0"
+        :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
+        :post-id="postId" @reply="handleReply" @reply-posted="handleCommentPosted"
+        @reply-cancelled="handleReplyCancelled" />
     </div>
   </div>
 </template>

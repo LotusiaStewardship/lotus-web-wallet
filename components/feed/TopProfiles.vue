@@ -71,39 +71,39 @@ onMounted(fetchProfiles)
 </script>
 
 <template>
-  <div class="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 overflow-hidden">
-    <!-- Header -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-      <div class="flex items-center gap-2">
-        <UIcon :name="controversial ? 'i-lucide-scale' : 'i-lucide-trending-up'" class="w-5 h-5" />
-        <span class="font-semibold">{{ title }}</span>
+  <UCard>
+    <template #header>
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <UIcon :name="controversial ? 'i-lucide-scale' : 'i-lucide-trending-up'" class="w-5 h-5" />
+          <span class="font-semibold">{{ title }}</span>
+        </div>
+        <UButton variant="link" size="xs" to="/feed">
+          View All
+        </UButton>
       </div>
-      <NuxtLink to="/feed" class="text-sm text-primary hover:underline">
-        View All
-      </NuxtLink>
-    </div>
+    </template>
 
     <!-- Timespan Selector -->
     <div class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-800/50">
-      <button v-for="opt in timespanOptions" :key="opt.value"
-        class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors" :class="timespan === opt.value
-          ? 'bg-primary-50 dark:bg-primary-900/20 text-primary'
-          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="changeTimespan(opt.value)">
+      <UButton v-for="opt in timespanOptions" :key="opt.value" size="xs"
+        :variant="timespan === opt.value ? 'soft' : 'ghost'" :color="timespan === opt.value ? 'primary' : 'neutral'"
+        @click="changeTimespan(opt.value)">
         {{ opt.label }}
-      </button>
+      </UButton>
     </div>
 
     <!-- Loading State -->
     <div v-if="loading" class="divide-y divide-gray-100 dark:divide-gray-800">
       <div v-for="i in 5" :key="i" class="p-4">
-        <div class="flex items-center gap-3 animate-pulse">
-          <div class="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700" />
-          <div class="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div class="flex items-center gap-3">
+          <USkeleton class="h-8 w-8 rounded-full" />
+          <USkeleton class="h-10 w-10 rounded-full" />
           <div class="flex-1 space-y-2">
-            <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3" />
-            <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded w-2/3" />
+            <USkeleton class="h-4 w-1/3" />
+            <USkeleton class="h-2 w-2/3" />
           </div>
-          <div class="w-16 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
+          <USkeleton class="h-8 w-16" />
         </div>
       </div>
     </div>
@@ -112,9 +112,9 @@ onMounted(fetchProfiles)
     <div v-else-if="error" class="text-center py-8 text-gray-500">
       <UIcon name="i-lucide-alert-circle" class="w-8 h-8 mx-auto mb-2 opacity-50" />
       <p class="text-sm">{{ error }}</p>
-      <button class="mt-2 text-sm text-primary hover:underline" @click="fetchProfiles">
+      <UButton variant="link" size="xs" class="mt-2" @click="fetchProfiles">
         Try again
-      </button>
+      </UButton>
     </div>
 
     <!-- Empty State -->
@@ -129,5 +129,5 @@ onMounted(fetchProfiles)
         <FeedProfileCard :profile="profile" :rank="index + 1" compact />
       </div>
     </div>
-  </div>
+  </UCard>
 </template>

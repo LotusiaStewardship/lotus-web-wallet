@@ -2,41 +2,36 @@
 /**
  * Comment Item Component
  *
- * Displays a single RNKC comment with burn weight, author, and collapse behavior.
- * Supports inline reply forms that keep the user in context (X/Twitter pattern).
+ * Displays a single RNKC comment as a first-class post, matching the visual
+ * language of ActivityItem.vue. Each comment IS a post (id = txid) and is
+ * therefore a clickable link to its own detail page.
  *
- * R1 compliance: Net burn badge and burn-colored styling are only shown when
- *   the user has voted on the parent content (hasVoted=true). Pre-vote users
- *   see a neutral presentation to prevent sentiment leakage.
+ * Threading model: Twitter/X-style flat chain (depth 0→1 inline, depth≥2 linked).
  *
- * R6 compliance: Comments with negative net burn are collapsed by default,
- *   UNLESS the comment author matches the current wallet (own comments always visible).
+ * Strategy compliance:
+ *   R1 (Vote-to-Reveal): Burn/sentiment hidden pre-vote; bucketed count shown instead.
+ *   R2 (Controversial flag): Badge shown post-vote when controversy score > 0.3.
+ *   R4 (Cost symmetry): Equal visual weight for endorse/flag; optimistic state post-vote.
+ *   R6 (Burn-weighted collapse): Negative net burn collapsed by default (own exempt).
+ *   R38 (Curation language): "Endorse"/"Flag"/"Noted" not "upvote"/"downvote".
  *
- * Threading: Reply button shows an inline CommentInput below this comment.
- *   Thread depth limited to 3 levels for readability (per 5.1c spec).
- *
- * Data shape: RnkcComment matches the backend PostAPI shape from convertRankCommentToPostAPI():
- *   id = txid, profileId = scriptPayload (author), data = comment text,
- *   ranking = net burn, satsPositive/satsNegative = community votes, comments = nested replies.
+ * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R2, R4, R6
+ * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type { RnkcComment } from '~/composables/useRankApi'
-import { formatXPI } from '~/utils/formatting'
+import { formatXPICompact } from '~/utils/formatting'
+import { bucketVoteCount, isControversial } from '~/utils/feed'
 import { useWalletStore } from '~/stores/wallet'
+import { useTime } from '~/composables/useTime'
 
 const props = defineProps<{
   comment: RnkcComment
-  /** Current nesting depth (max 3 levels) */
   depth?: number
-  /** R1: Whether the user has voted on the parent content */
   hasVoted?: boolean
-  /** Currently active reply target txid (managed by CommentThread) */
   activeReplyTo?: string | null
-  /** Platform for inline reply form */
   platform?: ScriptChunkPlatformUTF8
-  /** Profile ID for inline reply form */
   profileId?: string
-  /** Post ID for inline reply form */
   postId?: string
 }>()
 
@@ -47,154 +42,206 @@ const emit = defineEmits<{
 }>()
 
 const walletStore = useWalletStore()
+const { openVoteSlideover } = useOverlays()
+const { timeAgo } = useTime()
+const { useResolve } = useFeedIdentity()
 const depth = computed(() => props.depth ?? 0)
 
-// Whether the inline reply form is shown for THIS comment
+const identity = useResolve(
+  () => props.comment.platform,
+  () => props.comment.profileId,
+)
+
 const isReplyActive = computed(() => props.activeReplyTo === props.comment.id)
 
-// Net burn = ranking = satsPositive - satsNegative (computed by backend)
-const netBurn = computed(() => {
-  return BigInt(props.comment.ranking || '0')
-})
-
+const netBurn = computed(() => BigInt(props.comment.ranking || '0'))
 const isNegative = computed(() => netBurn.value < 0n)
+const isPositive = computed(() => netBurn.value > 0n)
+const totalVotes = computed(() => props.comment.votesPositive + props.comment.votesNegative)
 
-// R6: Comment authors see their own comments uncollapsed regardless of score
-// In the backend PostAPI, profileId = scriptPayload (the comment author)
-const isOwnComment = computed(() => {
-  if (!walletStore.scriptPayload) return false
-  return props.comment.profileId === walletStore.scriptPayload
+/** R1: Revealed state — full sentiment shown only after user has voted on parent */
+const isRevealed = computed(() => !!props.hasVoted)
+
+/** R2: Controversial flag — only in revealed state */
+const isControversialFlag = computed(() =>
+  isControversial(props.comment.satsPositive || '0', props.comment.satsNegative || '0', totalVotes.value, 5),
+)
+
+/** R38: Curation language */
+const sentimentLabel = computed(() => {
+  if (isPositive.value) return 'Endorsed'
+  if (isNegative.value) return 'Flagged'
+  return 'Noted'
+})
+const sentimentColor = computed(() => {
+  if (isPositive.value) return 'success'
+  if (isNegative.value) return 'error'
+  return 'neutral'
 })
 
+/** R1: Bucketed count for pre-vote blind state */
+const bucketedVotesDisplay = computed(() => bucketVoteCount(totalVotes.value))
+
+/** R1: Net ranking display — revealed state only */
+const rankingDisplay = computed(() => formatXPICompact(netBurn.value.toString()))
+
+// R6: Own comments always uncollapsed
+const isOwnComment = computed(() => identity.value.isOwn)
 const isCollapsed = ref(isNegative.value && !isOwnComment.value)
 
-// Initial burn = satsPositive (the author's own burn is the initial positive ranking)
-const formattedBurn = computed(() =>
-  formatXPI(props.comment.satsPositive, { minDecimals: 0, maxDecimals: 2 }),
-)
-
-// R1: Only compute net burn display when user has voted on parent content
-const formattedNetBurn = computed(() => {
-  if (!props.hasVoted) return null
-  if (netBurn.value === 0n) return null
-  const abs = netBurn.value < 0n ? -netBurn.value : netBurn.value
-  const prefix = netBurn.value > 0n ? '+' : netBurn.value < 0n ? '-' : ''
-  return prefix + formatXPI(abs.toString(), { minDecimals: 0, maxDecimals: 0 })
-})
-
-// In the backend PostAPI, profileId = scriptPayload (the comment author)
-const truncatedAuthor = computed(() => {
-  const sp = props.comment.profileId
-  if (!sp || sp.length < 12) return sp || 'Unknown'
-  if (isOwnComment.value) return 'You'
-  return sp.slice(0, 6) + '...' + sp.slice(-6)
-})
-
-const timeAgo = computed(() => {
+const formattedTime = computed(() => {
   const ts = props.comment.timestamp || props.comment.firstSeen
   if (!ts) return ''
-  // Backend returns seconds since epoch as string; convert to milliseconds
-  const tsMs = Number(ts) * 1000
-  if (isNaN(tsMs)) return ''
-  const diff = Date.now() - tsMs
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h`
-  const days = Math.floor(hours / 24)
-  return `${days}d`
+  return timeAgo(Number(ts))
 })
 
-const hasReplies = computed(() =>
-  props.comment.comments && props.comment.comments.length > 0,
+const directReplies = computed(() => props.comment.comments ?? [])
+const hasReplies = computed(() => directReplies.value.length > 0)
+const replyCount = computed(() => directReplies.value.length)
+const showInlineReplies = computed(() => depth.value < 2 && hasReplies.value)
+const showViewMoreLink = computed(() => depth.value >= 2 && hasReplies.value)
+const hasConnector = computed(() => showInlineReplies.value || isReplyActive.value)
+
+const commentDetailUrl = computed(() =>
+  `/feed/${props.comment.platform}/${props.comment.profileId}/${props.comment.id}`,
 )
 
-const canReply = computed(() => depth.value < 2 && walletStore.isReadyForSigning())
+const walletReady = computed(() => walletStore.isReadyForSigning())
+const canReply = computed(() => walletReady.value)
 
-function handleReply() {
+/** R4: Optimistic vote state — highlights voted button immediately */
+const votedSentiment = ref<'positive' | 'negative' | null>(null)
+const voting = ref(false)
+
+async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event) {
+  event.preventDefault()
+  event.stopPropagation()
+  if (!walletReady.value || voting.value || !props.platform) return
+  voting.value = true
+  try {
+    const result = await openVoteSlideover({
+      sentiment,
+      platform: props.comment.platform as string,
+      profileId: props.comment.profileId,
+      postId: props.comment.id,
+    })
+    if (result?.txid) {
+      votedSentiment.value = sentiment
+    }
+  } finally {
+    voting.value = false
+  }
+}
+
+function handleReply(event: Event) {
+  event.preventDefault()
+  event.stopPropagation()
   emit('reply', props.comment.id)
 }
 
-function handleReplyPosted(txid: string) {
-  emit('replyPosted', txid)
-}
-
-function handleReplyCancelled() {
-  emit('replyCancelled')
-}
+function handleReplyPosted(txid: string) { emit('replyPosted', txid) }
+function handleReplyCancelled() { emit('replyCancelled') }
 </script>
 
 <template>
-  <div class="group" :class="depth > 0 ? 'ml-4 pl-3 border-l-2 border-gray-200 dark:border-gray-700' : ''">
-    <!-- Collapsed state -->
-    <button v-if="isCollapsed"
-      class="w-full text-left py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+  <div class="relative">
+    <!-- R6: Collapsed state -->
+    <div v-if="isCollapsed"
+      class="flex items-center gap-2 py-1.5 px-4 text-xs text-gray-400 cursor-pointer hover:text-gray-500 transition-colors"
       @click="isCollapsed = false">
-      <UIcon name="i-lucide-chevron-right" class="w-3 h-3 inline mr-1" />
-      Comment hidden (negative score) — tap to expand
-    </button>
+      <UIcon name="i-lucide-chevron-right" class="w-3.5 h-3.5 flex-shrink-0" />
+      <span>Hidden · low score · tap to show</span>
+    </div>
 
-    <!-- Expanded state -->
-    <div v-else class="py-2 space-y-1.5">
-      <!-- Author + metadata row -->
-      <div class="flex items-center gap-2 text-xs text-gray-500">
-        <span class="font-mono" :class="isOwnComment ? 'text-primary font-semibold' : ''">{{ truncatedAuthor }}</span>
-        <span>·</span>
-        <span>{{ timeAgo }}</span>
-        <!-- R1: Only show burn amount coloring when user has voted on parent content -->
-        <template v-if="hasVoted">
-          <span>·</span>
-          <span class="font-medium" :class="isNegative ? 'text-error-500' : 'text-success-500'">
-            {{ formattedBurn }} XPI
-          </span>
-          <span v-if="formattedNetBurn" class="text-xs px-1.5 py-0.5 rounded-full" :class="isNegative
-            ? 'bg-error-50 dark:bg-error-900/20 text-error-500'
-            : 'bg-success-50 dark:bg-success-900/20 text-success-500'">
-            {{ formattedNetBurn }}
-          </span>
+    <!-- Expanded state: mirrors ActivityItem px-4 py-3 wrapper exactly -->
+    <div v-else class="px-4 py-3">
+      <FeedAuthorDisplay :platform="comment.platform" :profile-id="comment.profileId" size="md" :to="commentDetailUrl"
+        :time="formattedTime" :show-connector="hasConnector">
+        <template #inline>
+          <!-- R1: Sentiment badges — revealed state only -->
+          <template v-if="isRevealed">
+            <UBadge :color="sentimentColor" size="sm" variant="subtle">
+              {{ sentimentLabel }}
+            </UBadge>
+            <!-- R2: Controversial flag -->
+            <UBadge v-if="isControversialFlag" color="warning" size="sm" variant="subtle">
+              Controversial
+            </UBadge>
+          </template>
+          <!-- R6: Collapse button — only post-vote for negative comments -->
+          <button v-if="isNegative && isRevealed && !isOwnComment"
+            class="ml-auto text-gray-300 hover:text-gray-500 transition-colors" @click.stop="isCollapsed = true">
+            <UIcon name="i-lucide-chevron-up" class="w-3.5 h-3.5" />
+          </button>
         </template>
-        <!-- Pre-vote: show neutral burn amount without sentiment coloring -->
-        <template v-else>
-          <span>·</span>
-          <span class="font-medium text-gray-500">{{ formattedBurn }} XPI</span>
-        </template>
-        <!-- Collapse button for negative comments (only when sentiment is visible) -->
-        <button v-if="isNegative && hasVoted && !isOwnComment" class="ml-auto text-gray-400 hover:text-gray-600"
-          @click="isCollapsed = true">
-          <UIcon name="i-lucide-chevron-up" class="w-3 h-3" />
-        </button>
-      </div>
 
-      <!-- Comment content -->
-      <p class="text-sm whitespace-pre-wrap break-words">
-        {{ comment.data }}
-      </p>
+        <!-- Comment text: matches ActivityItem content block exactly -->
+        <div class="mb-1 mt-0.5">
+          <NuxtLink :to="commentDetailUrl" @click.stop>
+            <p
+              class="text-[15px] leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words hover:opacity-90 transition-opacity">
+              {{ comment.data }}
+            </p>
+          </NuxtLink>
+        </div>
 
-      <!-- Action row -->
-      <div class="flex items-center gap-3">
-        <!-- Reply button (hidden at max depth, requires wallet) -->
-        <button v-if="canReply && !isReplyActive"
-          class="text-xs text-gray-400 hover:text-primary transition-colors flex items-center gap-1"
-          @click="handleReply">
-          <UIcon name="i-lucide-reply" class="w-3 h-3" />
-          Reply
-        </button>
-      </div>
+        <!-- Action row: matches ActivityItem justify-between mt-1 exactly -->
+        <div class="flex items-center justify-between mt-1">
+          <!-- R4: Endorse button -->
+          <UButton icon="i-lucide-thumbs-up" size="xs" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
+            :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="!walletReady || voting"
+            title="Endorse this comment" @click="handleVoteClick('positive', $event)">
+            <span v-if="votedSentiment === 'positive'" class="text-xs">Voted</span>
+            <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ comment.votesPositive }}</span>
+          </UButton>
 
-      <!-- Inline reply form (shown when this comment is the active reply target) -->
-      <div v-if="isReplyActive && platform && profileId" class="mt-2">
-        <FeedCommentInput :platform="platform" :profile-id="profileId" :post-id="postId" :in-reply-to="comment.id"
-          placeholder="Write a reply..." @posted="handleReplyPosted" @cancel="handleReplyCancelled" />
-      </div>
+          <!-- R4: Flag button -->
+          <UButton icon="i-lucide-thumbs-down" size="xs" :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
+            :color="votedSentiment === 'negative' ? 'error' : 'neutral'" :disabled="!walletReady || voting"
+            title="Flag this comment" @click="handleVoteClick('negative', $event)">
+            <span v-if="votedSentiment === 'negative'" class="text-xs">Voted</span>
+            <span v-else-if="isRevealed" class="text-xs text-gray-500">{{ comment.votesNegative }}</span>
+          </UButton>
 
-      <!-- Replies (recursive, max depth 3) -->
-      <div v-if="hasReplies && depth < 3" class="mt-2 space-y-1">
-        <FeedCommentItem v-for="reply in comment.comments" :key="reply.id" :comment="reply" :depth="depth + 1"
-          :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
-          :post-id="postId" @reply="$emit('reply', $event)" @reply-posted="$emit('replyPosted', $event)"
-          @reply-cancelled="$emit('replyCancelled')" />
-      </div>
+          <!-- Reply button -->
+          <UButton v-if="canReply && !isReplyActive" icon="i-lucide-reply" size="xs" variant="ghost" color="neutral"
+            @click="handleReply($event)">
+            <span v-if="replyCount > 0" class="text-xs">{{ replyCount }}</span>
+            <span v-else class="text-xs">Reply</span>
+          </UButton>
+
+          <!-- R1: Ranking metric — matches ActivityItem right-side metric -->
+          <span class="text-xs text-gray-400">
+            <template v-if="isRevealed">
+              {{ rankingDisplay }} XPI ({{ comment.votesPositive }}↑ / {{ comment.votesNegative }}↓)
+            </template>
+            <template v-else>
+              {{ bucketedVotesDisplay }}
+            </template>
+          </span>
+        </div>
+
+        <!-- "View conversation" link for deep replies (Twitter pattern) -->
+        <NuxtLink v-if="showViewMoreLink" :to="commentDetailUrl" class="text-xs text-primary hover:underline block mt-1"
+          @click.stop>
+          View {{ replyCount }} {{ replyCount === 1 ? 'reply' : 'replies' }}
+        </NuxtLink>
+
+        <!-- Inline reply form -->
+        <div v-if="isReplyActive && platform && profileId" class="mt-2">
+          <FeedCommentInput :platform="platform" :profile-id="comment.profileId" :post-id="comment.id"
+            :in-reply-to="comment.id" :parent-text="comment.data" placeholder="Write a reply..."
+            @posted="handleReplyPosted" @cancel="handleReplyCancelled" />
+        </div>
+      </FeedAuthorDisplay>
+    </div>
+
+    <!-- Twitter-style inline reply chain (depth 0→1 and 1→2 only) -->
+    <div v-if="showInlineReplies">
+      <FeedCommentItem v-for="reply in directReplies" :key="reply.id" :comment="reply" :depth="depth + 1"
+        :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
+        :post-id="postId" @reply="$emit('reply', $event)" @reply-posted="$emit('replyPosted', $event)"
+        @reply-cancelled="$emit('replyCancelled')" />
     </div>
   </div>
 </template>

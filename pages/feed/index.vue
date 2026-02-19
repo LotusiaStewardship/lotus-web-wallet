@@ -13,15 +13,32 @@
  * @see lotusia-monorepo/strategies/rank/technical/architecture.md — "RANK Feed is the entry point"
  * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
+import { useWalletStore } from '~/stores/wallet'
 
 definePageMeta({
   title: 'Feed',
 })
 
-const activeTab = ref<'activity' | 'profiles' | 'posts'>('activity')
+const walletStore = useWalletStore()
+
+const activeTab = ref('activity')
+
+const tabItems = [
+  { label: 'Activity', value: 'activity' },
+  { label: 'Profiles', value: 'profiles' },
+  { label: 'Posts', value: 'posts' },
+]
 
 const INTRO_DISMISSED_KEY = 'feed-intro-dismissed'
 const showIntro = ref(false)
+
+/** FAB compose modal state */
+const showComposeModal = ref(false)
+
+const walletReady = computed(() => walletStore.isReadyForSigning())
+
+/** The wallet's own Lotusia identity (scriptPayload used as profileId for native posts) */
+const lotusiaProfileId = computed(() => walletStore.scriptPayload || '')
 
 onMounted(() => {
   showIntro.value = !localStorage.getItem(INTRO_DISMISSED_KEY)
@@ -31,58 +48,37 @@ function dismissIntro() {
   showIntro.value = false
   localStorage.setItem(INTRO_DISMISSED_KEY, '1')
 }
+
+function openCompose() {
+  showComposeModal.value = true
+}
+
+function handlePostPosted(_txid: string) {
+  showComposeModal.value = false
+}
 </script>
 
 <template>
   <div class="space-y-4">
     <!-- Page Header -->
-    <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3 justify-between">
       <div>
-        <h1 class="text-xl font-bold">Curated Feed</h1>
-        <p class="text-sm text-gray-500">Community-curated social content</p>
+        <h1 class="text-xl font-bold">Social Feed</h1>
+        <p class="text-sm text-gray-500">Community-curated social content, sourced from across the Internet</p>
       </div>
-      <NuxtLink to="/feed/search"
-        class="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-800 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-        <UIcon name="i-lucide-search" class="w-4 h-4" />
-        <span>Search</span>
-      </NuxtLink>
+      <UButton icon="i-lucide-search" variant="soft" color="neutral" size="sm" to="/feed/search">
+        Search
+      </UButton>
     </div>
 
     <!-- Intro Context (dismissible, for new users) -->
-    <div v-if="showIntro"
-      class="relative rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-900/20 p-4">
-      <button class="absolute top-3 right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-        @click="dismissIntro">
-        <UIcon name="i-lucide-x" class="w-4 h-4" />
-      </button>
-      <p class="text-sm text-gray-700 dark:text-gray-300 pr-6">
-        Every vote here burns real Lotus — making it a permanent, on-chain record of what you value.
-        Unlike traditional social media, votes have real weight and can't be faked.
-      </p>
-      <NuxtLink to="/feed/search" class="inline-flex items-center gap-1 mt-2 text-xs text-primary hover:underline">
-        Learn how it works
-        <UIcon name="i-lucide-arrow-right" class="w-3 h-3" />
-      </NuxtLink>
-    </div>
+    <UAlert v-if="showIntro" icon="i-lucide-info" title="Every vote here burns real Lotus"
+      description="Making it a permanent, on-chain record of what you value. Unlike traditional social media, votes have real weight and can't be faked."
+      color="primary" variant="subtle" close @update:open="dismissIntro" />
 
     <!-- Tab Selector -->
-    <div class="flex items-center gap-1 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
-      <button class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors" :class="activeTab === 'activity'
-        ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
-        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="activeTab = 'activity'">
-        Activity
-      </button>
-      <button class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors" :class="activeTab === 'profiles'
-        ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
-        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="activeTab = 'profiles'">
-        Profiles
-      </button>
-      <button class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors" :class="activeTab === 'posts'
-        ? 'bg-white dark:bg-gray-900 text-primary shadow-sm'
-        : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="activeTab = 'posts'">
-        Posts
-      </button>
-    </div>
+    <UTabs v-model="activeTab" :items="tabItems" :content="false" class="w-full" variant="pill" :ui="{
+    }" />
 
     <!-- Activity Tab (default — the general scrollable feed) -->
     <FeedActivityStream v-if="activeTab === 'activity'" />
@@ -98,5 +94,44 @@ function dismissIntro() {
       <FeedTopPosts title="Trending" :limit="10" />
       <FeedTopPosts title="Most Controversial" :controversial="true" :limit="5" />
     </template>
+
+    <!-- FAB: Compose a Lotusia post (only when wallet is ready) -->
+    <Teleport to="body">
+      <Transition name="fab">
+        <button v-if="walletReady && lotusiaProfileId"
+          class="fixed bottom-20 right-4 z-40 w-14 h-14 rounded-full bg-primary shadow-lg flex items-center justify-center text-white hover:bg-primary/90 active:scale-95 transition-all"
+          title="Write a post" @click="openCompose">
+          <UIcon name="i-lucide-pencil" class="w-6 h-6" />
+        </button>
+      </Transition>
+    </Teleport>
+
+    <!-- Compose Modal -->
+    <UModal v-model:open="showComposeModal" title="New Post" :ui="{ content: 'max-w-lg' }">
+      <template #body>
+        <div class="space-y-3">
+          <p class="text-xs text-gray-400">
+            Posting as <span class="font-mono">{{ lotusiaProfileId.slice(0, 6) }}...{{ lotusiaProfileId.slice(-6)
+              }}</span>
+            on the Lotusia network. This post will be permanently recorded on-chain.
+          </p>
+          <FeedCommentInput platform="lotusia" :profile-id="lotusiaProfileId" placeholder="What's on your mind?"
+            @posted="handlePostPosted" @cancel="showComposeModal = false" />
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>
+
+<style scoped>
+.fab-enter-active,
+.fab-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fab-enter-from,
+.fab-leave-to {
+  opacity: 0;
+  transform: scale(0.8);
+}
+</style>

@@ -6,8 +6,8 @@
  * and tier badge. Used in feed lists and search results.
  */
 import type { TrendingItem, ProfileListItem } from '~/composables/useRankApi'
-import { PlatformIcon, PlatformURL } from '~/composables/useRankApi'
-import { formatXPI } from '~/utils/formatting'
+import { PlatformURL } from '~/composables/useRankApi'
+import { formatXPICompact } from '~/utils/formatting'
 import { isControversial as checkControversial, bucketVoteCount } from '~/utils/feed'
 
 const props = defineProps<{
@@ -70,13 +70,11 @@ const sentimentRatio = computed(() => {
 
 const rankingDisplay = computed(() => {
   const val = BigInt(ranking.value)
-  return formatXPI(val.toString(), { minDecimals: 0, maxDecimals: 2 })
+  return formatXPICompact(val.toString())
 })
 
 const isPositive = computed(() => BigInt(ranking.value) > 0n)
 const isNegative = computed(() => BigInt(ranking.value) < 0n)
-
-const platformIcon = computed(() => PlatformIcon[platform.value] || 'i-lucide-globe')
 
 const externalUrl = computed(() => {
   const urlHelper = PlatformURL[platform.value]
@@ -86,14 +84,6 @@ const externalUrl = computed(() => {
 
 const feedUrl = computed(() => `/feed/${platform.value}/${profileId.value}`)
 
-const { getAvatar } = useAvatars()
-const avatarUrl = ref<string | null>(null)
-const avatarError = ref(false)
-
-onMounted(async () => {
-  const avatar = await getAvatar(platform.value, profileId.value)
-  avatarUrl.value = avatar.src
-})
 </script>
 
 <template>
@@ -108,44 +98,31 @@ onMounted(async () => {
         {{ rank }}
       </div>
 
-      <!-- Profile Avatar -->
-      <div class="relative flex-shrink-0">
-        <img v-if="avatarUrl && !avatarError" :src="avatarUrl" :alt="profileId"
-          class="w-10 h-10 rounded-full object-cover" @error="avatarError = true" />
-        <div v-else class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-          <span class="text-sm font-bold text-gray-500">{{ profileId.substring(0, 2).toUpperCase() }}</span>
-        </div>
-        <div
-          class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center">
-          <UIcon :name="platformIcon" class="w-2.5 h-2.5 text-gray-500" />
-        </div>
-      </div>
-
-      <!-- Profile Info -->
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2">
-          <span class="font-semibold truncate">{{ profileId }}</span>
-          <UBadge v-if="isControversial" color="warning" size="xs" variant="subtle">
-            Controversial
-          </UBadge>
-          <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
-            class="text-gray-400 hover:text-primary transition-colors" @click.stop>
-            <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
-          </a>
-        </div>
+        <FeedAuthorDisplay :platform="platform" :profile-id="profileId" size="md" :to="feedUrl">
+          <template #inline>
+            <UBadge v-if="isRevealed && isControversial" color="warning" size="xs" variant="subtle">
+              Controversial
+            </UBadge>
+            <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
+              class="text-gray-400 hover:text-primary transition-colors" @click.stop>
+              <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
+            </a>
+          </template>
 
-        <!-- R1: Sentiment Bar (revealed) or bucketed count (blind) -->
-        <div v-if="!compact && isRevealed" class="mt-1.5 flex items-center gap-2">
-          <div class="flex-1 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-            <div class="h-full bg-success-500 rounded-full transition-all" :style="{ width: `${sentimentRatio}%` }" />
+          <!-- R1: Sentiment Bar (revealed) or bucketed count (blind) -->
+          <div v-if="!compact && isRevealed" class="mt-1.5 flex items-center gap-2">
+            <div class="flex-1 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+              <div class="h-full bg-success-500 rounded-full transition-all" :style="{ width: `${sentimentRatio}%` }" />
+            </div>
+            <span class="text-xs text-gray-500 whitespace-nowrap">
+              {{ sentimentRatio }}% positive
+            </span>
           </div>
-          <span class="text-xs text-gray-500 whitespace-nowrap">
-            {{ sentimentRatio }}% positive
-          </span>
-        </div>
-        <div v-else-if="!compact" class="mt-1.5">
-          <span class="text-xs text-gray-400">{{ bucketedVotes }}</span>
-        </div>
+          <div v-else-if="!compact" class="mt-1.5">
+            <span class="text-xs text-gray-400">{{ bucketedVotes }}</span>
+          </div>
+        </FeedAuthorDisplay>
       </div>
 
       <!-- Ranking Score (revealed) or vote count (blind) -->

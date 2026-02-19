@@ -5,7 +5,7 @@
  * Ranked post list with burn amounts and timespan selector.
  * Fetches data from rank-backend-ts trending endpoints.
  */
-import type { TrendingItem, Timespan } from '~/composables/useRankApi'
+import type { PostData, Timespan } from '~/composables/useRankApi'
 import { controversyScore } from '~/utils/feed'
 
 const props = withDefaults(defineProps<{
@@ -21,33 +21,31 @@ const props = withDefaults(defineProps<{
   limit: 10,
 })
 
-const { getTopRankedPosts } = useRankApi()
+const { getFeedTrending } = useRankApi()
 
-const timespan = ref<Timespan>('today')
-const posts = ref<TrendingItem[]>([])
+const windowHours = ref<number>(24)
+const posts = ref<PostData[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 
-const timespanOptions: Array<{ label: string; value: Timespan }> = [
-  { label: 'Now', value: 'now' },
-  { label: 'Today', value: 'today' },
-  { label: 'Week', value: 'week' },
-  { label: 'Month', value: 'month' },
-  { label: 'All', value: 'all' },
+const windowOptions: Array<{ label: string; value: number }> = [
+  { label: '24h', value: 24 },
+  { label: '7d', value: 168 },
+  { label: '30d', value: 720 },
 ]
 
 async function fetchPosts() {
   loading.value = true
   error.value = null
   try {
-    const result = await getTopRankedPosts(timespan.value)
+    const result = await getFeedTrending(windowHours.value, 50)
     if (props.controversial) {
       // R2: Sort by burn-weighted controversy score, filter to min 5 votes
       posts.value = result
-        .filter(p => (p.total.votesPositive + p.total.votesNegative) >= 5)
+        .filter(p => (p.votesPositive + p.votesNegative) >= 5)
         .sort((a, b) => {
-          const scoreA = 'satsPositive' in a ? controversyScore((a as any).satsPositive || '0', (a as any).satsNegative || '0') : 0
-          const scoreB = 'satsPositive' in b ? controversyScore((b as any).satsPositive || '0', (b as any).satsNegative || '0') : 0
+          const scoreA = controversyScore(a.satsPositive || '0', a.satsNegative || '0')
+          const scoreB = controversyScore(b.satsPositive || '0', b.satsNegative || '0')
           return scoreB - scoreA
         })
         .slice(0, props.limit)
@@ -62,8 +60,8 @@ async function fetchPosts() {
   }
 }
 
-function changeTimespan(ts: Timespan) {
-  timespan.value = ts
+function changeWindow(hours: number) {
+  windowHours.value = hours
   fetchPosts()
 }
 
@@ -75,34 +73,33 @@ onMounted(fetchPosts)
     <!-- Header -->
     <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
       <div class="flex items-center gap-2">
-        <UIcon :name="controversial ? 'i-lucide-scale' : 'i-lucide-trending-up'" class="w-5 h-5" />
+        <UIcon :name="controversial ? 'i-lucide-scale' : 'i-lucide-trending-up'" class="w-5 h-5 text-primary" />
         <span class="font-semibold">{{ title }}</span>
       </div>
-      <NuxtLink to="/feed" class="text-sm text-primary hover:underline">
+      <UButton class="text-sm text-primary" variant="link" size="xs" to="/feed">
         View All
-      </NuxtLink>
+      </UButton>
     </div>
 
-    <!-- Timespan Selector -->
+    <!-- Window Selector -->
     <div class="flex items-center gap-1 px-4 py-2 border-b border-gray-100 dark:border-gray-800/50">
-      <button v-for="opt in timespanOptions" :key="opt.value"
-        class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors" :class="timespan === opt.value
-          ? 'bg-primary-50 dark:bg-primary-900/20 text-primary'
-          : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'" @click="changeTimespan(opt.value)">
+      <UButton v-for="opt in windowOptions" :key="opt.value" size="xs"
+        :variant="windowHours === opt.value ? 'soft' : 'ghost'"
+        :color="windowHours === opt.value ? 'primary' : 'neutral'" @click="changeWindow(opt.value)">
         {{ opt.label }}
-      </button>
+      </UButton>
     </div>
 
     <!-- Loading State -->
     <div v-if="loading" class="divide-y divide-gray-100 dark:divide-gray-800">
       <div v-for="i in 5" :key="i" class="p-4">
-        <div class="flex items-center gap-3 animate-pulse">
-          <div class="w-7 h-7 rounded-full bg-gray-200 dark:bg-gray-700" />
+        <div class="flex items-center gap-3">
+          <USkeleton class="h-7 w-7 rounded-full" />
           <div class="flex-1 space-y-2">
-            <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2" />
-            <div class="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/4" />
+            <USkeleton class="h-4 w-1/2" />
+            <USkeleton class="h-3 w-1/4" />
           </div>
-          <div class="w-16 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
+          <USkeleton class="h-8 w-16" />
         </div>
       </div>
     </div>
@@ -111,9 +108,9 @@ onMounted(fetchPosts)
     <div v-else-if="error" class="text-center py-8 text-gray-500">
       <UIcon name="i-lucide-alert-circle" class="w-8 h-8 mx-auto mb-2 opacity-50" />
       <p class="text-sm">{{ error }}</p>
-      <button class="mt-2 text-sm text-primary hover:underline" @click="fetchPosts">
+      <UButton variant="link" size="xs" class="mt-2" @click="fetchPosts">
         Try again
-      </button>
+      </UButton>
     </div>
 
     <!-- Empty State -->
@@ -124,8 +121,8 @@ onMounted(fetchPosts)
 
     <!-- Post List -->
     <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-      <div v-for="(post, index) in posts" :key="`${post.platform}-${post.profileId}-${post.postId}`" class="px-3 py-2">
-        <FeedPostCard :post="post" :platform="post.platform" :profile-id="post.profileId" :rank="index + 1" />
+      <div v-for="(post, index) in posts" :key="`${post.platform}-${post.profileId}-${post.id}`">
+        <FeedPostCard :post="post" :rank="index + 1" />
       </div>
     </div>
   </div>

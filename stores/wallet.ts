@@ -177,21 +177,20 @@ export const useWalletStore = defineStore('wallet', () => {
         await createNewWallet()
       }
 
-      // Wallet is loaded
+      // Wallet keys are ready - mark as initialized for API calls
+      // Chronik connection happens in background and is only needed for
+      // blockchain operations (WebSocket, broadcasting), not RANK API auth
+      initialized.value = true
       loading.value = false
       loadingMessage.value = ''
+      console.log('[Wallet] Wallet initialized successfully')
 
       // Initialize Chronik connection in background (non-blocking)
-      initializeChronik()
-        .then(() => {
-          initialized.value = true
-          console.log('[Wallet] initialized successfully')
-        })
-        .catch((err: unknown) => {
-          console.error('Failed to connect to network:', err)
-          // Still mark as initialized so UI is usable, just disconnected
-          initialized.value = true
-        })
+      // This is for real-time UTXO updates and transaction broadcasting
+      initializeChronik().catch((err: unknown) => {
+        console.error('Failed to connect to Chronik (non-blocking):', err)
+        // Don't mark as uninitialized - wallet is still functional
+      })
     } catch (err) {
       console.error('Failed to initialize wallet:', err)
       loadingMessage.value = 'Failed to initialize wallet'
@@ -1207,6 +1206,41 @@ export const useWalletStore = defineStore('wallet', () => {
     return $bitcore.Mnemonic.isValid(phrase)
   }
 
+  /**
+   * Wait for wallet initialization to complete.
+   * Returns a promise that resolves when initialized.value becomes true.
+   * Useful for pages that need to wait for wallet before making auth calls.
+   */
+  function waitForInitialization(timeoutMs: number = 30000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Already initialized
+      if (initialized.value) {
+        resolve()
+        return
+      }
+
+      // Set up watcher
+      const unwatch = watch(
+        initialized,
+        isInit => {
+          if (isInit) {
+            unwatch()
+            resolve()
+          }
+        },
+        { immediate: false },
+      )
+
+      // Timeout safety
+      if (timeoutMs > 0) {
+        setTimeout(() => {
+          unwatch()
+          reject(new Error('Wallet initialization timeout'))
+        }, timeoutMs)
+      }
+    })
+  }
+
   // =========================================================================
   // Return public API
   // =========================================================================
@@ -1284,5 +1318,6 @@ export const useWalletStore = defineStore('wallet', () => {
     getInternalPubKeyString,
     getMerkleRootHex,
     isValidSeedPhrase,
+    waitForInitialization,
   }
 })

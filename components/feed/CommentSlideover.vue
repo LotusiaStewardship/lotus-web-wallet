@@ -1,9 +1,13 @@
 <script setup lang="ts">
 /**
- * Comment Slideover Component
+ * @deprecated Superseded by CommentInput.vue per 5.1b spec.
  *
- * Bottom slideover for composing and posting an RNKC comment.
- * Managed by useOverlays for proper slide-in animation and back button support.
+ * This component is dead code — not imported or registered anywhere.
+ * It has a TS error (COMMENT_BURN_PRESETS removed from useRnkcComment)
+ * and violates R3 (autonomy-supportive framing) by presenting burn presets
+ * as a "bet" rather than auto-calculating burn as informational cost.
+ *
+ * TODO: Delete this file once confirmed no longer needed.
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import { formatXPI } from '~/utils/formatting'
@@ -132,9 +136,8 @@ function close() {
 
         <!-- Comment Input -->
         <div class="space-y-1">
-          <textarea v-model="commentText" rows="4" placeholder="Share your perspective..."
-            class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none resize-none"
-            :disabled="isPosting || status === 'success'" />
+          <UTextarea v-model="commentText" :rows="4" autoresize :maxrows="10" placeholder="Share your perspective..."
+            size="sm" :disabled="isPosting || status === 'success'" />
           <div class="flex items-center justify-between text-xs">
             <span :class="byteLength > MAX_COMMENT_BYTES ? 'text-error-500' : 'text-gray-400'">
               {{ byteLength }}/{{ MAX_COMMENT_BYTES }} bytes
@@ -155,20 +158,18 @@ function close() {
 
         <!-- Burn Presets -->
         <div class="grid grid-cols-4 gap-2">
-          <button v-for="preset in COMMENT_BURN_PRESETS" :key="preset.label"
-            class="py-2 px-3 rounded-lg text-sm font-medium transition-colors border" :class="selectedBurnSats === preset.sats
-              ? 'border-primary bg-primary-50 dark:bg-primary-900/20 text-primary'
-              : 'border-gray-200 dark:border-gray-700 hover:border-primary-300'"
+          <UButton v-for="preset in COMMENT_BURN_PRESETS" :key="preset.label"
+            :variant="selectedBurnSats === preset.sats ? 'soft' : 'outline'"
+            :color="selectedBurnSats === preset.sats ? 'primary' : 'neutral'" size="sm"
             :disabled="!canAffordComment(preset.sats)" @click="selectPreset(preset.sats)">
             {{ preset.label }}
-          </button>
+          </UButton>
         </div>
 
         <!-- Custom Amount -->
         <div class="flex items-center gap-2">
-          <input v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
-            class="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none"
-            @change="applyCustomBurn" />
+          <UInput v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
+            class="flex-1" size="sm" @change="applyCustomBurn" />
           <span class="text-sm text-gray-500">XPI</span>
         </div>
 
@@ -204,16 +205,14 @@ function close() {
         </div>
 
         <!-- Submit Button -->
-        <button
-          class="w-full py-3 rounded-xl font-semibold text-white transition-colors bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="!canSubmit" @click="confirmComment">
+        <UButton block size="lg" :loading="isPosting" :disabled="!canSubmit" @click="confirmComment">
           <template v-if="!canAffordComment(selectedBurnSats)">
             Insufficient Balance
           </template>
           <template v-else>
             Post Comment
           </template>
-        </button>
+        </UButton>
       </div>
     </template>
   </USlideover>

@@ -54,31 +54,22 @@ async function performSearch() {
 <template>
   <div class="space-y-4">
     <!-- Back Button -->
-    <NuxtLink to="/feed"
-      class="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-primary transition-colors">
-      <UIcon name="i-lucide-arrow-left" class="w-4 h-4" />
+    <UButton variant="link" color="neutral" size="sm" icon="i-lucide-arrow-left" to="/feed">
       Back to Feed
-    </NuxtLink>
+    </UButton>
 
     <!-- Search Input -->
-    <div class="relative">
-      <UIcon name="i-lucide-search"
-        class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
-      <input v-model="query" type="text" placeholder="Search profiles..."
-        class="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-base focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-        autofocus @input="handleInput" @keydown.enter="performSearch" />
-      <UIcon v-if="loading" name="i-lucide-loader-2"
-        class="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 animate-spin" />
-    </div>
+    <UInput class="relative w-full" v-model="query" icon="i-lucide-search" placeholder="Search profiles..." size="lg"
+      :loading="loading" autofocus @input="handleInput" @keydown.enter="performSearch" />
 
     <!-- Results -->
     <div v-if="loading && results.length === 0" class="space-y-3">
-      <div v-for="i in 5" :key="i" class="p-4 rounded-xl border border-gray-200 dark:border-gray-800 animate-pulse">
+      <div v-for="i in 5" :key="i" class="p-4 rounded-xl border border-gray-200 dark:border-gray-800">
         <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700" />
+          <USkeleton class="h-10 w-10 rounded-full" />
           <div class="flex-1 space-y-2">
-            <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3" />
-            <div class="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/4" />
+            <USkeleton class="h-4 w-1/3" />
+            <USkeleton class="h-3 w-1/4" />
           </div>
         </div>
       </div>

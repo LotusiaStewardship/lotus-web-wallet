@@ -92,20 +92,18 @@ function close() {
 
         <!-- Burn Presets -->
         <div class="grid grid-cols-4 gap-2">
-          <button v-for="preset in BURN_PRESETS" :key="preset.label"
-            class="py-2 px-3 rounded-lg text-sm font-medium transition-colors border" :class="selectedBurnSats === preset.sats
-              ? 'border-primary bg-primary-50 dark:bg-primary-900/20 text-primary'
-              : 'border-gray-200 dark:border-gray-700 hover:border-primary-300'"
+          <UButton v-for="preset in BURN_PRESETS" :key="preset.label"
+            :variant="selectedBurnSats === preset.sats ? 'soft' : 'outline'"
+            :color="selectedBurnSats === preset.sats ? 'primary' : 'neutral'" size="sm"
             :disabled="!canAffordVote(preset.sats)" @click="selectPreset(preset.sats)">
             {{ preset.label }}
-          </button>
+          </UButton>
         </div>
 
         <!-- Custom Amount -->
         <div class="flex items-center gap-2">
-          <input v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
-            class="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none"
-            @change="applyCustomBurn" />
+          <UInput v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
+            class="flex-1" size="sm" @change="applyCustomBurn" />
           <span class="text-sm text-gray-500">XPI</span>
         </div>
 
@@ -136,8 +134,7 @@ function close() {
         </div> -->
 
         <!-- R4: Confirm Button — equal visual weight for upvote/downvote (cost symmetry) -->
-        <button
-          class="w-full py-3 rounded-xl font-semibold text-white transition-colors bg-primary hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+        <UButton block size="lg" :loading="isVoting"
           :disabled="isVoting || status === 'success' || !canAffordVote(selectedBurnSats)" @click="confirmVote">
           <template v-if="!canAffordVote(selectedBurnSats)">
             Insufficient Balance
@@ -145,7 +142,7 @@ function close() {
           <template v-else>
             Confirm {{ sentiment === 'positive' ? 'Upvote' : 'Downvote' }}
           </template>
-        </button>
+        </UButton>
       </div>
     </template>
   </USlideover>

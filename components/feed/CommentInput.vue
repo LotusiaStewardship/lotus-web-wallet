@@ -25,16 +25,42 @@ const props = defineProps<{
   postId?: string
   /** Parent comment txid for reply threading (5.1a spec) */
   inReplyTo?: string
+  /** Parent comment text for reply context display (replaces raw txid) */
+  parentText?: string
   /** Placeholder text override */
   placeholder?: string
 }>()
+
+const walletStore = useWalletStore()
+const { getAvatar } = useAvatars()
+const { useResolve } = useFeedIdentity()
+
+const authorIdentity = useResolve(
+  () => 'lotusia',
+  () => walletStore.scriptPayload || '',
+)
+
+/** Short wallet identity display for "Posting as" row */
+const authorDisplay = computed(() => {
+  if (!walletStore.scriptPayload) return null
+  return authorIdentity.value.displayName
+})
+
+/** Avatar: real avatar via useAvatars */
+const avatarUrl = ref<string | null>(null)
+const avatarInitials = computed(() => authorIdentity.value.initials)
+
+/** Truncated parent text for reply context display */
+const parentTextSnippet = computed(() => {
+  const t = props.parentText
+  if (!t) return 'Replying to comment'
+  return t.length > 120 ? t.slice(0, 120) + '...' : t
+})
 
 const emit = defineEmits<{
   posted: [txid: string]
   cancel: []
 }>()
-
-const walletStore = useWalletStore()
 
 const {
   postComment,
@@ -46,11 +72,9 @@ const {
   getMinBurnForComment,
   getCommentByteLength,
   MAX_COMMENT_BYTES,
-  MIN_FEE_RATE_PER_BYTE,
 } = useRnkcComment()
 
 const commentText = ref('')
-const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
 const isPosting = computed(() =>
   status.value === 'building' || status.value === 'signing' || status.value === 'broadcasting',
@@ -79,17 +103,6 @@ const canSubmit = computed(() =>
 
 const hasContent = computed(() => commentText.value.trim().length > 0)
 
-// Auto-resize textarea
-function autoResize() {
-  const el = textareaRef.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-}
-
-watch(commentText, () => {
-  nextTick(autoResize)
-})
 
 async function submitComment() {
   const result = await postComment({
@@ -114,6 +127,8 @@ function handleCancel() {
   emit('cancel')
 }
 
+const textareaRef = ref<{ textarea: HTMLTextAreaElement } | null>(null)
+
 function handleKeydown(e: KeyboardEvent) {
   // Cmd/Ctrl+Enter to submit
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit.value) {
@@ -122,30 +137,45 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   // Focus textarea when mounted (especially for replies)
-  nextTick(() => textareaRef.value?.focus())
+  nextTick(() => textareaRef.value?.textarea?.focus())
+  // Load real avatar
+  const sp = walletStore.scriptPayload
+  if (sp) {
+    const avatar = await getAvatar('lotusia', sp)
+    avatarUrl.value = avatar.src
+  }
 })
 </script>
 
 <template>
   <div class="space-y-2">
-    <!-- Reply context indicator -->
-    <div v-if="props.inReplyTo" class="flex items-center gap-2 text-xs text-gray-400">
-      <UIcon name="i-lucide-corner-down-right" class="w-3 h-3 flex-shrink-0" />
-      <span>Replying to <span class="font-mono">{{ props.inReplyTo.slice(0, 8) }}...</span></span>
-      <button class="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" @click="handleCancel">
-        <UIcon name="i-lucide-x" class="w-3 h-3" />
-      </button>
+    <!-- Reply context: show parent text snippet instead of raw txid -->
+    <div v-if="props.inReplyTo"
+      class="flex items-start gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border-l-2 border-gray-300 dark:border-gray-600">
+      <UIcon name="i-lucide-corner-down-right" class="w-3.5 h-3.5 text-gray-400 flex-shrink-0 mt-0.5" />
+      <p class="text-xs text-gray-500 line-clamp-2 flex-1">{{ parentTextSnippet }}</p>
+      <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" class="flex-shrink-0 -mt-0.5"
+        @click="handleCancel" />
     </div>
 
-    <!-- Input row -->
-    <div class="flex gap-2 items-start">
-      <!-- Textarea -->
+    <!-- Composer row: author avatar + textarea + send -->
+    <div class="flex gap-2.5 items-start">
+      <!-- Author avatar (wallet identity) -->
+      <div v-if="authorDisplay" class="flex-shrink-0 mt-1">
+        <UAvatar :src="avatarUrl || undefined" :text="avatarInitials" size="sm" />
+      </div>
+
+      <!-- Input column -->
       <div class="flex-1 min-w-0">
-        <textarea ref="textareaRef" v-model="commentText" rows="1"
-          :placeholder="placeholder || 'Share your perspective...'"
-          class="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-sm focus:border-primary focus:outline-none resize-none leading-5"
+        <!-- Author identity label -->
+        <div v-if="authorDisplay && !props.inReplyTo" class="text-[11px] text-gray-400 mb-1">
+          Posting as <span class="font-mono">{{ authorDisplay }}</span>
+        </div>
+
+        <UTextarea ref="textareaRef" v-model="commentText" class="w-full" :rows="3" autoresize :maxrows="8"
+          :placeholder="placeholder || 'Share your perspective...'" size="md"
           :disabled="isPosting || status === 'success'" @keydown="handleKeydown" />
 
         <!-- Metadata row (visible when typing) -->
@@ -161,23 +191,24 @@ onMounted(() => {
                   :class="byteLimitPct > 90 ? 'bg-error-500' : 'bg-primary'" :style="{ width: `${byteLimitPct}%` }" />
               </div>
             </div>
-
             <!-- Auto-calculated burn cost -->
-            <span class="text-xs text-gray-400">
-              {{ formattedBurn }} XPI
-            </span>
+            <span class="text-xs text-gray-400">{{ formattedBurn }} XPI</span>
           </div>
         </Transition>
       </div>
 
-      <!-- Submit button -->
-      <button class="flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-colors" :class="canSubmit
-        ? 'bg-primary text-white hover:bg-primary/90'
-        : 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'" :disabled="!canSubmit"
-        @click="submitComment">
-        <UIcon v-if="isPosting" name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
-        <UIcon v-else name="i-lucide-send" class="w-4 h-4" />
-      </button>
+      <!-- Send button (only shown when no reply context cancel button) -->
+      <UButton v-if="!props.inReplyTo" :icon="isPosting ? 'i-lucide-loader-2' : 'i-lucide-send'" :loading="isPosting"
+        :disabled="!canSubmit" size="sm" @click="submitComment" />
+    </div>
+
+    <!-- Send + cancel row for replies -->
+    <div v-if="props.inReplyTo" class="flex items-center justify-end gap-2">
+      <UButton variant="ghost" color="neutral" size="xs" @click="handleCancel">Cancel</UButton>
+      <UButton :icon="isPosting ? 'i-lucide-loader-2' : 'i-lucide-send'" :loading="isPosting" :disabled="!canSubmit"
+        size="xs" @click="submitComment">
+        Reply
+      </UButton>
     </div>
 
     <!-- Insufficient balance warning -->
@@ -186,14 +217,12 @@ onMounted(() => {
     </p>
 
     <!-- Error display -->
-    <p v-if="error" class="text-xs text-error-500 px-1">
-      {{ error }}
-    </p>
+    <p v-if="error" class="text-xs text-error-500 px-1">{{ error }}</p>
 
     <!-- Success display -->
     <div v-if="status === 'success'" class="flex items-center gap-1.5 text-xs text-success-500 px-1">
       <UIcon name="i-lucide-check-circle" class="w-3.5 h-3.5" />
-      <span>Comment posted on-chain</span>
+      <span>Posted on-chain</span>
     </div>
   </div>
 </template>

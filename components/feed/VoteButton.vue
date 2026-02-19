@@ -2,8 +2,16 @@
 /**
  * Vote Button Component
  *
- * Upvote/downvote button that opens the VoteSlideover via useOverlays.
+ * Endorse/Flag button pair that opens the VoteSlideover via useOverlays.
  * The slideover slides in from the bottom and supports browser back button.
+ *
+ * Strategy compliance:
+ *   R4 (Cost symmetry): Equal visual weight for endorse/flag buttons.
+ *     Optimistic state highlights the voted button immediately post-vote.
+ *   R38 (Curation language): "Endorse"/"Flag" not "upvote"/"downvote".
+ *
+ * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R4
+ * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import { useWalletStore } from '~/stores/wallet'
@@ -15,6 +23,8 @@ const props = defineProps<{
   profileId: string
   /** Optional post ID */
   postId?: string
+  /** Post metadata containing user's voting history on this post */
+  postMeta?: VoterPostMetadata | null
   /** Disable voting (e.g. not authenticated) */
   disabled?: boolean
 }>()
@@ -28,9 +38,15 @@ const { openVoteSlideover } = useOverlays()
 
 const walletReady = computed(() => walletStore.isReadyForSigning())
 
-/** Optimistic local state: tracks the user's last vote sentiment */
+/** R4: Optimistic vote state — highlights voted button immediately */
 const votedSentiment = ref<'positive' | 'negative' | null>(null)
 const voting = ref(false)
+
+// Initialize optimistic state from existing vote history
+onMounted(() => {
+  if (props.postMeta?.hasWalletUpvoted) votedSentiment.value = 'positive'
+  else if (props.postMeta?.hasWalletDownvoted) votedSentiment.value = 'negative'
+})
 
 async function handleVoteClick(sentiment: 'positive' | 'negative') {
   if (props.disabled || !walletReady.value || voting.value) return
@@ -45,7 +61,6 @@ async function handleVoteClick(sentiment: 'positive' | 'negative') {
     })
 
     if (result?.txid) {
-      // Optimistic update: highlight button immediately
       votedSentiment.value = sentiment
       emit('voted', result.txid, sentiment)
     }
@@ -56,28 +71,18 @@ async function handleVoteClick(sentiment: 'positive' | 'negative') {
 </script>
 
 <template>
-  <div class="flex items-center gap-2">
-    <!-- R4: Equal visual weight for upvote and downvote (cost symmetry) -->
-    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="[
-      disabled || !walletReady
-        ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
-        : votedSentiment === 'positive'
-          ? 'bg-success-500/15 text-success-600 dark:text-success-400'
-          : 'bg-primary/10 text-primary hover:bg-primary/20'
-    ]" :disabled="disabled || !walletReady || voting" @click="handleVoteClick('positive')">
-      <UIcon name="i-lucide-thumbs-up" class="w-4 h-4" />
-      <span>{{ votedSentiment === 'positive' ? 'Upvoted' : 'Upvote' }}</span>
-    </button>
-
-    <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" :class="[
-      disabled || !walletReady
-        ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 cursor-not-allowed'
-        : votedSentiment === 'negative'
-          ? 'bg-error-500/15 text-error-600 dark:text-error-400'
-          : 'bg-primary/10 text-primary hover:bg-primary/20'
-    ]" :disabled="disabled || !walletReady || voting" @click="handleVoteClick('negative')">
-      <UIcon name="i-lucide-thumbs-down" class="w-4 h-4" />
-      <span>{{ votedSentiment === 'negative' ? 'Downvoted' : 'Downvote' }}</span>
-    </button>
+  <div class="flex items-center gap-6">
+    <!-- R4: Equal visual weight for endorse and flag (cost symmetry) -->
+    <!-- R38: Curation language — "Endorse"/"Flag" not "upvote"/"downvote" -->
+    <UButton icon="i-lucide-thumbs-up" size="sm" :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
+      :color="votedSentiment === 'positive' ? 'success' : 'neutral'" :disabled="disabled || !walletReady || voting"
+      title="Endorse this content" @click="handleVoteClick('positive')">
+      <span v-if="votedSentiment === 'positive'" class="text-xs">Endorsed</span>
+    </UButton>
+    <UButton icon="i-lucide-thumbs-down" size="sm" :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
+      :color="votedSentiment === 'negative' ? 'error' : 'neutral'" :disabled="disabled || !walletReady || voting"
+      title="Flag this content" @click="handleVoteClick('negative')">
+      <span v-if="votedSentiment === 'negative'" class="text-xs">Flagged</span>
+    </UButton>
   </div>
 </template>

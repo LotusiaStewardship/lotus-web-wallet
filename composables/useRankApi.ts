@@ -173,12 +173,25 @@ export interface ProfileVoteActivityResponse {
   numPages: number
 }
 
+/** Sort mode for the unified feed */
+export type FeedSortMode = 'curated' | 'ranking' | 'recent' | 'controversial'
+
+/** Labels shown to users for each sort mode */
+export const FeedSortLabel: Record<FeedSortMode, string> = {
+  curated: 'Curated',
+  ranking: 'Top Ranked',
+  recent: 'Recent',
+  controversial: 'Controversial',
+}
+
 /** Post ranking data */
 export interface PostData {
   platform: ScriptChunkPlatformUTF8
   profileId: string
   id: string
   ranking: string
+  firstVoted: string
+  lastVoted: string
   satsPositive: string
   satsNegative: string
   votesPositive: number
@@ -202,6 +215,28 @@ export interface PostData {
   timestamp?: string
   /** RNKC comment replies (PostAPI-shaped from backend) */
   comments?: RnkcComment[]
+  /**
+   * Ancestor chain for RNKC replies — ordered from genesis post (index 0) to
+   * immediate parent (last index). Only populated when inReplyToPostId is set.
+   * Enables Twitter-style "view full conversation" rendering on the detail page.
+   */
+  ancestors?: PostData[]
+  /**
+   * Feed ranking signals (R62–R66). Present when sortBy='curated' or 'ranking'.
+   * All derived from aggregate burns only (Sybil-neutral).
+   */
+  /** R62: Logarithmically dampened net feed score */
+  feedScore?: number
+  /** R63: Z-score-normalized feed score */
+  feedScoreNormalized?: number
+  /** R65: Fraction of total burns that are positive (0–1) */
+  sentimentRatio?: number
+  /** R65: How evenly contested the burns are (0 = one-sided, 1 = perfectly split) */
+  controversyScore?: number
+  /** R65: Log-dampened total of all burns, used as tiebreaker */
+  totalEngagement?: number
+  /** R65: Whether this post exceeds the controversy threshold */
+  isControversial?: boolean
 }
 
 /** Trending API response (profiles/posts) */
@@ -311,6 +346,21 @@ export interface WalletSummaryResult {
   totalDownvotes: number
   totalUniqueWallets: number
   totalSatsBurned: number
+}
+
+/**
+ * Feed posts API response (unified feed with Vote-to-Reveal support)
+ */
+export interface FeedPostsResponse {
+  posts: PostData[]
+  pagination: {
+    page: number
+    pageSize: number
+    totalItems: number
+    totalPages: number
+    hasNext: boolean
+    hasPrev: boolean
+  }
 }
 
 // ============================================================================
@@ -523,9 +573,16 @@ export const useRankApi = () => {
     scriptPayload?: string,
   ): Promise<PostData | null> => {
     try {
+      const { authorizedFetch } = useRankAuth()
       let url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
       if (scriptPayload) url += `/${scriptPayload}`
-      const response = await fetch(url)
+      const response = await authorizedFetch(url)
+      if (!response) {
+        console.error(
+          `Failed to fetch post ranking: no result from authorizedFetch`,
+        )
+        return null
+      }
       if (!response.ok) {
         console.error(`Failed to fetch post ranking: ${response.status}`)
         return null
@@ -669,7 +726,77 @@ export const useRankApi = () => {
     }
   }
 
+  /**
+   * Fetch unified feed posts with filtering, sorting, and Vote-to-Reveal support.
+   * Replaces activity-based polling with post-centric feed queries.
+   */
+  const getFeedPosts = async ({
+    platform,
+    sortBy,
+    startTime,
+    page,
+    pageSize,
+    scriptPayload,
+  }: {
+    platform?: ScriptChunkPlatformUTF8
+    sortBy?: FeedSortMode
+    startTime?: Timespan
+    page?: number
+    pageSize?: number
+    scriptPayload?: string
+  }): Promise<FeedPostsResponse | null> => {
+    try {
+      const params = new URLSearchParams()
+      if (platform) params.append('platform', platform)
+      if (sortBy) params.append('sortBy', sortBy)
+      if (startTime) params.append('startTime', startTime)
+      if (page) params.append('page', String(page))
+      if (pageSize) params.append('pageSize', String(pageSize))
+      if (scriptPayload) params.append('scriptPayload', scriptPayload)
+
+      const url = `${getRankApiUrl()}/feed/posts?${params.toString()}`
+      const response = await fetch(url)
+      if (!response.ok) {
+        console.error(`Failed to fetch feed posts: ${response.status}`)
+        return null
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching feed posts:', error)
+      return null
+    }
+  }
+
+  /**
+   * Fetch trending posts based on recent vote activity volume.
+   * Returns full PostAPI objects ordered by activity count in the time window.
+   */
+  const getFeedTrending = async (
+    windowHours: number = 24,
+    limit: number = 20,
+    scriptPayload?: string,
+  ): Promise<PostData[]> => {
+    try {
+      let url = `${getRankApiUrl()}/feed/trending/${windowHours}/${limit}`
+      if (scriptPayload) {
+        url += `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+      }
+      const response = await fetch(url)
+      if (!response.ok) {
+        console.error(`Failed to fetch trending posts: ${response.status}`)
+        return []
+      }
+      return await response.json()
+    } catch (error) {
+      console.error('Error fetching trending posts:', error)
+      return []
+    }
+  }
+
   return {
+    // Feed methods
+    getFeedPosts,
+    getFeedTrending,
     // Profile methods
     getProfiles,
     getProfilePosts,
