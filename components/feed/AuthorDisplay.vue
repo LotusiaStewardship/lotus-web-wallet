@@ -37,7 +37,7 @@ const props = withDefaults(defineProps<{
   /** Minimum height for the connector line */
   connectorMinHeight?: string
 }>(), {
-  size: 'md',
+  size: 'lg',
   compact: false,
   showPlatformBadge: true,
   connectorMinHeight: '16px',
@@ -52,6 +52,18 @@ const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-gl
 
 const avatarUrl = ref<string | null>(null)
 const avatarInitials = computed(() => getProfileInitials(props.profileId))
+
+/** Left column explicit width matching avatar size — ensures connector always centers under avatar */
+const avatarColWidth = computed(() => {
+  switch (props.size) {
+    case 'xs': return 'w-4'
+    case 'sm': return 'w-7'
+    case 'md': return 'w-8'
+    case 'lg': return 'w-9'
+    case 'xl': return 'w-10'
+    default: return 'w-8'
+  }
+})
 
 /** Platform badge sizing relative to avatar size */
 const badgeSize = computed(() => {
@@ -73,13 +85,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex gap-2.5">
+  <div class="flex items-start gap-2.5">
     <!-- Left column: avatar + optional connector -->
-    <div class="flex flex-col items-center flex-shrink-0" :class="showConnector ? 'pb-0' : ''">
+    <div class="flex flex-col items-center flex-shrink-0 self-stretch"
+      :class="[avatarColWidth, showConnector ? 'pb-0' : '']">
       <NuxtLink :to="to" class="flex-shrink-0">
         <div class="relative">
-          <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="avatarInitials" :size="size"
-            :class="identity.isOwn ? 'ring-2 ring-primary/40' : ''" />
+          <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="avatarInitials" :size="size" />
           <!-- Platform badge -->
           <div v-if="showPlatformBadge"
             class="absolute -bottom-0.5 -right-0.5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-1 ring-white dark:ring-gray-900"
@@ -94,7 +106,7 @@ onMounted(async () => {
     </div>
 
     <!-- Right column: name + time + slot -->
-    <div class="flex-1 min-w-0">
+    <div class="flex-1 min-w-0 p-0">
       <NuxtLink :to="to">
         <!-- Compact mode: single line with name and time -->
         <div v-if="compact" class="flex items-center gap-1 flex-wrap">
@@ -116,7 +128,7 @@ onMounted(async () => {
         <div v-else>
           <!-- Line 1: Author name -->
           <div class="flex items-center gap-1 flex-wrap">
-            <span class="text-[15px] font-bold leading-5" :class="[
+            <span class="text-md font-bold leading-5" :class="[
               to ? 'hover:underline' : '',
               identity.isOwn ? 'text-primary' : '',
             ]" :title="identity.lotusAddress || profileId">

@@ -224,7 +224,8 @@ onMounted(fetchData)
       <UCard class="relative">
         <!-- Ancestor chain: Twitter-style conversation context above the focal post -->
         <template v-if="hasAncestors">
-          <FeedAncestorItem v-for="ancestor in ancestors" :key="ancestor.id" :post="ancestor" :show-connector="true" />
+          <FeedPostCard v-for="ancestor in ancestors" :key="ancestor.id" :post="ancestor" :ancestor="true"
+            :show-connector="true" />
           <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
           <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
           <div class="flex">
@@ -326,14 +327,14 @@ onMounted(fetchData)
           </div>
         </Transition>
 
-        <!-- Vote Button -->
-        <div class="pt-3 border-t border-gray-100 dark:border-gray-800 flex items-center justify-between">
-          <FeedVoteButton :post-meta="post?.postMeta" :platform="(platform as ScriptChunkPlatformUTF8)"
-            :profile-id="profileId" :post-id="postId" :disabled="!walletStore.initialized" @voted="handleVoted" />
-          <!-- R1: Post-vote sentiment badge (R38 curation language) -->
-          <!-- <UBadge v-if="hasVoted" :color="sentimentColor" size="md" variant="subtle">
-            You {{ sentimentLabel }}
-          </UBadge> -->
+        <!-- Action Row: vote + reply -->
+        <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
+          <FeedButtonRow :post-meta="post?.postMeta" :platform="(platform as ScriptChunkPlatformUTF8)"
+            :profile-id="profileId" :post-id="postId" :disabled="!walletStore.initialized" :is-revealed="hasVoted"
+            :votes-positive="post?.votesPositive" :votes-negative="post?.votesNegative" :bucketed-votes="bucketedVotes"
+            :ranking-display="rankingDisplay" :can-reply="platform === 'lotusia'"
+            :reply-platform="(platform as ScriptChunkPlatformUTF8)" :reply-profile-id="profileId"
+            :reply-post-id="postId" @voted="handleVoted" />
           <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2">
             Create or import a wallet to vote
           </p>

@@ -169,9 +169,9 @@ onMounted(async () => {
 
     <!-- Comment list: Twitter-style flat chain, no dividers (connector lines are the separator) -->
     <div v-if="sortedComments.length > 0">
-      <FeedCommentItem v-for="comment in sortedComments" :key="comment.id" :comment="comment" :depth="0"
-        :has-voted="hasVoted" :active-reply-to="activeReplyTo" :platform="platform" :profile-id="profileId"
-        :post-id="postId" @reply="handleReply" @reply-posted="handleCommentPosted"
+      <FeedPostCard v-for="comment in sortedComments" :key="comment.id" :post="comment" :comment="true" :depth="0"
+        :parent-has-voted="hasVoted" :active-reply-to="activeReplyTo" :reply-platform="platform"
+        :reply-profile-id="profileId" :reply-post-id="postId" @reply="handleReply" @reply-posted="handleCommentPosted"
         @reply-cancelled="handleReplyCancelled" />
     </div>
   </div>

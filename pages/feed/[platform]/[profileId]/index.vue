@@ -205,7 +205,7 @@ onMounted(fetchData)
               size="3xl" />
             <div
               class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
-              <UIcon :name="platformIcon" class="w-3 h-3 text-gray-500" />
+              <UIcon :name="platformIcon" class="w-3 h-3 text-gray-500 dark:text-gray-100" />
             </div>
           </div>
 
@@ -309,10 +309,12 @@ onMounted(fetchData)
           </div>
         </Transition>
 
-        <!-- Vote Button -->
+        <!-- Action Row: vote (profiles have no reply) -->
         <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
-          <FeedVoteButton :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId"
-            :disabled="!walletStore.initialized" @voted="handleVoted" />
+          <FeedButtonRow :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId"
+            :disabled="!walletStore.initialized" :is-revealed="hasVoted" :votes-positive="profile?.votesPositive"
+            :votes-negative="profile?.votesNegative" :bucketed-votes="bucketedVotes" :ranking-display="rankingDisplay"
+            @voted="handleVoted" />
           <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2">
             Create or import a wallet to vote
           </p>

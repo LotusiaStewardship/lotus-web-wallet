@@ -262,8 +262,8 @@ onBeforeUnmount(() => {
 
     <!-- Post List -->
     <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-      <FeedActivityItem v-for="post in feedStore.posts" :key="`${post.platform}-${post.profileId}-${post.id}`"
-        :post="post" />
+      <FeedPostCard v-for="post in feedStore.posts" :key="`${post.platform}-${post.profileId}-${post.id}`" :post="post"
+        :activity="true" />
     </div>
 
     <!-- Load More -->
