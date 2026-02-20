@@ -26,18 +26,7 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const error = ref<string | null>(null)
 const pageSize = 20
-const dropdownOpen = ref(false)
-const dropdownRef = ref<HTMLElement | null>(null)
-
-function toggleDropdown() {
-  dropdownOpen.value = !dropdownOpen.value
-}
-
-function handleOutsideClick(event: MouseEvent) {
-  if (dropdownRef.value && !dropdownRef.value.contains(event.target as Node)) {
-    dropdownOpen.value = false
-  }
-}
+const popoverOpen = ref(false)
 
 const sortOptions: Array<{ label: string; value: FeedSortMode; icon: string; description: string }> = [
   {
@@ -155,12 +144,10 @@ onMounted(() => {
     feedStore.posts.forEach(p => seenPostIds.add(`${p.platform}-${p.profileId}-${p.id}`))
     restoreScrollPosition()
   }
-  document.addEventListener('click', handleOutsideClick)
 })
 
 onBeforeUnmount(() => {
   saveScrollPosition()
-  document.removeEventListener('click', handleOutsideClick)
 })
 </script>
 
@@ -170,27 +157,25 @@ onBeforeUnmount(() => {
     <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
 
       <!-- Sort mode dropdown trigger (left side) -->
-      <div ref="dropdownRef" class="relative">
-        <button class="flex items-center gap-1.5 group select-none" :disabled="loading" @click.stop="toggleDropdown">
-          <UIcon :name="sortOptions.find(o => o.value === feedStore.sortMode)?.icon ?? 'i-lucide-activity'"
-            class="w-5 h-5 text-primary flex-shrink-0" />
-          <span class="font-semibold group-hover:text-primary transition-colors">
-            {{sortOptions.find(o => o.value === feedStore.sortMode)?.label ?? 'Feed'}}
-          </span>
-          <UIcon name="i-lucide-chevron-down" class="w-3.5 h-3.5 text-gray-400 transition-transform duration-150"
-            :class="dropdownOpen ? 'rotate-180' : ''" />
-        </button>
+      <UPopover v-model:open="popoverOpen">
+        <UButton variant="ghost" color="neutral" size="sm" :disabled="loading" class="p-1.5">
+          <div class="flex items-center gap-1.5">
+            <UIcon :name="sortOptions.find(o => o.value === feedStore.sortMode)?.icon ?? 'i-lucide-activity'"
+              class="w-5 h-5 text-primary flex-shrink-0" />
+            <span class="font-semibold text-[15px] text-gray-900 dark:text-gray-100">
+              {{sortOptions.find(o => o.value === feedStore.sortMode)?.label ?? 'Feed'}}
+            </span>
+            <UIcon name="i-lucide-chevron-down" class="w-3.5 h-3.5 text-gray-400 transition-transform duration-150"
+              :class="popoverOpen ? 'rotate-180' : ''" />
+          </div>
+        </UButton>
 
-        <!-- Dropdown panel -->
-        <Transition enter-active-class="transition duration-100 ease-out" enter-from-class="opacity-0 scale-95"
-          enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-75 ease-in"
-          leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
-          <div v-if="dropdownOpen"
-            class="absolute left-0 top-full mt-2 w-64 z-50 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg overflow-hidden">
+        <template #content>
+          <div class="w-64">
             <button v-for="opt in sortOptions" :key="opt.value"
-              class="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+              class="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors rounded-lg"
               :class="feedStore.sortMode === opt.value ? 'bg-primary/5 dark:bg-primary/10' : ''"
-              @click.stop="setSortMode(opt.value); dropdownOpen = false">
+              @click.stop="setSortMode(opt.value); popoverOpen = false">
               <UIcon :name="opt.icon" class="w-4 h-4 mt-0.5 flex-shrink-0"
                 :class="feedStore.sortMode === opt.value ? 'text-primary' : 'text-gray-400'" />
               <div class="min-w-0">
@@ -206,8 +191,8 @@ onBeforeUnmount(() => {
                 class="w-3.5 h-3.5 text-primary ml-auto mt-0.5 flex-shrink-0" />
             </button>
           </div>
-        </Transition>
-      </div>
+        </template>
+      </UPopover>
 
       <!-- Refresh button (right side) -->
       <button class="text-sm text-primary hover:underline flex items-center gap-1" :disabled="loading" @click="refresh">

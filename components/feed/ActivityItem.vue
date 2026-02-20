@@ -150,7 +150,7 @@ const totalVotes = computed(() => props.post.votesPositive + props.post.votesNeg
       <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
       <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
       <div class="flex">
-        <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-6">
+        <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-4">
           <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
         </div>
       </div>
