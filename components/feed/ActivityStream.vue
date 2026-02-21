@@ -204,42 +204,47 @@ onBeforeUnmount(() => {
     <!-- Loading State (initial) -->
     <div v-if="loading" class="divide-y divide-gray-100 dark:divide-gray-800">
       <div v-for="i in 6" :key="i" class="px-4 py-3">
-        <!-- Match ActivityItem layout: Top row with avatar + content -->
-        <div class="flex items-center gap-3 pb-2">
-          <!-- Avatar skeleton -->
-          <div class="relative flex-shrink-0">
-            <USkeleton class="w-10 h-10 rounded-full" />
-            <div
-              class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center">
-              <USkeleton class="w-2.5 h-2.5" />
+        <!-- Match PostCard activity mode structure -->
+        <div class="block mb-3">
+          <!-- FeedAuthorDisplay skeleton -->
+          <div class="flex items-start gap-3">
+            <!-- Avatar skeleton (no platform badge per image) -->
+            <div class="relative flex-shrink-0">
+              <USkeleton class="w-10 h-10 rounded-full" />
             </div>
-          </div>
 
-          <!-- Content skeleton -->
-          <div class="flex-1 min-w-0 space-y-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <USkeleton class="h-5 w-24" />
-              <USkeleton class="h-5 w-16" />
-            </div>
-            <div class="flex items-center gap-1.5">
-              <USkeleton class="h-3 w-12" />
-              <USkeleton class="h-3 w-16" />
+            <!-- Right column: author info + post content -->
+            <div class="flex-1 min-w-0 p-0">
+              <!-- Compact mode: name · time + inline slot -->
+              <div class="flex items-center gap-1 flex-wrap mb-1">
+                <!-- Name -->
+                <USkeleton class="h-4 w-32" />
+                <!-- Time with middot -->
+                <USkeleton class="h-3 w-4" />
+                <USkeleton class="h-3 w-12" />
+                <!-- Inline slot space for badges/external link -->
+                <div class="flex-1" />
+                <USkeleton class="w-3.5 h-3.5" />
+              </div>
+
+              <!-- Post content (default slot of FeedAuthorDisplay) -->
+              <div class="text-[15px] space-y-1">
+                <USkeleton class="h-4 w-full" />
+                <USkeleton class="h-4 w-full" />
+                <USkeleton class="h-4 w-3/4" />
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Post content skeleton -->
-        <div class="mb-2 space-y-1">
-          <USkeleton class="h-4 w-full" />
-          <USkeleton class="h-4 w-3/4" />
-        </div>
-
-        <!-- Bottom action row skeleton -->
-        <div class="flex items-center gap-4 mt-2">
-          <USkeleton class="h-7 w-16 rounded-md" />
-          <USkeleton class="h-7 w-16 rounded-md" />
-          <div class="flex-1" />
-          <USkeleton class="h-3 w-20" />
+        <!-- ButtonRow skeleton - outside NuxtLink, indented pl-[50px] -->
+        <div class="pl-[50px]">
+          <div class="flex items-center gap-4">
+            <USkeleton class="h-8 w-20 rounded-md" />
+            <USkeleton class="h-8 w-20 rounded-md" />
+            <div class="flex-1" />
+            <USkeleton class="h-3 w-16" />
+          </div>
         </div>
       </div>
     </div>

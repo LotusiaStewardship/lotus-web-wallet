@@ -51,11 +51,13 @@ const props = withDefaults(defineProps<{
   replyPostId?: string
   /** Parent text for reply context display */
   parentText?: string
+  bypassRankingDisplay?: boolean
 }>(), {
   compact: false,
   canReply: false,
   replyCount: 0,
   isRevealed: false,
+  bypassRankingDisplay: false
 })
 
 const emit = defineEmits<{
@@ -130,44 +132,56 @@ function handleReplyCancelled() {
   <div>
     <!-- Action row -->
     <div class="flex items-center justify-between">
-      <div class="flex items-center gap-1">
+      <div class="flex items-center gap-3">
         <!-- R4: Endorse button (equal visual weight) -->
         <!-- R38: "Endorse" not "upvote" -->
-        <UButton icon="i-lucide-thumbs-up" :size="compact ? 'xs' : 'sm'"
-          :variant="votedSentiment === 'positive' ? 'soft' : 'ghost'"
-          :color="votedSentiment === 'positive' ? 'success' : 'neutral'"
-          :disabled="disabled || !walletReady || voting" title="Endorse this content"
-          @click="handleVoteClick('positive', $event)">
-          <span v-if="votedSentiment === 'positive'" class="text-xs">Voted</span>
-          <span v-else-if="isRevealed && votesPositive !== undefined" class="text-xs text-gray-500">{{
-            votesPositive }}</span>
-        </UButton>
+        <button class="flex items-center gap-1 group" :disabled="disabled || !walletReady || voting"
+          title="Endorse this content" @click="handleVoteClick('positive', $event)">
+          <span class="flex items-center justify-center rounded-full p-1.5 transition-colors" :class="votedSentiment === 'positive'
+            ? 'text-success-500 bg-success-50 dark:bg-success-900/20'
+            : 'text-gray-400 group-hover:text-success-500 group-hover:bg-success-50 dark:group-hover:bg-success-900/20'
+            ">
+            <UIcon name="i-lucide-thumbs-up" class="w-[18px] h-[18px]" />
+          </span>
+          <span class="text-[13px]"
+            :class="votedSentiment === 'positive' ? 'text-success-500' : 'text-gray-500 dark:text-gray-400'">
+            <template v-if="isRevealed && votesPositive !== undefined">{{ votesPositive }}</template>
+          </span>
+        </button>
 
         <!-- R4: Flag button (equal visual weight) -->
         <!-- R38: "Flag" not "downvote" -->
-        <UButton icon="i-lucide-thumbs-down" :size="compact ? 'xs' : 'sm'"
-          :variant="votedSentiment === 'negative' ? 'soft' : 'ghost'"
-          :color="votedSentiment === 'negative' ? 'error' : 'neutral'"
-          :disabled="disabled || !walletReady || voting" title="Flag this content"
-          @click="handleVoteClick('negative', $event)">
-          <span v-if="votedSentiment === 'negative'" class="text-xs">Voted</span>
-          <span v-else-if="isRevealed && votesNegative !== undefined" class="text-xs text-gray-500">{{
-            votesNegative }}</span>
-        </UButton>
+        <button class="flex items-center gap-1 group" :disabled="disabled || !walletReady || voting"
+          title="Flag this content" @click="handleVoteClick('negative', $event)">
+          <span class="flex items-center justify-center rounded-full p-1.5 transition-colors" :class="votedSentiment === 'negative'
+            ? 'text-error-500 bg-error-50 dark:bg-error-900/20'
+            : 'text-gray-400 group-hover:text-error-500 group-hover:bg-error-50 dark:group-hover:bg-error-900/20'
+            ">
+            <UIcon name="i-lucide-thumbs-down" class="w-[18px] h-[18px]" />
+          </span>
+          <span class="text-[13px]"
+            :class="votedSentiment === 'negative' ? 'text-error-500' : 'text-gray-500 dark:text-gray-400'">
+            <template v-if="isRevealed && votesNegative !== undefined">{{ votesNegative }}</template>
+          </span>
+        </button>
 
         <!-- Reply button (Lotusia posts only, wallet required) -->
-        <UButton v-if="canReply && walletReady" icon="i-lucide-reply" :size="compact ? 'xs' : 'sm'"
-          :variant="replyActive ? 'soft' : 'ghost'" color="neutral" title="Reply"
+        <button v-if="canReply && walletReady" class="flex items-center gap-1 group" title="Reply"
           @click="handleReplyClick($event)">
-          <span v-if="replyCount > 0" class="text-xs">{{ replyCount }}</span>
-          <span v-else class="text-xs">Reply</span>
-        </UButton>
+          <span class="flex items-center justify-center rounded-full p-1.5 transition-colors" :class="replyActive
+            ? 'text-primary bg-primary/10'
+            : 'text-gray-400 group-hover:text-primary group-hover:bg-primary/10'
+            ">
+            <UIcon name="i-lucide-message-circle" class="w-[18px] h-[18px]" />
+          </span>
+          <span class="text-[13px] text-gray-500 dark:text-gray-400" v-if="replyCount > 0">{{ replyCount }}</span>
+        </button>
       </div>
 
       <!-- R1: Ranking metric — exact when revealed, bucketed when blind -->
-      <span class="text-xs text-gray-400 dark:text-gray-500">
+      <span v-show="!bypassRankingDisplay" class="text-[13px] text-gray-500 dark:text-gray-400">
         <template v-if="isRevealed && rankingDisplay">
-          {{ rankingDisplay }} XPI ({{ votesPositive }}↑ / {{ votesNegative }}↓)
+          {{ rankingDisplay }} XPI
         </template>
         <template v-else-if="bucketedVotes">
           {{ bucketedVotes }}
@@ -178,8 +192,8 @@ function handleReplyCancelled() {
     <!-- Inline reply form (shown when replyActive and replyPlatform/replyProfileId provided) -->
     <div v-if="replyActive && replyPlatform && replyProfileId" class="mt-2">
       <FeedCommentInput :platform="replyPlatform" :profile-id="replyProfileId" :post-id="replyPostId"
-        :in-reply-to="postId" :parent-text="parentText" placeholder="Write a reply..."
-        @posted="handleReplyPosted" @cancel="handleReplyCancelled" />
+        :in-reply-to="postId" :parent-text="parentText" placeholder="Write a reply..." @posted="handleReplyPosted"
+        @cancel="handleReplyCancelled" />
     </div>
   </div>
 </template>

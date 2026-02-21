@@ -166,7 +166,7 @@ onMounted(async () => {
     <div class="flex gap-3 items-start">
       <!-- Left column: avatar -->
       <div v-if="authorDisplay" class="flex-shrink-0 pt-0.5">
-        <UAvatar :src="avatarUrl || undefined" :text="avatarInitials" size="md" />
+        <UAvatar :src="avatarUrl || undefined" :text="avatarInitials" size="sm" />
       </div>
 
       <!-- Right column: label + textarea + footer -->

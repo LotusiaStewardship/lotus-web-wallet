@@ -656,5 +656,9 @@ export function useOverlays() {
 
     // UI modals
     openKeyboardShortcutsModal,
+
+    // Access to global overlay state
+    activeOverlayName,
+    activeOverlayId,
   }
 }

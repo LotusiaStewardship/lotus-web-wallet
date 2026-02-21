@@ -46,7 +46,6 @@ const avatarError = ref(false)
 const profileTab = ref<'posts' | 'comments'>('posts')
 
 // R1 Vote-to-Reveal: derived from voters array returned by the backend
-// Check if wallet's scriptPayload is among the profile's voters
 const hasVoted = ref(false)
 
 const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
@@ -134,7 +133,7 @@ async function fetchData() {
     // Fetch profile and posts first (don't require wallet)
     const [profileData, postsData, avatar] = await Promise.all([
       getProfileRanking(platform.value as ScriptChunkPlatformUTF8, profileId.value, walletStore.scriptPayload),
-      getProfilePosts(platform.value as ScriptChunkPlatformUTF8, profileId.value),
+      getProfilePosts(platform.value as ScriptChunkPlatformUTF8, profileId.value, walletStore.scriptPayload),
       getAvatar(platform.value, profileId.value),
     ])
     profile.value = profileData
@@ -179,10 +178,14 @@ onMounted(fetchData)
     <template v-if="loading">
       <UCard>
         <div class="flex flex-col items-center gap-3 py-4">
-          <USkeleton class="h-14 w-14 rounded-full" />
+          <!-- Avatar placeholder -->
+          <USkeleton class="h-22 w-22 rounded-full" />
+          <!-- Profile name placeholder -->
           <USkeleton class="h-6 w-1/3" />
+          <!-- Platform/handle placeholder -->
           <USkeleton class="h-4 w-1/4" />
         </div>
+        <!-- Stats/content area placeholder -->
         <USkeleton class="h-20 w-full mt-4" />
       </UCard>
     </template>
@@ -202,10 +205,10 @@ onMounted(fetchData)
         <div class="flex flex-col items-center text-center pt-2 pb-4">
           <div class="relative mb-3">
             <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="profileId.substring(0, 2).toUpperCase()"
-              size="3xl" />
+              class="w-22 h-22" />
             <div
-              class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
-              <UIcon :name="platformIcon" class="w-3 h-3 text-gray-500 dark:text-gray-100" />
+              class="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
+              <UIcon :name="platformIcon" class="w-5 h-5 text-gray-500 dark:text-gray-100" />
             </div>
           </div>
 
@@ -356,7 +359,7 @@ onMounted(fetchData)
               <div class="-mx-4 -my-4 sm:-mx-6 sm:-my-6 divide-y divide-gray-100 dark:divide-gray-800">
                 <div v-for="(post, index) in posts.posts" :key="post.id">
                   <FeedPostCard :post="post" :platform="platform as ScriptChunkPlatformUTF8" :profile-id="profileId"
-                    :rank="index + 1" />
+                    :rank="index + 1" :activity="true" />
                 </div>
               </div>
             </UCard>

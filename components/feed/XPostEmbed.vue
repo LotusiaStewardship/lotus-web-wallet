@@ -50,6 +50,12 @@ const props = withDefaults(defineProps<{
   fontSize: 'md',
 })
 
+const fontSize = {
+  'sm': 'text-[13px]',
+  'md': 'text-[14px]',
+  'lg': 'text-[16px]',
+}
+
 const loading = ref(true)
 const error = ref(false)
 const tweet = ref<ParsedTweet | null>(null)
@@ -179,7 +185,7 @@ watch(
 
     <!-- Rendered Tweet Content -->
     <div v-else-if="tweet" class="select-text">
-      <p :class="`text-${fontSize || 'md'} leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line`">
+      <p :class="`${fontSize} leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line`">
         {{ tweet.text }}
       </p>
 
@@ -196,9 +202,8 @@ watch(
 
     <!-- Error Fallback -->
     <div v-else-if="error"
-      class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-4 py-2">
-      <p class="text-md text-gray-500 dark:text-gray-400 mb-2">This content is currently unavailable. It may have been
-        deleted.</p>
+      class="rounded-lg border-1 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 mt-1 p-1.5">
+      <span class="text-gray-500 dark:text-gray-400">This content is unavailable.</span>
     </div>
   </div>
 </template>

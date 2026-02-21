@@ -20,7 +20,7 @@ definePageMeta({
 })
 
 const walletStore = useWalletStore()
-const { openNewPostSlideover } = useOverlays()
+const { openNewPostSlideover, activeOverlayName } = useOverlays()
 
 const activeTab = ref('activity')
 
@@ -34,7 +34,6 @@ const INTRO_DISMISSED_KEY = 'feed-intro-dismissed'
 const showIntro = ref(false)
 
 const walletReady = computed(() => walletStore.isReadyForSigning())
-const isSlideoverOpen = ref(false)
 
 /** The wallet's own Lotusia identity (scriptPayload used as profileId for native posts) */
 const lotusiaProfileId = computed(() => walletStore.scriptPayload || '')
@@ -50,12 +49,10 @@ function dismissIntro() {
 
 async function openCompose() {
   if (!lotusiaProfileId.value) return
-  isSlideoverOpen.value = true
   await openNewPostSlideover({
     platform: 'lotusia',
     profileId: lotusiaProfileId.value,
   })
-  isSlideoverOpen.value = false
 }
 </script>
 
@@ -99,7 +96,7 @@ async function openCompose() {
     <!-- FAB: Compose a Lotusia post (only when wallet is ready) -->
     <Teleport to="body">
       <Transition name="fab">
-        <button v-if="walletReady && lotusiaProfileId && !isSlideoverOpen"
+        <button v-if="walletReady && lotusiaProfileId && !activeOverlayName"
           class="fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-primary shadow-lg flex items-center justify-center text-white hover:bg-primary/90 active:scale-95 transition-all"
           title="Write a post" @click="openCompose">
           <UIcon name="i-lucide-pencil" class="w-6 h-6" />

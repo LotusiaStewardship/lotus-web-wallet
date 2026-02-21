@@ -395,11 +395,15 @@ export const useRankApi = () => {
   const getProfilePosts = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
+    scriptPayload?: string,
     page: number = 1,
     pageSize: number = 10,
   ): Promise<ProfilePostsResponse | null> => {
     try {
-      const url = `${getRankApiUrl()}/${platform}/${profileId}/posts/${page}/${pageSize}`
+      let url = `${getRankApiUrl()}/${platform}/${profileId}/posts/${page}/${pageSize}`
+      if (scriptPayload) {
+        url += `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+      }
       const response = await fetch(url)
       if (!response.ok) {
         console.error(`Failed to fetch profile posts: ${response.status}`)
@@ -525,7 +529,9 @@ export const useRankApi = () => {
   ): Promise<ProfileData | null> => {
     try {
       const url = `${getRankApiUrl()}/${platform}/${profileId}${
-        scriptPayload ? `/${scriptPayload}` : ''
+        scriptPayload
+          ? `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+          : ''
       }`
       const response = await fetch(url)
       if (!response.ok) {
@@ -578,7 +584,9 @@ export const useRankApi = () => {
     try {
       const { authorizedFetch } = useRankAuth()
       let url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
-      if (scriptPayload) url += `/${scriptPayload}`
+      if (scriptPayload) {
+        url += `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+      }
       const response = await authorizedFetch(url)
       if (!response) {
         console.error(
@@ -715,7 +723,9 @@ export const useRankApi = () => {
   ): Promise<RnkcComment[]> => {
     try {
       let url = `${getRankApiUrl()}/${platform}/${profileId}/${postId}`
-      if (scriptPayload) url += `/${scriptPayload}`
+      if (scriptPayload) {
+        url += `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+      }
       const response = await fetch(url)
       if (!response.ok) {
         console.error(`Failed to fetch post for comments: ${response.status}`)

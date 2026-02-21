@@ -80,7 +80,7 @@ function close() {
         <div class="flex items-center justify-between">
           <div class="w-8" />
           <h2 class="text-lg font-semibold text-center">
-            {{ sentiment === 'positive' ? 'Upvote' : 'Downvote' }}
+            {{ sentiment === 'positive' ? 'Endorse' : 'Flag' }}
           </h2>
           <UButton variant="ghost" size="xs" icon="i-lucide-x" @click="close" />
         </div>
@@ -140,7 +140,7 @@ function close() {
             Insufficient Balance
           </template>
           <template v-else>
-            Confirm {{ sentiment === 'positive' ? 'Upvote' : 'Downvote' }}
+            Confirm {{ sentiment === 'positive' ? 'Endorse' : 'Flag' }}
           </template>
         </UButton>
       </div>

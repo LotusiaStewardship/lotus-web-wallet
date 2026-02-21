@@ -19,11 +19,8 @@
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import type { PostData } from '~/composables/useRankApi'
-import { PlatformURL } from '~/composables/useRankApi'
-import { formatXPICompact } from '~/utils/formatting'
-import { isControversial as checkControversial, controversyScore, bucketVoteCount } from '~/utils/feed'
+import { useRankApi } from '~/composables/useRankApi'
 import { useWalletStore } from '~/stores/wallet'
-import { useTime } from '~/composables/useTime'
 
 definePageMeta({
   title: 'Post',
@@ -32,9 +29,8 @@ definePageMeta({
 const route = useRoute()
 const walletStore = useWalletStore()
 const { getPostRanking } = useRankApi()
-const { timeAgo } = useTime()
 
-const platform = computed(() => route.params.platform as string)
+const platform = computed(() => route.params.platform as ScriptChunkPlatformUTF8)
 const profileId = computed(() => route.params.profileId as string)
 const postId = computed(() => route.params.postId as string)
 
@@ -48,65 +44,6 @@ const authorIdentity = useResolve(platform, profileId)
 // R1 Vote-to-Reveal: derived from postMeta returned by the backend
 // When wallet is initialized, we pass scriptPayload to the API and check postMeta
 const hasVoted = ref(false)
-
-const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
-
-const externalUrl = computed(() => {
-  const urlHelper = PlatformURL[platform.value]
-  if (!urlHelper) return null
-  return urlHelper.post(profileId.value, postId.value)
-})
-
-const rankingDisplay = computed(() => {
-  if (!post.value) return '0'
-  return formatXPICompact(post.value.ranking)
-})
-
-/** Formatted timestamp for display */
-const formattedTime = computed(() => {
-  if (!post.value) return ''
-  const ts = post.value?.lastVoted || post.value?.timestamp || post.value?.firstSeen
-  if (!ts) return ''
-  return timeAgo(Number(ts))
-})
-
-const isPositive = computed(() => post.value && BigInt(post.value.ranking) > 0n)
-const isNegative = computed(() => post.value && BigInt(post.value.ranking) < 0n)
-
-const totalVotes = computed(() => {
-  if (!post.value) return 0
-  return post.value.votesPositive + post.value.votesNegative
-})
-
-const sentimentRatio = computed(() => {
-  if (!post.value || totalVotes.value === 0) return 50
-  return Math.round((post.value.votesPositive / totalVotes.value) * 100)
-})
-
-const isControversial = computed(() => {
-  if (!post.value) return false
-  return checkControversial(post.value.satsPositive, post.value.satsNegative, totalVotes.value)
-})
-
-// R2: Controversy score for detailed display (0-1 scale)
-const controvScore = computed(() => {
-  if (!post.value) return 0
-  return controversyScore(post.value.satsPositive, post.value.satsNegative)
-})
-
-
-// R38: Aggregate sentiment label
-const sentimentLabel = computed(() => {
-  if (isPositive.value) return 'Endorsed'
-  if (isNegative.value) return 'Flagged'
-  return 'Noted'
-})
-
-const sentimentColor = computed(() => {
-  if (isPositive.value) return 'success'
-  if (isNegative.value) return 'error'
-  return 'neutral'
-})
 
 // Comment count from post data
 const commentCount = computed(() => {
@@ -229,116 +166,15 @@ onMounted(fetchData)
           <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
           <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
           <div class="flex">
-            <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-4">
+            <div class="flex flex-col items-center flex-shrink-0 w-10 pb-2 -mt-4">
               <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
             </div>
           </div>
         </template>
 
-        <!-- Post Header: Author info -->
-        <!-- size="md" matches AncestorItem so the thread connector aligns -->
-        <div class="mb-1">
-          <FeedAuthorDisplay :platform="platform" :profile-id="profileId" size="md"
-            :to="`/feed/${platform}/${profileId}`" :time="formattedTime">
-            <template #inline>
-              <!-- External link for non-Lotusia posts -->
-              <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
-                class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
-                <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
-              </a>
-            </template>
-          </FeedAuthorDisplay>
-        </div>
-
-        <!-- Post Content -->
-        <div class="mb-3">
-          <p v-if="platform === 'lotusia'"
-            class="text-lg leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
-              post.data }}</p>
-          <!-- Embedded X Post (Twitter only) -->
-          <FeedXPostEmbed font-size="lg" v-else-if="platform === 'twitter'" :tweet-id="postId"
-            :profile-id="profileId" />
-        </div>
-
-        <!-- Post ID (subtle metadata) -->
-        <!-- <div class="flex items-center gap-2 mb-3 text-xs text-gray-400">
-          <span class="font-mono truncate">Post {{ postId }}</span>
-        </div> -->
-
-        <!-- R2: Controversial Callout (visible regardless of vote status — binary flag, not directional) -->
-        <div v-if="isControversial"
-          class="mb-4 p-3 rounded-lg bg-warning-50 dark:bg-warning-900/10 border border-warning-200 dark:border-warning-800/30">
-          <div class="flex items-start gap-2.5">
-            <UIcon name="i-lucide-alert-triangle" class="w-5 h-5 text-warning-500 flex-shrink-0 mt-0.5" />
-            <div class="flex-1 min-w-0">
-              <div class="font-semibold text-sm text-warning-700 dark:text-warning-400">Controversial Post</div>
-              <p class="text-xs text-warning-600 dark:text-warning-500 mt-0.5">
-                This post has significant engagement from both supporters and critics.
-                <!-- R1: Only show the detailed ratio post-vote to avoid leaking directional sentiment -->
-                <template v-if="hasVoted">
-                  The minority position represents {{ Math.round(controvScore * 100) }}% of the majority burn weight,
-                  indicating genuine disagreement rather than one-sided consensus.
-                </template>
-                <template v-else>
-                  Vote to see the full sentiment breakdown.
-                </template>
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- R1 Vote-to-Reveal: Pre-vote blind state -->
-        <Transition name="fade" mode="out-in">
-          <div v-if="!hasVoted" key="blind"
-            class="flex items-center justify-center gap-2 py-3 mb-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-            <UIcon name="i-lucide-eye-off" class="w-5 h-5 text-gray-400" />
-            <span class="text-sm font-medium text-gray-500">{{ bucketedVotes }}</span>
-            <span class="text-xs text-gray-400">&middot; Vote to show sentiment data</span>
-          </div>
-
-          <!-- R1 Vote-to-Reveal: Post-vote revealed state -->
-          <div v-else key="revealed" class="space-y-2 mb-3">
-            <!-- Compact ranking + breakdown row -->
-            <div class="flex items-center gap-3 py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-              <!-- Ranking Score -->
-              <div class="text-xl font-mono font-bold"
-                :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
-                {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
-              </div>
-              <span class="text-xs text-gray-400">XPI</span>
-
-              <div class="w-px h-6 bg-gray-200 dark:bg-gray-700" />
-
-              <!-- Inline breakdown -->
-              <div class="flex items-center gap-3 text-xs">
-                <span class="text-success-600 dark:text-success-400 font-semibold">{{ post.votesPositive }}
-                  Endorsed</span>
-                <span class="text-error-600 dark:text-error-400 font-semibold">{{ post.votesNegative }} Flagged</span>
-                <span class="text-gray-500">{{ totalVotes }} votes</span>
-              </div>
-            </div>
-
-            <!-- Sentiment Bar -->
-            <div class="h-1 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
-              <div class="h-full rounded-full transition-all"
-                :class="sentimentRatio >= 50 ? 'bg-success-500' : 'bg-error-500'"
-                :style="{ width: `${sentimentRatio}%` }" />
-            </div>
-          </div>
-        </Transition>
-
-        <!-- Action Row: vote + reply -->
-        <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
-          <FeedButtonRow :post-meta="post?.postMeta" :platform="(platform as ScriptChunkPlatformUTF8)"
-            :profile-id="profileId" :post-id="postId" :disabled="!walletStore.initialized" :is-revealed="hasVoted"
-            :votes-positive="post?.votesPositive" :votes-negative="post?.votesNegative" :bucketed-votes="bucketedVotes"
-            :ranking-display="rankingDisplay" :can-reply="platform === 'lotusia'"
-            :reply-platform="(platform as ScriptChunkPlatformUTF8)" :reply-profile-id="profileId"
-            :reply-post-id="postId" @voted="handleVoted" />
-          <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2">
-            Create or import a wallet to vote
-          </p>
-        </div>
+        <!-- Post Detail: Use FeedPostCard with detail mode -->
+        <FeedPostCard v-if="post" :post="post" :platform="platform" :profile-id="profileId" :detail="true"
+          @voted="handleVoted" />
       </UCard>
 
       <!-- 1st-Class Comments Section -->

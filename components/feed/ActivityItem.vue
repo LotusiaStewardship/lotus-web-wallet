@@ -12,6 +12,7 @@
  * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
 import type { PostData } from '~/composables/useRankApi'
+import { PlatformURL } from '~/composables/useRankApi'
 import { formatXPICompact } from '~/utils/formatting'
 import { bucketVoteCount, isControversial } from '~/utils/feed'
 import { useWalletStore } from '~/stores/wallet'
@@ -22,11 +23,8 @@ const props = defineProps<{
 }>()
 
 const walletStore = useWalletStore()
-const { openVoteSlideover } = useOverlays()
 const { timeAgo } = useTime()
 const walletReady = computed(() => walletStore.isReadyForSigning())
-const { useResolve } = useFeedIdentity()
-const identity = useResolve(() => props.post.platform, () => props.post.profileId)
 
 const hasAncestors = computed(() => {
   return props.post.ancestors && props.post.ancestors.length > 0
@@ -43,13 +41,6 @@ const hasUserVoted = computed(() => {
   return !!(props.post.postMeta?.hasWalletUpvoted || props.post.postMeta?.hasWalletDownvoted)
 })
 
-/** R1: Determine user's voted sentiment if they've voted */
-const userSentiment = computed(() => {
-  if (props.post.postMeta?.hasWalletUpvoted) return 'positive'
-  if (props.post.postMeta?.hasWalletDownvoted) return 'negative'
-  return null
-})
-
 /** R1: Revealed state shows full sentiment, blind shows only bucketed count */
 const isRevealed = computed(() => hasUserVoted.value)
 
@@ -63,20 +54,6 @@ const isControversialFlag = computed(() =>
   ),
 )
 
-/** R38: Curation language based on aggregate sentiment (for revealed state) */
-const sentimentLabel = computed(() => {
-  if (isPositive.value) return 'Endorsed'
-  if (isNegative.value) return 'Flagged'
-  return 'Noted'
-})
-
-/** R38: Badge color for sentiment */
-const sentimentColor = computed(() => {
-  if (isPositive.value) return 'success'
-  if (isNegative.value) return 'error'
-  return 'neutral'
-})
-
 /** R1: Bucketed vote count for blind state */
 const bucketedVotesDisplay = computed(() => bucketVoteCount(totalVotes.value))
 
@@ -86,40 +63,6 @@ const formattedTime = computed(() => {
   if (!ts) return ''
   return timeAgo(Number(ts))
 })
-
-/** Optimistic local state: tracks the user's vote on this item without feed refresh */
-const votedSentiment = ref<'positive' | 'negative' | null>(null)
-const voting = ref(false)
-
-// R1: Initialize optimistic state with user's existing vote if they've already voted
-onMounted(() => {
-  if (userSentiment.value) {
-    votedSentiment.value = userSentiment.value
-  }
-})
-
-async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event) {
-  event.preventDefault()
-  event.stopPropagation()
-  if (!walletReady.value || voting.value) return
-
-  voting.value = true
-  try {
-    const result = await openVoteSlideover({
-      sentiment,
-      platform: props.post.platform as string,
-      profileId: props.post.profileId,
-      postId: props.post.id || undefined,
-    })
-
-    if (result?.txid) {
-      // Optimistic update: highlight the button immediately, no feed refresh
-      votedSentiment.value = sentiment
-    }
-  } finally {
-    voting.value = false
-  }
-}
 
 const isTwitterPost = computed(
   () => props.post.platform === 'twitter',
@@ -148,7 +91,7 @@ const totalVotes = computed(() => props.post.votesPositive + props.post.votesNeg
       <FeedAncestorItem font-size="md" v-for="ancestor in props.post.ancestors" :key="ancestor.id" :post="ancestor"
         :show-connector="true" />
       <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
-      <!-- UAvatar size="md" = size-8 = 32px = w-8 -->
+      <!-- FeedAncestorItem uses size="md" = size-8 = 32px = w-8 -->
       <div class="flex">
         <div class="flex flex-col items-center flex-shrink-0 w-8 pb-2 -mt-4">
           <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
@@ -156,55 +99,43 @@ const totalVotes = computed(() => props.post.votesPositive + props.post.votesNeg
       </div>
     </template>
     <NuxtLink :to="feedUrl">
-      <!-- Post Header: Author info -->
-      <div class="mb-2">
-        <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="md" :to="feedUrl"
-          :time="formattedTime">
-          <template #inline>
-            <!-- R1: Only show sentiment badge in revealed state -->
-            <template v-if="isRevealed">
-              <!-- NOTE: The sentiment badge is already shown in the FeedVoteButton component -->
-              <!-- R2: Controversial flag -->
-              <UBadge v-if="isControversialFlag" color="warning" size="sm" variant="subtle">
-                Controversial
-              </UBadge>
-            </template>
-            <!-- External link for non-Lotusia posts -->
-            <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
-              class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
-              <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
-            </a>
+      <FeedAuthorDisplay :platform="post.platform" :profile-id="post.profileId" size="xl" :to="feedUrl"
+        :time="formattedTime">
+        <template #inline>
+          <!-- R1: Sentiment badge — revealed state only -->
+          <template v-if="isRevealed">
+            <UBadge :color="isPositive ? 'success' : isNegative ? 'error' : 'neutral'" size="xs" variant="subtle">
+              {{ isPositive ? 'Endorsed' : isNegative ? 'Flagged' : 'Noted' }}
+            </UBadge>
+            <!-- R2: Controversial flag -->
+            <UBadge v-if="isControversialFlag" color="warning" size="xs" variant="subtle">Controversial</UBadge>
           </template>
-        </FeedAuthorDisplay>
-      </div>
+          <!-- External link for non-Lotusia posts -->
+          <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
+            class="ml-auto text-gray-400 hover:text-primary transition-colors" @click.stop>
+            <UIcon name="i-lucide-external-link" class="w-3.5 h-3.5" />
+          </a>
+        </template>
 
-      <!-- Post Content -->
-      <div class="mb-2">
-        <!-- Lotusia post content has data property -->
-        <p v-if="post.data" class="text-md leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-line">{{
-          post.data }}</p>
-        <!-- Embedded tweet content (Twitter posts only, matches [postId].vue:256) -->
-        <FeedXPostEmbed v-else-if="isTwitterPost" :tweet-id="post.id" :profile-id="post.profileId" />
-      </div>
+        <!-- Post Content (default slot of FeedAuthorDisplay) -->
+        <div class="mt-1 mb-3">
+          <!-- Lotusia post content has data property -->
+          <p v-if="post.data"
+            class="text-[15px] leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+            {{ post.data }}
+          </p>
+          <!-- Embedded tweet content (Twitter posts only) -->
+          <FeedXPostEmbed v-else-if="isTwitterPost" :tweet-id="post.id" :profile-id="post.profileId" />
+        </div>
+      </FeedAuthorDisplay>
     </NuxtLink>
 
-    <!-- Bottom action row: vote buttons + ranking metric (standard social media layout) -->
-    <div class="flex items-center justify-between mt-1">
-      <!-- TODO: Add handleVoted() to capture the vote transaction ID and update local state -->
-      <FeedVoteButton :platform="post.platform" :profile-id="post.profileId" :post-id="post.id"
-        :post-meta="post.postMeta" :disabled="!walletReady" :compact="true" />
-
-      <!-- R1: Ranking and vote display -->
-      <span class="text-xs text-gray-500 dark:text-gray-400">
-        <template v-if="isRevealed">
-          <!-- Revealed: Show full sentiment breakdown -->
-          {{ rankingDisplay }} XPI ({{ post.votesPositive }}↑ / {{ post.votesNegative }}↓)
-        </template>
-        <template v-else>
-          <!-- Blind: Show only bucketed vote count per R1 spec -->
-          {{ bucketedVotesDisplay }}
-        </template>
-      </span>
+    <!-- ButtonRow: outside NuxtLink, indented to align with content column -->
+    <div class="pl-[52px]">
+      <FeedButtonRow :platform="post.platform" :profile-id="post.profileId" :post-id="post.id"
+        :post-meta="post.postMeta" :is-revealed="isRevealed" :votes-positive="post.votesPositive"
+        :votes-negative="post.votesNegative" :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay"
+        :compact="true" :disabled="!walletReady" />
     </div>
   </div>
 </template>

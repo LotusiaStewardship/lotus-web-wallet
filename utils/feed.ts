@@ -56,7 +56,7 @@ export function controversyScore(
   const maxBurn = pos > neg ? pos : neg
   if (maxBurn === 0n) return 0
   // Use Number for the ratio (precision is fine for a 0-1 score)
-  return Number(minBurn * 10000n / maxBurn) / 10000
+  return Number((minBurn * 1_000_000n) / maxBurn) / 1_000_000
 }
 
 /**

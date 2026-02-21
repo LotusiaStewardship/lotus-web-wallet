@@ -37,8 +37,8 @@ const props = withDefaults(defineProps<{
   /** Minimum height for the connector line */
   connectorMinHeight?: string
 }>(), {
-  size: 'lg',
-  compact: false,
+  size: 'xl',
+  compact: true,
   showPlatformBadge: true,
   connectorMinHeight: '16px',
 })
@@ -48,7 +48,7 @@ const { useResolve } = useFeedIdentity()
 
 const identity = useResolve(() => props.platform, () => props.profileId)
 
-const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-globe')
+const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-sprout')
 
 const avatarUrl = ref<string | null>(null)
 const avatarInitials = computed(() => getProfileInitials(props.profileId))
@@ -56,12 +56,12 @@ const avatarInitials = computed(() => getProfileInitials(props.profileId))
 /** Left column explicit width matching avatar size — ensures connector always centers under avatar */
 const avatarColWidth = computed(() => {
   switch (props.size) {
-    case 'xs': return 'w-4'
+    case 'xs': return 'w-6'
     case 'sm': return 'w-7'
     case 'md': return 'w-8'
     case 'lg': return 'w-9'
     case 'xl': return 'w-10'
-    default: return 'w-8'
+    default: return 'w-10'
   }
 })
 
@@ -85,7 +85,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex items-start gap-2.5">
+  <div class="flex items-start gap-3">
     <!-- Left column: avatar + optional connector -->
     <div class="flex flex-col items-center flex-shrink-0 self-stretch"
       :class="[avatarColWidth, showConnector ? 'pb-0' : '']">
@@ -105,7 +105,7 @@ onMounted(async () => {
         :style="{ minHeight: connectorMinHeight }" />
     </div>
 
-    <!-- Right column: name + time + slot -->
+    <!-- Right column: name + time + content slot -->
     <div class="flex-1 min-w-0 p-0">
       <NuxtLink :to="to">
         <!-- Compact mode: single line with name and time -->
@@ -124,11 +124,11 @@ onMounted(async () => {
           <slot name="inline" />
         </div>
 
-        <!-- Non-compact mode: two-line layout -->
+        <!-- Non-compact mode: single-line name + time + inline slot, then platform below -->
         <div v-else>
-          <!-- Line 1: Author name -->
+          <!-- Line 1: Author name + time + inline badges -->
           <div class="flex items-center gap-1 flex-wrap">
-            <span class="text-md font-bold leading-5" :class="[
+            <span class="text-[15px] font-bold leading-5" :class="[
               to ? 'hover:underline' : '',
               identity.isOwn ? 'text-primary' : '',
             ]" :title="identity.lotusAddress || profileId">
@@ -137,10 +137,9 @@ onMounted(async () => {
             <!-- Extra inline content (badges, vote counts, external links) -->
             <slot name="inline" />
           </div>
-          <!-- Line 2: Platform and time -->
-          <div class="flex items-center gap-1 text-[13px] text-gray-500 dark:text-gray-400">
-            <span class="capitalize">{{ platform }}</span>
-            <span v-if="time">
+          <!-- Line 2: Platform, time -->
+          <div class="text-[13px] text-gray-500 dark:text-gray-400 capitalize">{{ platform }}
+            <span v-if="time" class="text-[13px] text-gray-500 dark:text-gray-400">
               <span class="text-gray-500 dark:text-gray-400 mx-0.5">&middot;</span>
               {{ time }}
             </span>
