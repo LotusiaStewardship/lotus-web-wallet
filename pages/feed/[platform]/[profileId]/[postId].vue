@@ -17,7 +17,7 @@
  *   R6: Burn-weighted comment sorting (via CommentThread)
  *   R38: Curation language — "Endorsed/Flagged" not "upvoted/downvoted"
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 import type { PostData } from '~/composables/useRankApi'
 import { useRankApi } from '~/composables/useRankApi'
 import { useWalletStore } from '~/stores/wallet'
@@ -110,15 +110,20 @@ async function fetchData() {
   }
 }
 
-function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
+function handleVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8) {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
   // Optimistic update: increment local vote count immediately (no fetchData refresh)
   if (post.value && sentiment) {
-    if (sentiment === 'positive') {
-      post.value = { ...post.value, votesPositive: post.value.votesPositive + 1 }
-    } else {
-      post.value = { ...post.value, votesNegative: post.value.votesNegative + 1 }
+    post.value = {
+      ...post.value,
+      votesPositive: sentiment === 'positive' ? post.value.votesPositive + 1 : post.value.votesPositive,
+      votesNegative: sentiment === 'negative' ? post.value.votesNegative + 1 : post.value.votesNegative,
+      postMeta: {
+        ...post.value.postMeta!,
+        hasWalletUpvoted: sentiment === 'positive' ? true : post.value.postMeta!.hasWalletUpvoted,
+        hasWalletDownvoted: sentiment === 'negative' ? true : post.value.postMeta!.hasWalletDownvoted,
+      },
     }
   }
 }

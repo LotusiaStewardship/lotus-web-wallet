@@ -15,11 +15,12 @@
  *   R2: Controversial flag — promoted to body section with explanation
  *   R3: Autonomy-supportive framing — burn shown as informational
  *   R4: Cost symmetry — equal visual weight for up/down
+ *   R5: Temporal Diversity — sentiment over time (via SentimentTimeline)
  *   R6: Burn-weighted comment sorting (via CommentThread)
  *   R38: Curation language — "Endorsed/Flagged" not "upvoted/downvoted"
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
-import type { ProfileData, ProfilePostsResponse } from '~/composables/useRankApi'
+import type { ProfileData, ProfilePostsResponse, ProfileRankTransaction } from '~/composables/useRankApi'
 import { PlatformIcon, PlatformURL } from '~/composables/useRankApi'
 import { formatXPI } from '~/utils/formatting'
 import { isControversial as checkControversial, controversyScore, bucketVoteCount } from '~/utils/feed'
@@ -31,7 +32,7 @@ definePageMeta({
 
 const route = useRoute()
 const walletStore = useWalletStore()
-const { getProfileRanking, getProfilePosts, getPostRanking } = useRankApi()
+const { getProfileRanking, getProfilePosts, getPostRanking, getProfileRankTransactions } = useRankApi()
 const { getAvatar } = useAvatars()
 
 const platform = computed(() => route.params.platform as string)
@@ -47,6 +48,29 @@ const profileTab = ref<'posts' | 'comments'>('posts')
 
 // R1 Vote-to-Reveal: derived from voters array returned by the backend
 const hasVoted = ref(false)
+
+// R5: Temporal Diversity — profile vote timeline
+const timelineTransactions = ref<ProfileRankTransaction[]>([])
+const timelineLoading = ref(false)
+const timelineFetched = ref(false)
+
+async function fetchTimeline() {
+  if (timelineFetched.value) return
+  timelineLoading.value = true
+  try {
+    const result = await getProfileRankTransactions(
+      platform.value as any,
+      profileId.value,
+      1,
+      40,
+      30,
+    )
+    timelineTransactions.value = result?.votes ?? []
+    timelineFetched.value = true
+  } finally {
+    timelineLoading.value = false
+  }
+}
 
 const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
 
@@ -144,6 +168,11 @@ async function fetchData() {
     // Backend API updated to include profileMeta via getProfileRanking
     hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || false
 
+    // R5: Fetch timeline after reveal state is known
+    if (hasVoted.value) {
+      fetchTimeline()
+    }
+
   } catch (err: any) {
     error.value = err?.message || 'Failed to load profile'
   } finally {
@@ -154,6 +183,8 @@ async function fetchData() {
 function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
+  // R5: Fetch timeline on first reveal
+  fetchTimeline()
   // Optimistic update: increment local vote count immediately (no fetchData refresh)
   if (profile.value && sentiment) {
     if (sentiment === 'positive') {
@@ -297,6 +328,11 @@ onMounted(fetchData)
                 :class="sentimentRatio >= 50 ? 'bg-success-500' : 'bg-error-500'"
                 :style="{ width: `${sentimentRatio}%` }" />
             </div>
+
+            <!-- R5: Temporal Diversity — sentiment over time -->
+            <ClientOnly>
+              <FeedSentimentTimeline :transactions="timelineTransactions" :loading="timelineLoading" />
+            </ClientOnly>
 
             <!-- Additional Stats Row -->
             <div v-if="uniqueVoters > 0" class="flex items-center justify-center gap-4 text-xs text-gray-500 pt-1">

@@ -13,14 +13,15 @@
  *       the user has voted on that ancestor independently.
  *   R2: Controversial badge (revealed state only).
  *   R4: Equal visual weight for endorse/flag via ButtonRow.
+ *   R5: Temporal Diversity — sentiment over time (detail mode, via SentimentTimeline).
  *   R6: Negative net-burn comments collapsed by default (own posts exempt).
  *   R38: "Endorsed/Flagged/Noted" not "upvoted/downvoted".
  *
- * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R2, R4, R6
+ * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R2, R4, R5, R6
  * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
-import type { TrendingItem, PostListItem, PostData, RnkcComment } from '~/composables/useRankApi'
-import { PlatformURL } from '~/composables/useRankApi'
+import type { TrendingItem, PostListItem, PostData, RnkcComment, ProfileRankTransaction } from '~/composables/useRankApi'
+import { PlatformURL, useRankApi } from '~/composables/useRankApi'
 import { formatXPICompact } from '~/utils/formatting'
 import { bucketVoteCount, isControversial, controversyScore } from '~/utils/feed'
 import { useWalletStore } from '~/stores/wallet'
@@ -64,6 +65,31 @@ const walletStore = useWalletStore()
 const { timeAgo } = useTime()
 const { useResolve } = useFeedIdentity()
 const walletReady = computed(() => walletStore.isReadyForSigning())
+
+// ---------------------------------------------------------------------------
+// R5: Temporal Diversity — lazy-load vote transactions when detail is revealed
+// ---------------------------------------------------------------------------
+
+const { getPostRankTransactions } = useRankApi()
+const timelineTransactions = ref<ProfileRankTransaction[]>([])
+const timelineLoading = ref(false)
+const timelineFetched = ref(false)
+
+async function fetchTimeline() {
+  if (!props.detail || timelineFetched.value) return
+  if (!postPlatform.value || !postProfileId.value || !postId.value) return
+  timelineLoading.value = true
+  try {
+    timelineTransactions.value = await getPostRankTransactions(
+      postPlatform.value,
+      postProfileId.value,
+      postId.value,
+    )
+    timelineFetched.value = true
+  } finally {
+    timelineLoading.value = false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Normalised post properties
@@ -154,6 +180,11 @@ const hasUserVoted = computed(() => {
 })
 
 const isRevealed = computed(() => hasUserVoted.value)
+
+// R5: Fetch timeline when detail mode is revealed (lazy, once)
+watch(isRevealed, (revealed) => {
+  if (revealed && props.detail) fetchTimeline()
+}, { immediate: true })
 
 // ---------------------------------------------------------------------------
 // R6: Collapse (comment mode only)
@@ -485,6 +516,11 @@ function handleReplyCancelled() { emit('replyCancelled') }
             :class="sentimentRatio >= 50 ? 'bg-success-500' : 'bg-error-500'"
             :style="{ width: `${sentimentRatio}%` }" />
         </div>
+
+        <!-- R5: Temporal Diversity — sentiment over time -->
+        <ClientOnly>
+          <FeedSentimentTimeline :transactions="timelineTransactions" :loading="timelineLoading" />
+        </ClientOnly>
       </div>
     </Transition>
 

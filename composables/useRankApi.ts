@@ -546,27 +546,94 @@ export const useRankApi = () => {
   }
 
   /**
-   * Fetch vote transactions for a specific profile
+   * Fetch vote transactions for a specific profile.
+   * When days is provided, only returns transactions within the last N days,
+   * stopping pagination early once timestamps fall outside the window.
    */
   const getProfileRankTransactions = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
     page: number = 1,
     pageSize: number = 10,
+    days?: number,
   ): Promise<ProfileVoteActivityResponse | null> => {
     try {
-      const url = `${getRankApiUrl()}/txs/${platform}/${profileId}/${page}/${pageSize}`
-      const response = await fetch(url)
-      if (!response.ok) {
-        console.error(
-          `Failed to fetch profile transactions: ${response.status}`,
-        )
-        return null
+      if (!days) {
+        const url = `${getRankApiUrl()}/txs/${platform}/${profileId}/${page}/${pageSize}`
+        const response = await fetch(url)
+        if (!response.ok) {
+          console.error(
+            `Failed to fetch profile transactions: ${response.status}`,
+          )
+          return null
+        }
+        return await response.json()
       }
-      return await response.json()
+      // Windowed fetch: collect all pages within the time window
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86_400
+      const allVotes: ProfileRankTransaction[] = []
+      let numPages = 1
+      for (let p = 1; p <= 20; p++) {
+        const url = `${getRankApiUrl()}/txs/${platform}/${profileId}/${p}/${pageSize}`
+        const response = await fetch(url)
+        if (!response.ok) break
+        const data: ProfileVoteActivityResponse = await response.json()
+        numPages = data.numPages
+        let reachedCutoff = false
+        for (const vote of data.votes) {
+          if (Number(vote.timestamp) >= cutoff) {
+            allVotes.push(vote)
+          } else {
+            reachedCutoff = true
+            break
+          }
+        }
+        if (reachedCutoff || p >= numPages) break
+      }
+      return { votes: allVotes, numPages }
     } catch (error) {
       console.error('Error fetching profile transactions:', error)
       return null
+    }
+  }
+
+  /**
+   * Fetch RANK vote transactions for a specific post (R5: Temporal Diversity).
+   * The backend /txs endpoint is profile-scoped, so we fetch profile txs and
+   * filter client-side by postId. When days is provided, stops early once
+   * timestamps fall outside the window (backend efficiency).
+   */
+  const getPostRankTransactions = async (
+    platform: ScriptChunkPlatformUTF8,
+    profileId: string,
+    postId: string,
+    days: number = 30,
+  ): Promise<ProfileRankTransaction[]> => {
+    try {
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86_400
+      const pageSize = 40
+      const allVotes: ProfileRankTransaction[] = []
+      for (let page = 1; page <= 20; page++) {
+        const url = `${getRankApiUrl()}/txs/${platform}/${profileId}/${page}/${pageSize}`
+        const response = await fetch(url)
+        if (!response.ok) break
+        const data: ProfileVoteActivityResponse = await response.json()
+        let reachedCutoff = false
+        for (const vote of data.votes) {
+          if (Number(vote.timestamp) < cutoff) {
+            reachedCutoff = true
+            break
+          }
+          if (vote.post?.id === postId) {
+            allVotes.push(vote)
+          }
+        }
+        if (reachedCutoff || page >= data.numPages) break
+      }
+      return allVotes
+    } catch (error) {
+      console.error('Error fetching post rank transactions:', error)
+      return []
     }
   }
 
@@ -817,6 +884,7 @@ export const useRankApi = () => {
     getProfileRankTransactions,
     // Post methods
     getPostRanking,
+    getPostRankTransactions,
     // Comment methods
     getProfileComments,
     getPostComments,
