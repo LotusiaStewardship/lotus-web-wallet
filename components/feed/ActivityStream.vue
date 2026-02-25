@@ -16,6 +16,8 @@ import { FeedSortLabel } from '~/composables/useRankApi'
 
 const feedStore = useFeedStore()
 const { getFeedPosts } = useRankApi()
+const { pollAfterVote } = usePostVotePolling()
+const walletStore = useWalletStore()
 
 const props = defineProps<{
   scriptPayload: string
@@ -27,6 +29,7 @@ const loadingMore = ref(false)
 const error = ref<string | null>(null)
 const pageSize = 20
 const popoverOpen = ref(false)
+const activeReplyTo = ref<string | null>(null)
 
 const sortOptions: Array<{ label: string; value: FeedSortMode; icon: string; description: string }> = [
   {
@@ -65,6 +68,70 @@ async function restoreScrollPosition() {
   }, 50)
 }
 
+/**
+ * Thread Merging Algorithm
+ * 
+ * When a post appears both as a standalone item AND as an ancestor in another
+ * post's chain, merge them into a unified thread by:
+ * 1. Finding the post that has it as an ancestor (the "child")
+ * 2. Extending the child's ancestor chain with the standalone post's ancestors
+ * 3. Removing the standalone post from the top-level feed
+ * 
+ * Example:
+ * Before: [Post A], [Ancestor B -> Post C]
+ * If Post A === Ancestor B:
+ * After: [Ancestor B (Post A) -> Post C]
+ */
+function mergeThreads(posts: PostData[]) {
+  // Create a map of post ID -> post for quick lookup
+  const postMap = new Map<string, PostData>()
+  posts.forEach(p => {
+    const key = `${p.platform}-${p.profileId}-${p.id}`
+    postMap.set(key, p)
+  })
+
+  // Track which posts should be removed from top-level (they're now in ancestor chains)
+  const postsToRemove = new Set<string>()
+
+  // For each post, check if it appears as an ancestor in any other post
+  posts.forEach(post => {
+    const postKey = `${post.platform}-${post.profileId}-${post.id}`
+
+    posts.forEach(otherPost => {
+      if (post === otherPost) return
+      if (!otherPost.ancestors || otherPost.ancestors.length === 0) return
+
+      // Check if this post appears in the other post's ancestor chain
+      const ancestorIndex = otherPost.ancestors.findIndex((anc: any) =>
+        anc.platform === post.platform &&
+        anc.profileId === post.profileId &&
+        anc.id === post.id
+      )
+
+      if (ancestorIndex !== -1) {
+        // Found a match! Merge the threads
+        // If the standalone post has its own ancestors, prepend them to the child's chain
+        if (post.ancestors && post.ancestors.length > 0) {
+          // Insert post's ancestors before the matched ancestor position
+          otherPost.ancestors = [
+            ...post.ancestors,
+            ...otherPost.ancestors
+          ]
+        }
+
+        // Mark this post for removal from top-level
+        postsToRemove.add(postKey)
+      }
+    })
+  })
+
+  // Return posts that aren't duplicated in ancestor chains
+  return posts.filter(p => {
+    const key = `${p.platform}-${p.profileId}-${p.id}`
+    return !postsToRemove.has(key)
+  })
+}
+
 async function fetchPosts(append: boolean = false) {
   if (append) {
     loadingMore.value = true
@@ -88,14 +155,26 @@ async function fetchPosts(append: boolean = false) {
     if (append) {
       const newPosts = result.posts.filter((p) => !seenPostIds.has(`${p.platform}-${p.profileId}-${p.id}`))
       newPosts.forEach(p => seenPostIds.add(`${p.platform}-${p.profileId}-${p.id}`))
-      feedStore.posts.push(...newPosts)
+
+      // Merge threads across existing + new posts
+      const combinedPosts = [...feedStore.posts, ...newPosts]
+      const merged = mergeThreads(combinedPosts)
+
+      // Replace entire feed with merged result
+      feedStore.posts = merged
     } else {
       seenPostIds.clear()
       result.posts.forEach(p => seenPostIds.add(`${p.platform}-${p.profileId}-${p.id}`))
+
+      // First deduplicate within the result set
       const unique = result.posts.filter((p, i, arr) =>
         arr.findIndex((a) => a.platform === p.platform && a.profileId === p.profileId && a.id === p.id) === i
       )
-      feedStore.posts = unique
+
+      // Then merge threads
+      const merged = mergeThreads(unique)
+
+      feedStore.posts = merged
     }
 
     feedStore.hasMore = result.pagination.hasNext
@@ -135,6 +214,57 @@ async function setSortMode(mode: FeedSortMode) {
 
 function saveScrollPosition() {
   feedStore.saveScrollPosition(window.scrollY)
+}
+
+function handleReply(postId: string) {
+  activeReplyTo.value = postId
+}
+
+function handleReplyPosted(txid: string) {
+  activeReplyTo.value = null
+  // Optionally refresh to show new comment
+  refresh()
+}
+
+function handleReplyCancelled() {
+  activeReplyTo.value = null
+}
+
+async function handlePostVoted(txid: string, sentiment?: 'positive' | 'negative', postId?: string, platform?: string, profileId?: string) {
+  if (!sentiment || !postId || !platform || !profileId) return
+
+  // Find the post in the feed store array
+  const postIndex = feedStore.posts.findIndex(p => p.id === postId && p.platform === platform && p.profileId === profileId)
+  if (postIndex === -1) return
+
+  // Optimistic update
+  const post = feedStore.posts[postIndex]
+  feedStore.posts[postIndex] = {
+    ...post,
+    votesPositive: sentiment === 'positive' ? post.votesPositive + 1 : post.votesPositive,
+    votesNegative: sentiment === 'negative' ? post.votesNegative + 1 : post.votesNegative,
+  }
+
+  // Poll for verification
+  const result = await pollAfterVote({
+    platform: platform as any,
+    profileId,
+    postId,
+    txid,
+    sentiment,
+    scriptPayload: walletStore.scriptPayload,
+  })
+
+  // Update with confirmed data
+  if (result.confirmed) {
+    const currentPost = feedStore.posts[postIndex]
+    feedStore.posts[postIndex] = {
+      ...currentPost,
+      votesPositive: result.votesPositive ?? currentPost.votesPositive,
+      votesNegative: result.votesNegative ?? currentPost.votesNegative,
+      ranking: result.ranking ?? currentPost.ranking,
+    }
+  }
 }
 
 onMounted(() => {
@@ -268,7 +398,9 @@ onBeforeUnmount(() => {
     <!-- Post List -->
     <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
       <FeedPostCard v-for="post in feedStore.posts" :key="`${post.platform}-${post.profileId}-${post.id}`" :post="post"
-        :activity="true" />
+        :activity="true" :active-reply-to="activeReplyTo" @reply="handleReply" @reply-posted="handleReplyPosted"
+        @reply-cancelled="handleReplyCancelled"
+        @voted="(txid, sentiment) => handlePostVoted(txid, sentiment, post.id, post.platform, post.profileId)" />
     </div>
 
     <!-- Load More -->

@@ -116,7 +116,6 @@ export interface VoteSlideoverResult {
 
 export interface NewPostSlideoverProps {
   platform: ScriptChunkPlatformUTF8
-  profileId: string
 }
 
 export interface NewPostSlideoverResult {

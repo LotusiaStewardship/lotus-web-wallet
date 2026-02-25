@@ -36,9 +36,18 @@ const externalUrl = computed(() => {
   return urlHelper.post(props.post.profileId, props.post.id)
 })
 
-/** R1: Determine if the current user has voted on this post */
+/** R1: Determine if the current user has voted on this post OR is the author */
 const hasUserVoted = computed(() => {
-  return !!(props.post.postMeta?.hasWalletUpvoted || props.post.postMeta?.hasWalletDownvoted)
+  // Check if user has voted via postMeta
+  const hasVotedViaMeta = !!(
+    props.post.postMeta?.hasWalletUpvoted ||
+    props.post.postMeta?.hasWalletDownvoted
+  )
+
+  // Check if user is the author (RNKC: posting is inherently an upvote)
+  const isAuthor = props.post.profileId === useWalletStore().scriptPayload
+
+  return hasVotedViaMeta || isAuthor
 })
 
 /** R1: Revealed state shows full sentiment, blind shows only bucketed count */

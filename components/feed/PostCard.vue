@@ -156,6 +156,45 @@ const ancestors = computed(() => {
 })
 const hasAncestors = computed(() => !!ancestors.value?.length)
 
+// Profile-level comment detection: has inReplyToProfileId but null inReplyToPostId
+const isProfileComment = computed(() => {
+  const post = props.post as PostData
+  return !!(post.inReplyToProfileId && !post.inReplyToPostId)
+})
+
+// Profile ancestor data for profile-level comments
+const profileAncestor = computed(() => {
+  if (!isProfileComment.value) return null
+  const post = props.post as PostData
+
+  // Use API-provided ancestor profile data if available
+  if (post.ancestorProfile) {
+    return {
+      platform: post.ancestorProfile.platform,
+      id: post.ancestorProfile.id,
+      ranking: post.ancestorProfile.ranking,
+      satsPositive: post.ancestorProfile.satsPositive,
+      satsNegative: post.ancestorProfile.satsNegative,
+      votesPositive: post.ancestorProfile.votesPositive,
+      votesNegative: post.ancestorProfile.votesNegative,
+      voters: [],
+      profileMeta: post.ancestorProfile.profileMeta,
+    }
+  }
+
+  // Fallback to stub if API data not available
+  return {
+    platform: post.inReplyToPlatform!,
+    id: post.inReplyToProfileId!,
+    ranking: '0',
+    satsPositive: '0',
+    satsNegative: '0',
+    votesPositive: 0,
+    votesNegative: 0,
+    voters: [],
+  }
+})
+
 const directReplies = computed<RnkcComment[]>(() => {
   if ('comments' in props.post) return (props.post as RnkcComment).comments ?? []
   return []
@@ -164,6 +203,23 @@ const replyCount = computed(() => directReplies.value.length)
 const currentDepth = computed(() => props.depth ?? 0)
 const showInlineReplies = computed(() => props.comment && currentDepth.value < 2 && replyCount.value > 0)
 const showViewMoreLink = computed(() => props.comment && currentDepth.value >= 2 && replyCount.value > 0)
+
+// ---------------------------------------------------------------------------
+// R6: Collapse (comment mode only)
+// ---------------------------------------------------------------------------
+
+const identity = useResolve(() => postPlatform.value, () => postProfileId.value)
+const isOwnPost = computed(() => identity.value.isOwn)
+const isNegative = computed(() => BigInt(ranking.value || '0') < 0n)
+const isPositive = computed(() => BigInt(ranking.value || '0') > 0n)
+
+/**
+ * R6: Collapse state for negative-ranking comments.
+ * Comments with negative net burn are collapsed by default to reduce
+ * visibility of low-quality content, unless it's the user's own post.
+ * Users can manually expand collapsed comments.
+ */
+const isCollapsed = ref(props.comment && isNegative.value && !isOwnPost.value)
 
 // ---------------------------------------------------------------------------
 // R1: Vote-to-Reveal
@@ -179,23 +235,12 @@ const hasUserVoted = computed(() => {
   return !!(postMeta.value?.hasWalletUpvoted || postMeta.value?.hasWalletDownvoted)
 })
 
-const isRevealed = computed(() => hasUserVoted.value)
+const isRevealed = computed(() => hasUserVoted.value || isOwnPost.value)
 
 // R5: Fetch timeline when detail mode is revealed (lazy, once)
 watch(isRevealed, (revealed) => {
   if (revealed && props.detail) fetchTimeline()
 }, { immediate: true })
-
-// ---------------------------------------------------------------------------
-// R6: Collapse (comment mode only)
-// ---------------------------------------------------------------------------
-
-const identity = useResolve(() => postPlatform.value, () => postProfileId.value)
-const isOwnPost = computed(() => identity.value.isOwn)
-const isNegative = computed(() => BigInt(ranking.value || '0') < 0n)
-const isPositive = computed(() => BigInt(ranking.value || '0') > 0n)
-
-const isCollapsed = ref(props.comment && isNegative.value && !isOwnPost.value)
 
 // ---------------------------------------------------------------------------
 // Display helpers
@@ -262,7 +307,6 @@ const localeTime = computed(() => {
 // ---------------------------------------------------------------------------
 
 const isReplyActive = computed(() => props.activeReplyTo === postId.value)
-const hasConnector = computed(() => showInlineReplies.value)
 
 function handleReply() { emit('reply', postId.value) }
 function handleReplyPosted(txid: string) { emit('replyPosted', txid) }
@@ -287,7 +331,7 @@ function handleReplyCancelled() { emit('replyCancelled') }
     <!-- Expanded state -->
     <div v-else class="py-3">
       <FeedAuthorDisplay :compact="true" :platform="postPlatform" :profile-id="postProfileId" size="md" :to="feedUrl"
-        :time="formattedTime" :show-connector="hasConnector">
+        :time="formattedTime" :show-connector="false">
         <template #inline>
           <!-- R1: Sentiment badges — revealed state only -->
           <template v-if="isRevealed">
@@ -326,8 +370,8 @@ function handleReplyCancelled() { emit('replyCancelled') }
         </NuxtLink>
       </FeedAuthorDisplay>
 
-      <!-- Inline reply chain (depth 0→1 only) -->
-      <div v-if="showInlineReplies">
+      <!-- Inline reply chain (depth 0→1 only) - grouped with left border -->
+      <div v-if="showInlineReplies" class="ml-4 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
         <FeedPostCard v-for="reply in directReplies" :key="reply.id" :post="reply" :comment="true"
           :depth="currentDepth + 1" :parent-has-voted="parentHasVoted" :active-reply-to="activeReplyTo"
           :reply-platform="replyPlatform" :reply-profile-id="replyProfileId" :reply-post-id="replyPostId"
@@ -361,7 +405,7 @@ function handleReplyCancelled() { emit('replyCancelled') }
       <!-- Content -->
       <NuxtLink :to="feedUrl" class="block group mb-2 text-[15px]">
         <p v-if="isLotusiaPost && postData"
-          class="leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words group-hover:opacity-90 transition-opacity line-clamp-3">
+          class="leading-snug text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words group-hover:opacity-90 transition-opacity">
           {{ postData }}
         </p>
         <div v-else-if="isTwitterPost">
@@ -386,7 +430,20 @@ function handleReplyCancelled() { emit('replyCancelled') }
        ===================================================================== -->
   <div v-else-if="activity" class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors">
     <!-- Ancestor chain -->
-    <template v-if="hasAncestors">
+    <!-- Profile-level comment: show ProfileCard as ancestor -->
+    <template v-if="isProfileComment && profileAncestor">
+      <div class="pb-2">
+        <FeedProfileCard :profile="profileAncestor" :profile-meta="profileAncestor.profileMeta ?? undefined" compact />
+      </div>
+      <!-- Connector stub into the focal post below -->
+      <div class="flex">
+        <div class="flex flex-col items-center flex-shrink-0 w-10 pb-2">
+          <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
+        </div>
+      </div>
+    </template>
+    <!-- Post-level comment: show post ancestors -->
+    <template v-else-if="hasAncestors">
       <FeedPostCard v-for="anc in ancestors" :key="anc.id" :post="anc" :ancestor="true" :show-connector="true" />
       <div class="flex">
         <div class="flex flex-col items-center flex-shrink-0 w-10 pb-2 -mt-4">
@@ -424,9 +481,11 @@ function handleReplyCancelled() { emit('replyCancelled') }
     <div class="pl-[50px]">
       <FeedButtonRow :platform="postPlatform" :profile-id="postProfileId" :post-id="postId" :post-meta="postMeta"
         :is-revealed="isRevealed" :votes-positive="votesPositive" :votes-negative="votesNegative"
-        :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="isLotusiaPost"
-        :reply-platform="postPlatform" :reply-profile-id="postProfileId" :reply-post-id="postId" :compact="true"
-        :disabled="!walletReady" />
+        :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="true"
+        :reply-count="replyCount" :reply-active="isReplyActive" :reply-platform="postPlatform"
+        :reply-profile-id="postProfileId" :reply-post-id="postId" :parent-text="postData" :compact="true"
+        :disabled="!walletReady" @reply="handleReply" @reply-posted="handleReplyPosted"
+        @reply-cancelled="handleReplyCancelled" />
     </div>
   </div>
 
@@ -528,10 +587,8 @@ function handleReplyCancelled() { emit('replyCancelled') }
     <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
       <FeedButtonRow :platform="postPlatform" :profile-id="postProfileId" :post-id="postId" :post-meta="postMeta"
         :is-revealed="isRevealed" :votes-positive="votesPositive" :votes-negative="votesNegative"
-        :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="isLotusiaPost"
-        :reply-platform="postPlatform" :reply-profile-id="postProfileId" :reply-post-id="postId" :compact="true"
-        :disabled="!walletReady" :bypass-ranking-display="true"
-        @voted="(txid, sentiment) => emit('voted', txid, sentiment)" />
+        :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="false" :compact="false"
+        :disabled="!walletReady" @voted="(txid, sentiment) => emit('voted', txid, sentiment)" />
     </div>
   </div>
 
@@ -574,7 +631,7 @@ function handleReplyCancelled() { emit('replyCancelled') }
         <div class="mt-2 pl-[52px]">
           <FeedButtonRow :platform="postPlatform" :profile-id="postProfileId" :post-id="postId" :post-meta="postMeta"
             :is-revealed="isRevealed" :votes-positive="votesPositive" :votes-negative="votesNegative"
-            :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="isLotusiaPost"
+            :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="true"
             :reply-platform="postPlatform" :reply-profile-id="postProfileId" :reply-post-id="postId" :compact="true"
             :disabled="!walletReady" />
         </div>

@@ -51,13 +51,14 @@ const props = withDefaults(defineProps<{
   replyPostId?: string
   /** Parent text for reply context display */
   parentText?: string
-  bypassRankingDisplay?: boolean
+  /** Whether to show the ranking display (not necessary in some contexts) */
+  showRankingDisplay?: boolean
 }>(), {
   compact: false,
   canReply: false,
   replyCount: 0,
   isRevealed: false,
-  bypassRankingDisplay: false
+  showRankingDisplay: true
 })
 
 const emit = defineEmits<{
@@ -179,7 +180,7 @@ function handleReplyCancelled() {
       </div>
 
       <!-- R1: Ranking metric — exact when revealed, bucketed when blind -->
-      <span v-show="!bypassRankingDisplay" class="text-[13px] text-gray-500 dark:text-gray-400">
+      <span v-show="showRankingDisplay" class="text-[13px] text-gray-500 dark:text-gray-400">
         <template v-if="isRevealed && rankingDisplay">
           {{ rankingDisplay }} XPI
         </template>

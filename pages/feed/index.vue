@@ -48,16 +48,14 @@ function dismissIntro() {
 }
 
 async function openCompose() {
-  if (!lotusiaProfileId.value) return
   await openNewPostSlideover({
     platform: 'lotusia',
-    profileId: lotusiaProfileId.value,
   })
 }
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div v-if="lotusiaProfileId" class="space-y-4">
     <!-- Page Header -->
     <div class="flex items-center gap-3 justify-between">
       <div>

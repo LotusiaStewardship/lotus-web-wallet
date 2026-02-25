@@ -6,6 +6,7 @@
 import type {
   ScriptChunkPlatformUTF8,
   ScriptChunkSentimentUTF8,
+  TransactionRANK,
 } from 'xpi-ts/lib/rank'
 import { useNetworkStore } from '~/stores/network'
 
@@ -93,6 +94,7 @@ export interface ProfileData {
   platform: ScriptChunkPlatformUTF8
   id: string
   ranking: string
+  ranks?: EntityVote[]
   satsPositive: string
   satsNegative: string
   votesPositive: number
@@ -128,6 +130,7 @@ export interface PostListItem {
   satsNegative: string
   votesPositive: number
   votesNegative: number
+  data?: string // Post data (UTF-8) if Lotusia post
 }
 
 /** Profile posts API response */
@@ -159,12 +162,15 @@ export interface VoteActivityResponse {
 export interface ProfileRankTransaction {
   txid: string
   sentiment: ScriptChunkSentimentUTF8
-  timestamp: string
+  timestamp?: string
+  firstSeen: string
   sats: string
-  post: {
-    id: string
-    ranking: string
-  } | null
+  post:
+    | {
+        id: string
+        ranking: string
+      }
+    | undefined
 }
 
 /** Profile vote activity response */
@@ -182,6 +188,14 @@ export const FeedSortLabel: Record<FeedSortMode, string> = {
   ranking: 'Top Ranked',
   recent: 'Recent',
   controversial: 'Controversial',
+}
+
+export interface EntityVote {
+  txid: string
+  sats: string
+  sentiment: ScriptChunkSentimentUTF8
+  firstSeen: string
+  timestamp: string | null
 }
 
 /** Post ranking data */
@@ -205,6 +219,8 @@ export interface PostData {
     votesNegative: number
     profileMeta?: VoterProfileMetadata | null
   }
+  /** RANK transactions associated with the post (API response format) */
+  ranks?: EntityVote[]
   /** Lotusia post data (comment text, UTF-8) */
   data?: string
   /** Parent content fields for RNKC threading */
@@ -221,6 +237,20 @@ export interface PostData {
    * Enables Twitter-style "view full conversation" rendering on the detail page.
    */
   ancestors?: PostData[]
+  /**
+   * Ancestor profile data for profile-level comments (when inReplyToProfileId is set
+   * but inReplyToPostId is null). Contains the profile's ranking metrics and vote metadata.
+   */
+  ancestorProfile?: {
+    platform: ScriptChunkPlatformUTF8
+    id: string
+    ranking: string
+    satsPositive: string
+    satsNegative: string
+    votesPositive: number
+    votesNegative: number
+    profileMeta?: VoterProfileMetadata | null
+  }
   /**
    * Feed ranking signals (R62–R66). Present when sortBy='curated' or 'ranking'.
    * All derived from aggregate burns only (Sybil-neutral).
@@ -753,13 +783,21 @@ export const useRankApi = () => {
    * Comments are embedded in the profile response from the backend
    * (GET /:platform/:profileId). There is no dedicated /comments/ endpoint.
    * This function fetches the profile and extracts the comments array.
+   *
+   * @param platform - The platform identifier
+   * @param profileId - The profile identifier
+   * @param scriptPayload - Optional script payload for enhanced postMeta data
    */
   const getProfileComments = async (
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
+    scriptPayload?: string,
   ): Promise<RnkcComment[]> => {
     try {
-      const url = `${getRankApiUrl()}/${platform}/${profileId}`
+      let url = `${getRankApiUrl()}/${platform}/${profileId}`
+      if (scriptPayload) {
+        url += `?scriptPayload=${encodeURIComponent(scriptPayload)}`
+      }
       const response = await fetch(url)
       if (!response.ok) {
         console.error(

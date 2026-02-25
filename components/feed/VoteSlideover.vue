@@ -119,12 +119,12 @@ function close() {
         </div>
 
         <!-- Status Display -->
-        <div v-if="isVoting" class="text-sm text-primary text-center flex items-center justify-center gap-2">
+        <!-- <div v-if="isVoting" class="text-sm text-primary text-center flex items-center justify-center gap-2">
           <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
           <span v-if="status === 'building'">Building transaction...</span>
           <span v-else-if="status === 'signing'">Signing...</span>
           <span v-else-if="status === 'broadcasting'">Broadcasting...</span>
-        </div>
+        </div> -->
 
         <!-- Success Display -->
         <!-- <div v-if="status === 'success'"

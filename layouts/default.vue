@@ -237,9 +237,9 @@ async function handleScanFlow() {
                 <span class="w-2 h-2 rounded-full" :class="walletStore.connected ? 'bg-success' : 'bg-gray-400'" />
               </UTooltip>
             </div>
-            <!-- Right: Search and Explore buttons -->
+            <!-- Right: People and Explore buttons -->
             <div class="flex items-center gap-2">
-              <!-- <UButton variant="ghost" size="md" icon="i-lucide-search" to="/explore" /> -->
+              <UButton variant="ghost" size="md" icon="i-lucide-users" to="/people" />
               <UButton variant="ghost" size="md" icon="i-lucide-compass" to="/explore" />
             </div>
           </div>

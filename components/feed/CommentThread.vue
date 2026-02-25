@@ -80,7 +80,7 @@ async function fetchComments() {
     // The API functions handle fetching the parent entity and returning the comments array.
     const result = props.postId
       ? await getPostComments(props.platform, props.profileId, props.postId, walletStore.scriptPayload)
-      : await getProfileComments(props.platform, props.profileId)
+      : await getProfileComments(props.platform, props.profileId, walletStore.scriptPayload)
 
     comments.value = result
   } catch (err: any) {
@@ -100,7 +100,15 @@ async function handleCommentPosted(txid: string) {
   showCommentInput.value = false
   activeReplyTo.value = null
   emit('commented', txid)
-  await fetchComments()
+
+  // For Lotusia profiles, use the enhanced getProfileComments with scriptPayload for postMeta
+  // For external platforms or posts, use the standard comment fetching
+  if (props.platform === 'lotusia' && !props.postId) {
+    const result = await getProfileComments(props.platform, props.profileId, walletStore.scriptPayload)
+    comments.value = result
+  } else {
+    await fetchComments()
+  }
 }
 
 /**
@@ -131,10 +139,17 @@ onMounted(async () => {
   }
   loading.value = false
 })
+
+// Watch for changes in props.comments (e.g., after profile data refetch)
+watch(() => props.comments, (newComments) => {
+  if (newComments) {
+    comments.value = newComments
+  }
+}, { immediate: false })
 </script>
 
 <template>
-  <div class="space-y-0">
+  <div class="space-y-0 divide-y divide-gray-100 dark:divide-gray-800">
     <!-- Always-visible composer: collapsed placeholder or expanded form -->
     <div v-if="walletReady" class="pb-3 border-b border-gray-100 dark:border-gray-800 mb-1">
       <!-- Collapsed placeholder (click to expand) -->

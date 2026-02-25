@@ -29,6 +29,7 @@ definePageMeta({
 const route = useRoute()
 const walletStore = useWalletStore()
 const { getPostRanking } = useRankApi()
+const { pollAfterVote } = usePostVotePolling()
 
 const platform = computed(() => route.params.platform as ScriptChunkPlatformUTF8)
 const profileId = computed(() => route.params.profileId as string)
@@ -56,6 +57,44 @@ const commentCount = computed(() => {
 const ancestors = computed(() => post.value?.ancestors ?? [])
 const hasAncestors = computed(() => ancestors.value.length > 0)
 
+// Profile-level comment detection: has inReplyToProfileId but null inReplyToPostId
+const isProfileComment = computed(() => {
+  return !!(post.value?.inReplyToProfileId && !post.value?.inReplyToPostId)
+})
+
+// Profile ancestor data for profile-level comments
+// Use API-provided ancestorProfile data when available
+const profileAncestor = computed(() => {
+  if (!isProfileComment.value || !post.value) return null
+
+  // Use API-provided ancestor profile data if available
+  if (post.value.ancestorProfile) {
+    return {
+      platform: post.value.ancestorProfile.platform,
+      id: post.value.ancestorProfile.id,
+      ranking: post.value.ancestorProfile.ranking,
+      satsPositive: post.value.ancestorProfile.satsPositive,
+      satsNegative: post.value.ancestorProfile.satsNegative,
+      votesPositive: post.value.ancestorProfile.votesPositive,
+      votesNegative: post.value.ancestorProfile.votesNegative,
+      voters: [],
+      profileMeta: post.value.ancestorProfile.profileMeta,
+    }
+  }
+
+  // Fallback to stub if API data not available (shouldn't happen with updated backend)
+  return {
+    platform: post.value.inReplyToPlatform!,
+    id: post.value.inReplyToProfileId!,
+    ranking: '0',
+    satsPositive: '0',
+    satsNegative: '0',
+    votesPositive: 0,
+    votesNegative: 0,
+    voters: [],
+  }
+})
+
 async function fetchData() {
   loading.value = true
   error.value = null
@@ -78,30 +117,29 @@ async function fetchData() {
     // Wait for wallet to be initialized before fetching authenticated data
     await walletStore.waitForInitialization()
 
-    // Now re-fetch with scriptPayload to get postMeta for R1 vote-to-reveal
-    const voterScript = walletStore.scriptPayload
-    if (voterScript) {
-      const postWithMeta = await getPostRanking(
-        platform.value as ScriptChunkPlatformUTF8,
-        profileId.value,
-        postId.value,
-        voterScript,
-      )
-      if (postWithMeta) {
-        post.value = postWithMeta
-      }
+    // Fetch with scriptPayload to get postMeta for R1 vote-to-reveal
+    const postWithMeta = await getPostRanking(
+      platform.value as ScriptChunkPlatformUTF8,
+      profileId.value,
+      postId.value,
+      walletStore.scriptPayload,
+    )
+    if (postWithMeta) {
+      post.value = postWithMeta
     }
 
     // R1: Determine hasVoted from postMeta returned by the API
+    // Also check if user is the author (RNKC: posting is inherently an upvote)
     const meta = post.value?.postMeta
+    const isAuthor = authorIdentity.value.isOwn
     if (!walletStore.scriptPayload) {
       // No wallet = can't vote, show blind state
       hasVoted.value = false
     } else if (meta) {
-      hasVoted.value = meta.hasWalletUpvoted || meta.hasWalletDownvoted
+      hasVoted.value = meta.hasWalletUpvoted || meta.hasWalletDownvoted || isAuthor
     } else {
       // No meta returned = wallet hasn't voted on this post
-      hasVoted.value = false
+      hasVoted.value = isAuthor
     }
   } catch (err: any) {
     error.value = err?.message || 'Failed to load post'
@@ -110,20 +148,42 @@ async function fetchData() {
   }
 }
 
-function handleVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8) {
+async function handleVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8) {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
-  // Optimistic update: increment local vote count immediately (no fetchData refresh)
+
+  // Optimistic update: increment local vote count immediately
   if (post.value && sentiment) {
     post.value = {
       ...post.value,
       votesPositive: sentiment === 'positive' ? post.value.votesPositive + 1 : post.value.votesPositive,
       votesNegative: sentiment === 'negative' ? post.value.votesNegative + 1 : post.value.votesNegative,
-      postMeta: {
-        ...post.value.postMeta!,
-        hasWalletUpvoted: sentiment === 'positive' ? true : post.value.postMeta!.hasWalletUpvoted,
-        hasWalletDownvoted: sentiment === 'negative' ? true : post.value.postMeta!.hasWalletDownvoted,
-      },
+    }
+  }
+
+  // Poll API to verify vote was indexed and get updated counts
+  // This handles blockchain propagation delays (5-30s typical)
+  // Only poll for positive/negative votes (neutral votes don't need verification)
+  if (sentiment && sentiment !== 'neutral') {
+    const result = await pollAfterVote({
+      platform: platform.value,
+      profileId: profileId.value,
+      postId: postId.value,
+      txid,
+      sentiment,
+      scriptPayload: walletStore.scriptPayload,
+    })
+
+    // Update with confirmed data from API
+    if (result.confirmed && post.value) {
+      post.value = {
+        ...post.value,
+        votesPositive: result.votesPositive ?? post.value.votesPositive,
+        votesNegative: result.votesNegative ?? post.value.votesNegative,
+        ranking: result.ranking ?? post.value.ranking,
+      }
+    } else if (!result.confirmed) {
+      console.warn('[PostPage] Vote not confirmed after polling, keeping optimistic update')
     }
   }
 }
@@ -165,7 +225,21 @@ onMounted(fetchData)
 
       <UCard class="relative">
         <!-- Ancestor chain: Twitter-style conversation context above the focal post -->
-        <template v-if="hasAncestors">
+        <!-- Profile-level comment: show ProfileCard as ancestor -->
+        <template v-if="isProfileComment && profileAncestor">
+          <div class="pb-3">
+            <FeedProfileCard :profile="profileAncestor" :profile-meta="profileAncestor.profileMeta ?? undefined"
+              compact />
+          </div>
+          <!-- Connector stub into the focal post below -->
+          <div class="flex">
+            <div class="flex flex-col items-center flex-shrink-0 w-10 pb-2">
+              <div class="w-0.5 h-3 bg-gray-200 dark:bg-gray-700 rounded-full" />
+            </div>
+          </div>
+        </template>
+        <!-- Post-level comment: show post ancestors -->
+        <template v-else-if="hasAncestors">
           <FeedPostCard v-for="ancestor in ancestors" :key="ancestor.id" :post="ancestor" :ancestor="true"
             :show-connector="true" />
           <!-- Connector stub into the focal post below: aligns with ancestor avatar center -->
@@ -178,8 +252,8 @@ onMounted(fetchData)
         </template>
 
         <!-- Post Detail: Use FeedPostCard with detail mode -->
-        <FeedPostCard v-if="post" :post="post" :platform="platform" :profile-id="profileId" :detail="true"
-          @voted="handleVoted" />
+        <FeedPostCard v-if="post" :votes="post.ranks" :post="post" :platform="platform" :profile-id="profileId"
+          :detail="true" @voted="handleVoted" />
       </UCard>
 
       <!-- 1st-Class Comments Section -->

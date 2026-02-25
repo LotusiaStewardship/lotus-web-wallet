@@ -5,6 +5,7 @@
  * Ranked profile list with sentiment indicators and timespan selector.
  * Fetches data from rank-backend-ts trending endpoints.
  */
+import type { ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank';
 import type { TrendingItem, Timespan } from '~/composables/useRankApi'
 import { controversyScore } from '~/utils/feed'
 
@@ -22,6 +23,8 @@ const props = withDefaults(defineProps<{
 })
 
 const { getTopRankedProfiles } = useRankApi()
+const { pollAfterVote } = usePostVotePolling()
+const walletStore = useWalletStore()
 
 const timespan = ref<Timespan>('today')
 const profiles = ref<TrendingItem[]>([])
@@ -65,6 +68,48 @@ async function fetchProfiles() {
 function changeTimespan(ts: Timespan) {
   timespan.value = ts
   fetchProfiles()
+}
+
+async function handleProfileVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8, profileId?: string, platform?: string) {
+  if (!sentiment || !profileId || !platform) return
+
+  // Find the profile in the array
+  const profileIndex = profiles.value.findIndex(p => p.profileId === profileId && p.platform === platform)
+  if (profileIndex === -1) return
+
+  // Optimistic update
+  const profile = profiles.value[profileIndex]
+  profiles.value[profileIndex] = {
+    ...profile,
+    total: {
+      ...profile.total,
+      votesPositive: sentiment === 'positive' ? profile.total.votesPositive + 1 : profile.total.votesPositive,
+      votesNegative: sentiment === 'negative' ? profile.total.votesNegative + 1 : profile.total.votesNegative,
+    },
+  }
+
+  // Poll for verification
+  const result = await pollAfterVote({
+    platform: platform as any,
+    profileId,
+    txid,
+    sentiment,
+    scriptPayload: walletStore.scriptPayload,
+  })
+
+  // Update with confirmed data
+  if (result.confirmed) {
+    const currentProfile = profiles.value[profileIndex]
+    profiles.value[profileIndex] = {
+      ...currentProfile,
+      total: {
+        ...currentProfile.total,
+        votesPositive: result.votesPositive ?? currentProfile.total.votesPositive,
+        votesNegative: result.votesNegative ?? currentProfile.total.votesNegative,
+        ranking: result.ranking ?? currentProfile.total.ranking,
+      },
+    }
+  }
 }
 
 onMounted(fetchProfiles)
@@ -126,7 +171,8 @@ onMounted(fetchProfiles)
     <!-- Profile List -->
     <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
       <div v-for="(profile, index) in profiles" :key="`${profile.platform}-${profile.profileId}`" class="px-3 py-2">
-        <FeedProfileCard :profile="profile" :rank="index + 1" compact />
+        <FeedProfileCard :profile="profile" :rank="index + 1" compact
+          @voted="(txid, sentiment) => handleProfileVoted(txid, sentiment, profile.profileId, profile.platform)" />
       </div>
     </div>
   </UCard>

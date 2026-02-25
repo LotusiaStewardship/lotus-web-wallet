@@ -26,8 +26,8 @@ import { useWalletStore } from '~/stores/wallet'
 export interface CommentParams {
   /** Platform identifier (e.g. 'twitter') */
   platform: ScriptChunkPlatformUTF8
-  /** Profile ID on the platform */
-  profileId: string
+  /** Target profile ID for profile/post comments. Omit for new standalone posts. */
+  profileId?: string
   /** Optional post ID for post-level comments */
   postId?: string
   /** Comment text (UTF-8) */
@@ -146,10 +146,6 @@ export function useRnkcComment() {
         throw new Error(validationError)
       }
 
-      if (!profileId) {
-        throw new Error('Profile ID is required')
-      }
-
       const minBurn = getMinBurnForComment(content)
       if (burnAmountSats < minBurn) {
         throw new Error(
@@ -158,10 +154,12 @@ export function useRnkcComment() {
       }
 
       // --- Build RNKC OP_RETURN scripts ---
+      // When replying to a comment, inReplyTo contains the parent comment's txid
+      // which should be used as the postId parameter (the reply target)
       const rnkcScripts = toScriptRNKC({
         platform,
         profileId,
-        postId,
+        postId: params.inReplyTo || postId,
         comment: content,
       })
 

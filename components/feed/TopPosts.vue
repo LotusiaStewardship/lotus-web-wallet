@@ -22,6 +22,8 @@ const props = withDefaults(defineProps<{
 })
 
 const { getFeedTrending } = useRankApi()
+const { pollAfterVote } = usePostVotePolling()
+const walletStore = useWalletStore()
 
 const windowHours = ref<number>(24)
 const posts = ref<PostData[]>([])
@@ -63,6 +65,43 @@ async function fetchPosts() {
 function changeWindow(hours: number) {
   windowHours.value = hours
   fetchPosts()
+}
+
+async function handlePostVoted(txid: string, sentiment?: 'positive' | 'negative', postId?: string, platform?: string, profileId?: string) {
+  if (!sentiment || !postId || !platform || !profileId) return
+
+  // Find the post in the array
+  const postIndex = posts.value.findIndex(p => p.id === postId && p.platform === platform && p.profileId === profileId)
+  if (postIndex === -1) return
+
+  // Optimistic update
+  const post = posts.value[postIndex]
+  posts.value[postIndex] = {
+    ...post,
+    votesPositive: sentiment === 'positive' ? post.votesPositive + 1 : post.votesPositive,
+    votesNegative: sentiment === 'negative' ? post.votesNegative + 1 : post.votesNegative,
+  }
+
+  // Poll for verification (sentiment is always 'positive' or 'negative' here)
+  const result = await pollAfterVote({
+    platform: platform as any,
+    profileId,
+    postId,
+    txid,
+    sentiment,
+    scriptPayload: walletStore.scriptPayload,
+  })
+
+  // Update with confirmed data
+  if (result.confirmed) {
+    const currentPost = posts.value[postIndex]
+    posts.value[postIndex] = {
+      ...currentPost,
+      votesPositive: result.votesPositive ?? currentPost.votesPositive,
+      votesNegative: result.votesNegative ?? currentPost.votesNegative,
+      ranking: result.ranking ?? currentPost.ranking,
+    }
+  }
 }
 
 onMounted(fetchPosts)
@@ -122,7 +161,8 @@ onMounted(fetchPosts)
     <!-- Post List -->
     <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
       <div v-for="(post, index) in posts" :key="`${post.platform}-${post.profileId}-${post.id}`">
-        <FeedPostCard :post="post" :rank="index + 1" />
+        <FeedPostCard :post="post" :rank="index + 1"
+          @voted="(txid, sentiment) => handlePostVoted(txid, sentiment, post.id, post.platform, post.profileId)" />
       </div>
     </div>
   </div>

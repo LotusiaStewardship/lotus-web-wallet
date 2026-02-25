@@ -16,7 +16,6 @@ import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 
 export interface NewPostSlideoverProps {
   platform: ScriptChunkPlatformUTF8
-  profileId: string
 }
 
 export interface NewPostSlideoverResult {
@@ -51,8 +50,9 @@ function handleCancel() {
 
 
         <!-- Comment Input — hideAuthorLabel since header already sets context -->
-        <FeedCommentInput :platform="props.platform" :profile-id="props.profileId" placeholder="What's on your mind?"
-          hide-author-label @posted="handlePosted" @cancel="handleCancel" />
+        <!-- No profileId or postId = new standalone post (not a reply) -->
+        <FeedCommentInput :platform="props.platform" placeholder="What's on your mind?" hide-author-label
+          @posted="handlePosted" @cancel="handleCancel" />
       </div>
     </template>
   </USlideover>

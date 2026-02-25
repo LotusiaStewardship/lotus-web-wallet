@@ -36,11 +36,14 @@ const props = withDefaults(defineProps<{
   showConnector?: boolean
   /** Minimum height for the connector line */
   connectorMinHeight?: string
+  /** Show user icon badge to indicate this is a profile (not a post) */
+  showProfileBadge?: boolean
 }>(), {
   size: 'xl',
   compact: true,
   showPlatformBadge: true,
   connectorMinHeight: '16px',
+  showProfileBadge: false,
 })
 
 const { getAvatar } = useAvatars()
@@ -48,7 +51,7 @@ const { useResolve } = useFeedIdentity()
 
 const identity = useResolve(() => props.platform, () => props.profileId)
 
-const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-sprout')
+const platformIcon = computed(() => PlatformIcon[props.platform] || 'i-lucide-globe')
 
 const avatarUrl = ref<string | null>(null)
 const avatarInitials = computed(() => getProfileInitials(props.profileId))
@@ -92,11 +95,17 @@ onMounted(async () => {
       <NuxtLink :to="to" class="flex-shrink-0">
         <div class="relative">
           <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="avatarInitials" :size="size" />
-          <!-- Platform badge -->
+          <!-- Platform badge overlay (bottom-right) -->
           <div v-if="showPlatformBadge"
-            class="absolute -bottom-0.5 -right-0.5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-1 ring-white dark:ring-gray-900"
+            class="absolute -bottom-0.5 -right-0.5 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center"
             :class="badgeSize.outer">
-            <UIcon :name="platformIcon" class="text-gray-500 dark:text-gray-100" :class="badgeSize.icon" />
+            <UIcon :name="platformIcon" :class="badgeSize.icon" class="text-gray-600 dark:text-gray-400" />
+          </div>
+          <!-- Profile badge overlay (top-right) - user icon to distinguish profiles from posts -->
+          <div v-if="showProfileBadge"
+            class="absolute -top-0.5 -right-0.5 rounded-full bg-primary-500 dark:bg-primary-600 flex items-center justify-center"
+            :class="badgeSize.outer">
+            <UIcon name="i-lucide-user" :class="badgeSize.icon" class="text-white" />
           </div>
         </div>
       </NuxtLink>

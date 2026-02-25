@@ -61,45 +61,95 @@ const props = defineProps<{
 // Window toggle: 7d / 30d
 // ---------------------------------------------------------------------------
 
-type Window = 7 | 30
+type Window = 1 | 7 | 30
 const activeWindow = ref<Window>(7)
 
 // ---------------------------------------------------------------------------
 // Daily bucket computation
 // ---------------------------------------------------------------------------
 
-interface DayBucket {
-  label: string       // e.g. "Feb 14"
-  dateKey: string     // YYYY-MM-DD for deduplication
+interface TimeBucket {
+  label: string       // e.g. "Feb 14" or "3pm"
+  bucketKey: string   // Unique key for deduplication (YYYY-MM-DD or YYYY-MM-DD-HH)
   satsPositive: number
   satsNegative: number
 }
 
-/** Build an ordered array of day buckets for the last N days (oldest → newest). */
-function buildDayBuckets(days: number): DayBucket[] {
+/** Build time buckets based on the selected window.
+ *  - 1d: 3-hour buckets (8 buckets)
+ *  - 7d: 12-hour buckets (14 buckets)
+ *  - 30d: daily buckets (30 buckets)
+ */
+function buildTimeBuckets(window: Window): TimeBucket[] {
   const now = Date.now()
-  const buckets: DayBucket[] = []
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(now - i * 86_400_000)
-    const dateKey = d.toISOString().slice(0, 10) // YYYY-MM-DD
-    const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    buckets.push({ label, dateKey, satsPositive: 0, satsNegative: 0 })
+  const buckets: TimeBucket[] = []
+
+  if (window === 1) {
+    // 1 day: 3-hour buckets (8 buckets)
+    const bucketMs = 3 * 60 * 60 * 1000 // 3 hours
+    for (let i = 7; i >= 0; i--) {
+      const d = new Date(now - i * bucketMs)
+      const hour = Math.floor(d.getHours() / 3) * 3 // Round to 3-hour boundary
+      const bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+      const label = d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })
+      buckets.push({ label, bucketKey, satsPositive: 0, satsNegative: 0 })
+    }
+  } else if (window === 7) {
+    // 7 days: 12-hour buckets (14 buckets)
+    const bucketMs = 12 * 60 * 60 * 1000 // 12 hours
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now - i * bucketMs)
+      const hour = d.getHours() < 12 ? 0 : 12 // Round to 12-hour boundary
+      const bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+      // Alternate between date (even buckets) and time (odd buckets)
+      const isEvenBucket = (13 - i) % 2 === 0
+      const label = isEvenBucket
+        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : d.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })
+      buckets.push({ label, bucketKey, satsPositive: 0, satsNegative: 0 })
+    }
+  } else {
+    // 30 days: daily buckets (30 buckets)
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now - i * 86_400_000)
+      const bucketKey = d.toISOString().slice(0, 10) // YYYY-MM-DD
+      const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      buckets.push({ label, bucketKey, satsPositive: 0, satsNegative: 0 })
+    }
   }
+
   return buckets
 }
 
 const chartData = computed<ChartData<'bar'>>(() => {
-  const days = activeWindow.value
-  const cutoffSec = Math.floor(Date.now() / 1000) - days * 86_400
-  const buckets = buildDayBuckets(days)
-  const bucketMap = new Map(buckets.map(b => [b.dateKey, b]))
+  const window = activeWindow.value
+  const cutoffSec = Math.floor(Date.now() / 1000) - window * 86_400
+  const buckets = buildTimeBuckets(window)
+  const bucketMap = new Map(buckets.map(b => [b.bucketKey, b]))
 
   for (const tx of props.transactions) {
-    const ts = Number(tx.timestamp)
+    const ts = Number(tx.timestamp ?? tx.firstSeen)
     if (!ts || ts < cutoffSec) continue
-    const dateKey = new Date(ts * 1000).toISOString().slice(0, 10)
-    const bucket = bucketMap.get(dateKey)
+
+    const d = new Date(ts * 1000)
+    let bucketKey: string
+
+    if (window === 1) {
+      // 3-hour buckets: round down to nearest 3-hour mark
+      const hour = Math.floor(d.getHours() / 3) * 3
+      bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+    } else if (window === 7) {
+      // 12-hour buckets: round down to 0 or 12
+      const hour = d.getHours() < 12 ? 0 : 12
+      bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+    } else {
+      // Daily buckets
+      bucketKey = d.toISOString().slice(0, 10)
+    }
+
+    const bucket = bucketMap.get(bucketKey)
     if (!bucket) continue
+
     // Convert sats (string) to XPI (divide by 1e6) for readable y-axis
     const xpi = Number(tx.sats || '0') / 1_000_000
     if (tx.sentiment === 'positive') {
@@ -160,8 +210,8 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => ({
         font: { size: 10 },
         color: tickColor.value,
         maxRotation: 0,
-        // Show fewer labels on 30-day to avoid crowding
-        maxTicksLimit: activeWindow.value === 7 ? 7 : 10,
+        // Adjust label density based on window
+        maxTicksLimit: activeWindow.value === 1 ? 8 : activeWindow.value === 7 ? 7 : 10,
       },
     },
     y: {
@@ -184,22 +234,38 @@ const chartOptions = computed<ChartOptions<'bar'>>(() => ({
 const hasData = computed(() => {
   if (!props.transactions.length) return false
   const cutoffSec = Math.floor(Date.now() / 1000) - activeWindow.value * 86_400
-  return props.transactions.some(tx => Number(tx.timestamp) >= cutoffSec)
+  return props.transactions.some(tx => {
+    const timestamp = Number(tx.timestamp ?? tx.firstSeen)
+    return timestamp >= cutoffSec
+  })
 })
 
 /** Detect a sentiment shift within the window: dominant sentiment of first
- *  active day differs from dominant sentiment of last active day. */
+ *  active bucket differs from dominant sentiment of last active bucket. */
 const sentimentShift = computed<string | null>(() => {
-  const days = activeWindow.value
-  const cutoffSec = Math.floor(Date.now() / 1000) - days * 86_400
-  const buckets = buildDayBuckets(days)
-  const bucketMap = new Map(buckets.map(b => [b.dateKey, b]))
+  const window = activeWindow.value
+  const cutoffSec = Math.floor(Date.now() / 1000) - window * 86_400
+  const buckets = buildTimeBuckets(window)
+  const bucketMap = new Map(buckets.map(b => [b.bucketKey, b]))
 
   for (const tx of props.transactions) {
-    const ts = Number(tx.timestamp)
+    const ts = Number(tx.timestamp ?? tx.firstSeen)
     if (!ts || ts < cutoffSec) continue
-    const dateKey = new Date(ts * 1000).toISOString().slice(0, 10)
-    const bucket = bucketMap.get(dateKey)
+
+    const d = new Date(ts * 1000)
+    let bucketKey: string
+
+    if (window === 1) {
+      const hour = Math.floor(d.getHours() / 3) * 3
+      bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+    } else if (window === 7) {
+      const hour = d.getHours() < 12 ? 0 : 12
+      bucketKey = `${d.toISOString().slice(0, 10)}-${hour}`
+    } else {
+      bucketKey = d.toISOString().slice(0, 10)
+    }
+
+    const bucket = bucketMap.get(bucketKey)
     if (!bucket) continue
     const xpi = Number(tx.sats || '0') / 1_000_000
     if (tx.sentiment === 'positive') bucket.satsPositive += xpi
@@ -227,8 +293,6 @@ const sentimentShift = computed<string | null>(() => {
     <USkeleton class="h-28 w-full rounded-lg" />
   </div>
 
-  <!-- No activity in window (silently hide — content may just be very new) -->
-  <template v-else-if="!hasData" />
 
   <!-- Chart -->
   <div v-else class="space-y-2">
@@ -251,7 +315,10 @@ const sentimentShift = computed<string | null>(() => {
           </span>
         </div> -->
         <div class="flex rounded-md overflow-hidden border border-gray-200 dark:border-gray-700 text-[10px]">
-          <button class="px-2 py-0.5 transition-colors" :class="activeWindow === 7
+          <button class="px-2 py-0.5 transition-colors" :class="activeWindow === 1
+            ? 'bg-primary text-white'
+            : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'" @click="activeWindow = 1">1d</button>
+          <button class="px-2 py-0.5 transition-colors border-l border-gray-200 dark:border-gray-700" :class="activeWindow === 7
             ? 'bg-primary text-white'
             : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'" @click="activeWindow = 7">7d</button>
           <button class="px-2 py-0.5 transition-colors border-l border-gray-200 dark:border-gray-700" :class="activeWindow === 30
@@ -262,8 +329,12 @@ const sentimentShift = computed<string | null>(() => {
     </div>
 
     <!-- Bar chart -->
-    <div class="h-28">
+    <div v-if="hasData" class="h-28">
       <Bar :data="chartData" :options="chartOptions" />
+    </div>
+    <!-- No votes in this time frame -->
+    <div v-else="!hasData" class="flex items-center justify-center py-8 text-sm text-gray-500 dark:text-gray-400">
+      No votes during this period
     </div>
 
     <!-- Sentiment shift callout -->

@@ -4,25 +4,49 @@
  *
  * Displays a ranked profile summary with platform icon, sentiment indicators,
  * and tier badge. Used in feed lists and search results.
+ *
+ * Strategy Compliance:
+ *   R1: Blind until user voted on THIS specific profile via profileMeta.
+ *   R2: Controversial badge (revealed state only).
+ *   R4: Equal visual weight for endorse/flag via FeedButtonRow.
+ *   R38: "Endorsed/Flagged/Noted" not "upvoted/downvoted".
+ *
+ * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R2, R4
+ * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
-import type { TrendingItem, ProfileListItem } from '~/composables/useRankApi'
-import { PlatformURL } from '~/composables/useRankApi'
+import type { TrendingItem, ProfileListItem, ProfileData, VoterProfileMetadata } from '~/composables/useRankApi'
+import { PlatformURL, useRankApi } from '~/composables/useRankApi'
 import { formatXPICompact } from '~/utils/formatting'
 import { isControversial as checkControversial, bucketVoteCount } from '~/utils/feed'
+import { useWalletStore } from '~/stores/wallet'
+import type { ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 
 const props = defineProps<{
   /** Profile data from trending or list endpoint */
-  profile: TrendingItem | ProfileListItem
+  profile: TrendingItem | ProfileListItem | ProfileData
   /** Show rank position number */
   rank?: number
   /** Compact mode for list views */
   compact?: boolean
-  /** R1 Vote-to-Reveal: whether sentiment is revealed (default true until backend R1 deployed) */
+  /** R1 Vote-to-Reveal: whether sentiment is revealed (default false until user votes) */
   revealed?: boolean
+  /** Profile metadata for R1 compliance (voting status) */
+  profileMeta?: VoterProfileMetadata
 }>()
 
-// R1: Default to revealed until backend enforces conditional response
-const isRevealed = computed(() => props.revealed !== false)
+const emit = defineEmits<{
+  voted: [txid: string, sentiment?: ScriptChunkSentimentUTF8]
+}>()
+
+const walletStore = useWalletStore()
+const walletReady = computed(() => walletStore.isReadyForSigning())
+
+// R1: Revealed when user has voted on THIS specific profile
+const hasUserVoted = computed(() => {
+  return !!(props.profileMeta?.hasWalletUpvoted || props.profileMeta?.hasWalletDownvoted)
+})
+
+const isRevealed = computed(() => hasUserVoted.value || props.revealed === true)
 const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
 
 const profileId = computed(() => {
@@ -69,12 +93,18 @@ const sentimentRatio = computed(() => {
 })
 
 const rankingDisplay = computed(() => {
-  const val = BigInt(ranking.value)
-  return formatXPICompact(val.toString())
+  return formatXPICompact(ranking.value)
 })
 
 const isPositive = computed(() => BigInt(ranking.value) > 0n)
 const isNegative = computed(() => BigInt(ranking.value) < 0n)
+
+// R38: Curation language
+const sentimentLabel = computed(() => {
+  if (isPositive.value) return 'Endorsed'
+  if (isNegative.value) return 'Flagged'
+  return 'Noted'
+})
 
 const externalUrl = computed(() => {
   const urlHelper = PlatformURL[platform.value]
@@ -88,8 +118,9 @@ const feedUrl = computed(() => `/feed/${platform.value}/${profileId.value}`)
 
 <template>
   <NuxtLink :to="feedUrl"
-    class="block rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
+    class="block rounded-xl border border-gray-200 dark:border-gray-800 bg-gradient-to-br from-primary-50/30 to-transparent dark:from-primary-950/20 dark:to-transparent hover:border-primary-300 dark:hover:border-primary-700 transition-colors"
     :class="compact ? 'p-3' : 'p-4'">
+    <!-- Main Content -->
     <div class="flex items-center gap-3">
       <!-- Rank Position -->
       <div v-if="rank"
@@ -99,7 +130,8 @@ const feedUrl = computed(() => `/feed/${platform.value}/${profileId.value}`)
       </div>
 
       <div class="flex-1 min-w-0">
-        <FeedAuthorDisplay :platform="platform" :profile-id="profileId" size="md" :to="feedUrl">
+        <FeedAuthorDisplay :platform="platform" :profile-id="profileId" size="md" :to="feedUrl"
+          :show-profile-badge="true">
           <template #inline>
             <UBadge v-if="isRevealed && isControversial" color="warning" size="xs" variant="subtle">
               Controversial
@@ -119,27 +151,16 @@ const feedUrl = computed(() => `/feed/${platform.value}/${profileId.value}`)
               {{ sentimentRatio }}% positive
             </span>
           </div>
-          <div v-else-if="!compact" class="mt-1.5">
-            <span class="text-xs text-gray-400">{{ bucketedVotes }}</span>
-          </div>
         </FeedAuthorDisplay>
       </div>
+    </div>
 
-      <!-- Ranking Score (revealed) or vote count (blind) -->
-      <div class="flex-shrink-0 text-right">
-        <template v-if="isRevealed">
-          <div class="font-mono font-bold text-sm"
-            :class="isPositive ? 'text-success-500' : isNegative ? 'text-error-500' : 'text-gray-500'">
-            {{ isPositive ? '+' : '' }}{{ rankingDisplay }}
-          </div>
-          <div class="text-xs text-gray-500">
-            {{ totalVotes }} {{ totalVotes === 1 ? 'vote' : 'votes' }}
-          </div>
-        </template>
-        <template v-else>
-          <div class="text-xs text-gray-400">{{ bucketedVotes }}</div>
-        </template>
-      </div>
+    <!-- Action Row: vote buttons -->
+    <div class="pt-3">
+      <FeedButtonRow :platform="platform" :profile-id="profileId" post-id="" :post-meta="undefined"
+        :is-revealed="isRevealed" :votes-positive="votesPositive" :votes-negative="votesNegative"
+        :bucketed-votes="bucketedVotes" :ranking-display="rankingDisplay" :can-reply="false" :compact="false"
+        :disabled="!walletReady" @voted="(txid, sentiment) => emit('voted', txid, sentiment)" />
     </div>
   </NuxtLink>
 </template>

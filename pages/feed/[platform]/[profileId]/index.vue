@@ -32,11 +32,24 @@ definePageMeta({
 
 const route = useRoute()
 const walletStore = useWalletStore()
+const contactsStore = useContactsStore()
 const { getProfileRanking, getProfilePosts, getPostRanking, getProfileRankTransactions } = useRankApi()
+const { truncateAddress } = useAddress()
 const { getAvatar } = useAvatars()
+const { pollAfterVote } = usePostVotePolling()
+const { useResolve } = useFeedIdentity()
+const { openSendModal, openAddContactModal } = useOverlays()
+const toast = useToast()
 
 const platform = computed(() => route.params.platform as string)
 const profileId = computed(() => route.params.profileId as string)
+
+/**
+ * Resolved identity for this profile.
+ * For Lotusia: converts scriptPayload → address → contact name
+ * For external platforms: uses profileId as-is
+ */
+const identity = useResolve(platform, profileId)
 
 const profile = ref<ProfileData | null>(null)
 const posts = ref<ProfilePostsResponse | null>(null)
@@ -71,11 +84,43 @@ async function fetchTimeline() {
     timelineLoading.value = false
   }
 }
-
 const bucketedVotes = computed(() => bucketVoteCount(totalVotes.value))
 
 const platformIcon = computed(() => PlatformIcon[platform.value] || 'i-lucide-globe')
 const platformLabel = computed(() => platform.value.charAt(0).toUpperCase() + platform.value.slice(1))
+
+/**
+ * Profile display name: contact name > "You" > truncated address > truncated profileId
+ */
+const profileDisplayName = computed(() => identity.value.displayName)
+
+/**
+ * Profile subtitle: shows Lotus address for Lotusia profiles, platform for external
+ */
+const profileSubtitle = computed(() => {
+  if (platform.value === 'lotusia' && identity.value.lotusAddress) {
+    return truncateAddress(identity.value.lotusAddress)
+  }
+  return platformLabel.value
+})
+
+/**
+ * Check if this Lotusia profile is already in contacts.
+ * Only applicable for Lotusia platform.
+ */
+const existingContact = computed(() => {
+  if (platform.value !== 'lotusia' || !identity.value.lotusAddress) return null
+  return contactsStore.findByAddress(identity.value.lotusAddress)
+})
+
+/**
+ * Whether to show people-first action buttons (Send, Add to People).
+ * Only shown for Lotusia profiles with valid addresses that aren't the user's own profile.
+ * This enables social interactions like sending XPI or adding the profile to contacts.
+ */
+const showPeopleActions = computed(() => {
+  return platform.value === 'lotusia' && !!identity.value.lotusAddress && !identity.value.isOwn
+})
 
 const externalUrl = computed(() => {
   const urlHelper = PlatformURL[platform.value]
@@ -166,7 +211,10 @@ async function fetchData() {
 
     // R1: Determine hasVoted for this profile - requires wallet to be initialized
     // Backend API updated to include profileMeta via getProfileRanking
-    hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || false
+    // Also check if user is viewing their own profile (RNKC: own content is revealed)
+    // For Lotusia profiles, profileId is the scriptPayload
+    const isOwnProfile = identity.value.isOwn
+    hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || isOwnProfile
 
     // R5: Fetch timeline after reveal state is known
     if (hasVoted.value) {
@@ -180,12 +228,13 @@ async function fetchData() {
   }
 }
 
-function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
+async function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
   // R5: Fetch timeline on first reveal
   fetchTimeline()
-  // Optimistic update: increment local vote count immediately (no fetchData refresh)
+
+  // Optimistic update: increment local vote count immediately
   if (profile.value && sentiment) {
     if (sentiment === 'positive') {
       profile.value = { ...profile.value, votesPositive: profile.value.votesPositive + 1 }
@@ -193,6 +242,102 @@ function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
       profile.value = { ...profile.value, votesNegative: profile.value.votesNegative + 1 }
     }
   }
+
+  // Poll API to verify vote was indexed and get updated counts
+  // This handles blockchain propagation delays (5-30s typical)
+  if (sentiment) {
+    const result = await pollAfterVote({
+      platform: platform.value as ScriptChunkPlatformUTF8,
+      profileId: profileId.value,
+      txid,
+      sentiment,
+      scriptPayload: walletStore.scriptPayload,
+    })
+
+    // Update with confirmed data from API
+    if (result.confirmed && profile.value) {
+      profile.value = {
+        ...profile.value,
+        votesPositive: result.votesPositive ?? profile.value.votesPositive,
+        votesNegative: result.votesNegative ?? profile.value.votesNegative,
+        ranking: result.ranking ?? profile.value.ranking,
+      }
+    } else if (!result.confirmed) {
+      console.warn('[ProfilePage] Vote not confirmed after polling, keeping optimistic update')
+    }
+  }
+}
+
+/**
+ * Open Send modal with this profile as recipient.
+ * Only available for Lotusia profiles.
+ */
+async function handleSend(): Promise<void> {
+  if (!identity.value.lotusAddress) {
+    toast.add({
+      title: 'Cannot send',
+      description: 'No valid address for this profile',
+      color: 'error',
+    })
+    return
+  }
+
+  await openSendModal({
+    initialRecipient: identity.value.lotusAddress,
+  })
+}
+
+/**
+ * Add this Lotusia profile to contacts.
+ * Opens the Add Contact modal with pre-filled address.
+ */
+async function handleAddToContacts(): Promise<void> {
+  if (!identity.value.lotusAddress) return
+
+  await openAddContactModal({
+    initialAddress: identity.value.lotusAddress,
+    initialName: identity.value.displayName !== identity.value.lotusAddress
+      ? identity.value.displayName
+      : undefined,
+  })
+}
+
+/**
+ * Navigate to the existing contact detail page.
+ */
+function viewContact(): void {
+  if (existingContact.value) {
+    navigateTo(`/people/${existingContact.value.id}`)
+  }
+}
+
+/**
+ * Copy Lotus address to clipboard.
+ * Only available for Lotusia profiles.
+ */
+function copyAddress(): void {
+  if (!identity.value.lotusAddress) return
+
+  navigator.clipboard.writeText(identity.value.lotusAddress)
+  toast.add({
+    title: 'Address copied!',
+    description: 'Lotus address copied to clipboard',
+    color: 'success',
+  })
+}
+
+/**
+ * Toggle favorite status for this contact.
+ * Only available if profile is already in contacts.
+ */
+function toggleFavorite(): void {
+  if (!existingContact.value) return
+
+  const newStatus = contactsStore.toggleFavorite(existingContact.value.id)
+  toast.add({
+    title: newStatus ? 'Added to favorites' : 'Removed from favorites',
+    color: 'success',
+  })
 }
 
 onMounted(fetchData)
@@ -235,8 +380,8 @@ onMounted(fetchData)
         <!-- Centered Avatar Hero -->
         <div class="flex flex-col items-center text-center pt-2 pb-4">
           <div class="relative mb-3">
-            <UAvatar :src="avatarUrl || undefined" :alt="profileId" :text="profileId.substring(0, 2).toUpperCase()"
-              class="w-22 h-22" />
+            <UAvatar :src="avatarUrl || undefined" :alt="profileDisplayName" :text="identity.initials" class="w-22 h-22"
+              :class="{ 'ring-2 ring-primary': identity.isOwn }" />
             <div
               class="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center ring-2 ring-white dark:ring-gray-900">
               <UIcon :name="platformIcon" class="w-5 h-5 text-gray-500 dark:text-gray-100" />
@@ -245,13 +390,46 @@ onMounted(fetchData)
 
           <!-- Profile Name + External Link -->
           <div class="flex items-center gap-2">
-            <h1 class="text-xl font-bold">{{ profileId }}</h1>
+            <h1 class="text-xl font-bold" :class="{ 'text-primary': identity.isOwn }"
+              :title="identity.lotusAddress || profileId">
+              {{ profileDisplayName }}
+            </h1>
+            <!-- Address with copy button (Lotusia only) -->
+            <UButton v-if="platform === 'lotusia' && identity.lotusAddress" variant="ghost" size="xs"
+              icon="i-lucide-copy" @click="copyAddress" />
+            <!-- Favorite toggle (only for existing contacts) -->
+            <UButton v-if="existingContact" variant="ghost" size="xs"
+              :icon="existingContact.isFavorite ? 'i-lucide-star' : 'i-lucide-star'"
+              :class="existingContact.isFavorite ? 'text-warning' : 'text-gray-400'" @click="toggleFavorite" />
+            <!-- External link -->
             <a v-if="externalUrl" :href="externalUrl" target="_blank" rel="noopener"
               class="text-gray-400 hover:text-primary transition-colors">
               <UIcon name="i-lucide-external-link" class="w-4 h-4" />
             </a>
           </div>
-          <p class="text-sm text-gray-500 mt-0.5">{{ platformLabel }}</p>
+
+          <!-- People-First Actions (Lotusia profiles only) -->
+          <div v-if="showPeopleActions" class="w-auto pt-3 border-t border-gray-100 dark:border-gray-800">
+            <div class="flex gap-2">
+              <UButton color="primary" icon="i-lucide-send" class="flex-1" :disabled="!walletStore.initialized"
+                @click="handleSend">
+                Send
+              </UButton>
+              <UButton v-if="!existingContact" variant="outline" icon="i-lucide-user-plus" class="flex-1"
+                @click="handleAddToContacts">
+                Add
+              </UButton>
+              <UButton v-else variant="outline" icon="i-lucide-user" class="flex-1" @click="viewContact">
+                View Contact
+              </UButton>
+            </div>
+            <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2 text-center">
+              Create or import a wallet to send
+            </p>
+          </div>
+
+          <!-- Platform label (external platforms) -->
+          <p v-if="platform !== 'lotusia'" class="text-sm text-gray-500 mt-0.5"> {{ profileSubtitle }}</p>
 
           <!-- R1: Post-vote sentiment badge (R38 curation language) -->
           <div v-if="hasVoted" class="mt-2">
@@ -348,13 +526,13 @@ onMounted(fetchData)
           </div>
         </Transition>
 
-        <!-- Action Row: vote (profiles have no reply) -->
-        <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
+        <!-- Vote Action Row -->
+        <div class="pt-3" :class="showPeopleActions ? '' : 'border-t border-gray-100 dark:border-gray-800'">
           <FeedButtonRow :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId"
             :disabled="!walletStore.initialized" :is-revealed="hasVoted" :votes-positive="profile?.votesPositive"
             :votes-negative="profile?.votesNegative" :bucketed-votes="bucketedVotes" :ranking-display="rankingDisplay"
             @voted="handleVoted" />
-          <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2">
+          <p v-if="!walletStore.initialized && !showPeopleActions" class="text-xs text-gray-400 mt-2">
             Create or import a wallet to vote
           </p>
         </div>
@@ -410,7 +588,7 @@ onMounted(fetchData)
         <template v-if="profileTab === 'comments'">
           <UCard>
             <FeedCommentThread :platform="(platform as ScriptChunkPlatformUTF8)" :profile-id="profileId"
-              :has-voted="hasVoted" @commented="fetchData" />
+              :comments="profile.comments || undefined" :has-voted="hasVoted" @commented="fetchData" />
           </UCard>
         </template>
       </div>
