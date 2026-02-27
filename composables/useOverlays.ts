@@ -47,11 +47,14 @@
  * })
  * ```
  */
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
 import {
   LazyActionsSendModal,
   LazyActionsReceiveModal,
   LazyActionsScanModal,
   LazyNavigationActionSheet,
+  LazyFeedVoteSlideover,
+  LazyFeedNewPostSlideover,
   LazyPeopleAddContactModal,
   LazyPeopleShareContactModal,
   LazyPeopleShareMyContactModal,
@@ -59,8 +62,6 @@ import {
   LazySettingsRestoreWalletModal,
   LazySettingsViewPhraseModal,
   LazyUiKeyboardShortcutsModal,
-  LazyWalletsCreateWalletModal,
-  LazyWalletsSpendModal,
 } from '#components'
 
 // ============================================================================
@@ -100,21 +101,26 @@ export interface ShareContactModalProps {
   person: Person | null
 }
 
-export interface CreateWalletModalProps {
-  preselectedContact?: string
+export type ActionSheetAction = 'send' | 'receive' | 'scan'
+
+export interface VoteSlideoverProps {
+  sentiment: 'positive' | 'negative'
+  platform: string
+  profileId: string
+  postId?: string
 }
 
-export interface SpendModalProps {
-  wallet: SharedWallet
-  participants: Array<{
-    id: string
-    name: string
-    isOnline: boolean
-    isMe: boolean
-  }>
+export interface VoteSlideoverResult {
+  txid: string
 }
 
-export type ActionSheetAction = 'send' | 'receive' | 'scan' | 'wallet'
+export interface NewPostSlideoverProps {
+  platform: ScriptChunkPlatformUTF8
+}
+
+export interface NewPostSlideoverResult {
+  txid: string
+}
 
 // ============================================================================
 // Composable
@@ -258,6 +264,8 @@ type ModalMap = {
   receiveModal: typeof LazyActionsReceiveModal
   scanModal: typeof LazyActionsScanModal
   actionSheet: typeof LazyNavigationActionSheet
+  voteSlideover: typeof LazyFeedVoteSlideover
+  newPostSlideover: typeof LazyFeedNewPostSlideover
   addContactModal: typeof LazyPeopleAddContactModal
   shareContactModal: typeof LazyPeopleShareContactModal
   shareMyContactModal: typeof LazyPeopleShareMyContactModal
@@ -265,8 +273,6 @@ type ModalMap = {
   restoreWalletModal: typeof LazySettingsRestoreWalletModal
   viewPhraseModal: typeof LazySettingsViewPhraseModal
   keyboardShortcutsModal: typeof LazyUiKeyboardShortcutsModal
-  createWalletModal: typeof LazyWalletsCreateWalletModal
-  spendModal: typeof LazyWalletsSpendModal
 }
 
 type ModalKey = keyof ModalMap
@@ -340,6 +346,8 @@ export async function prewarmOverlays(): Promise<void> {
       import('~/components/actions/ReceiveModal.vue'),
       import('~/components/actions/ScanModal.vue'),
       import('~/components/navigation/ActionSheet.vue'),
+      import('~/components/feed/VoteSlideover.vue'),
+      import('~/components/feed/NewPostSlideover.vue'),
       import('~/components/people/AddContactModal.vue'),
       import('~/components/people/ShareContactModal.vue'),
       import('~/components/people/ShareMyContactModal.vue'),
@@ -347,8 +355,6 @@ export async function prewarmOverlays(): Promise<void> {
       import('~/components/settings/RestoreWalletModal.vue'),
       import('~/components/settings/ViewPhraseModal.vue'),
       import('~/components/ui/KeyboardShortcutsModal.vue'),
-      import('~/components/wallets/CreateWalletModal.vue'),
-      import('~/components/wallets/SpendModal.vue'),
     ])
     console.log('[Overlays] Modal components preloaded')
   } catch (error) {
@@ -364,6 +370,8 @@ export async function prewarmOverlays(): Promise<void> {
   getModal('receiveModal', LazyActionsReceiveModal)
   getModal('scanModal', LazyActionsScanModal)
   getModal('actionSheet', LazyNavigationActionSheet)
+  getModal('voteSlideover', LazyFeedVoteSlideover)
+  getModal('newPostSlideover', LazyFeedNewPostSlideover)
   getModal('addContactModal', LazyPeopleAddContactModal)
   getModal('shareContactModal', LazyPeopleShareContactModal)
   getModal('shareMyContactModal', LazyPeopleShareMyContactModal)
@@ -371,8 +379,6 @@ export async function prewarmOverlays(): Promise<void> {
   getModal('restoreWalletModal', LazySettingsRestoreWalletModal)
   getModal('viewPhraseModal', LazySettingsViewPhraseModal)
   getModal('keyboardShortcutsModal', LazyUiKeyboardShortcutsModal)
-  getModal('createWalletModal', LazyWalletsCreateWalletModal)
-  getModal('spendModal', LazyWalletsSpendModal)
   console.log('[Overlays] Overlay instances created')
 
   // Set to prewarmed after component preloading and instance creation
@@ -527,6 +533,30 @@ export function useOverlays() {
   }
 
   // --------------------------------------------------------------------------
+  // Vote Slideover
+  // --------------------------------------------------------------------------
+
+  async function openVoteSlideover(
+    props: VoteSlideoverProps,
+  ): Promise<VoteSlideoverResult | undefined> {
+    const modal = getModal('voteSlideover', LazyFeedVoteSlideover)
+    pushHistoryState('voteSlideover', modal.id, () => modal.close())
+    const result = await modal.open(props)
+    await cleanupHistoryAfterClose('voteSlideover')
+    return result as VoteSlideoverResult | undefined
+  }
+
+  async function openNewPostSlideover(
+    props: NewPostSlideoverProps,
+  ): Promise<NewPostSlideoverResult | undefined> {
+    const modal = getModal('newPostSlideover', LazyFeedNewPostSlideover)
+    pushHistoryState('newPostSlideover', modal.id, () => modal.close())
+    const result = await modal.open(props)
+    await cleanupHistoryAfterClose('newPostSlideover')
+    return result as NewPostSlideoverResult | undefined
+  }
+
+  // --------------------------------------------------------------------------
   // People Modals
   // --------------------------------------------------------------------------
 
@@ -597,28 +627,6 @@ export function useOverlays() {
   }
 
   // --------------------------------------------------------------------------
-  // Wallet Modals
-  // --------------------------------------------------------------------------
-
-  async function openCreateWalletModal(
-    props?: CreateWalletModalProps,
-  ): Promise<void> {
-    const modal = getModal('createWalletModal', LazyWalletsCreateWalletModal)
-    pushHistoryState('createWalletModal', modal.id, () => modal.close())
-    await modal.open(props)
-    clearBackHandler()
-    await cleanupHistoryAfterClose('createWalletModal')
-  }
-
-  async function openSpendModal(props: SpendModalProps): Promise<void> {
-    const modal = getModal('spendModal', LazyWalletsSpendModal)
-    pushHistoryState('spendModal', modal.id, () => modal.close())
-    await modal.open(props)
-    clearBackHandler()
-    await cleanupHistoryAfterClose('spendModal')
-  }
-
-  // --------------------------------------------------------------------------
   // Return API
   // --------------------------------------------------------------------------
 
@@ -630,6 +638,10 @@ export function useOverlays() {
 
     // Action sheet
     openActionSheet,
+
+    // Vote slideover
+    openVoteSlideover,
+    openNewPostSlideover,
 
     // People modals
     openAddContactModal,
@@ -644,8 +656,8 @@ export function useOverlays() {
     // UI modals
     openKeyboardShortcutsModal,
 
-    // Wallet modals
-    openCreateWalletModal,
-    openSpendModal,
+    // Access to global overlay state
+    activeOverlayName,
+    activeOverlayId,
   }
 }

@@ -24,14 +24,11 @@ const {
   address,
   isOnline,
   isFavorite,
-  canSign,
-  sharedWallets,
   transactionCount,
   notes,
   tags,
   send,
   remove,
-  createSharedWallet,
   copyAddress,
   update,
 } = usePersonContext(personId)
@@ -141,10 +138,6 @@ async function openSendTo() {
   await send()
 }
 
-async function openCreateWallet() {
-  await createSharedWallet()
-}
-
 async function handleEdit() {
   if (person.value) {
     await openAddContactModal({
@@ -221,9 +214,6 @@ async function confirmDelete() {
       <UButton color="primary" icon="i-lucide-send" @click="openSendTo">
         Send
       </UButton>
-      <UButton v-if="canSign" color="neutral" variant="outline" icon="i-lucide-shield" @click="openCreateWallet">
-        Wallet
-      </UButton>
       <UButton color="neutral" variant="outline" icon="i-lucide-share-2" @click="showQR">
         Share
       </UButton>
@@ -283,41 +273,6 @@ async function confirmDelete() {
           <UBadge :color="netBalanceColor" variant="soft" size="xs">
             {{ netBalanceLabel }}
           </UBadge>
-        </div>
-      </div>
-    </div>
-
-    <!-- Shared Wallets -->
-    <div v-if="sharedWallets.length > 0" class="space-y-3">
-      <h2 class="text-lg font-semibold">Shared Wallets</h2>
-      <PeopleSharedWalletCard v-for="wallet in sharedWallets" :key="wallet.id" :wallet="wallet" compact
-        @click="navigateTo(`/people/wallets/${wallet.id}`)" />
-    </div>
-
-    <!-- Capabilities -->
-    <div v-if="person.canSign" class="space-y-3">
-      <h2 class="text-lg font-semibold">Capabilities</h2>
-      <div class="p-4 rounded-xl border border-gray-200 dark:border-gray-800">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-            <UIcon name="i-lucide-shield" class="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <p class="font-medium">MuSig2 Signer</p>
-            <p class="text-sm text-gray-500">Can participate in shared wallets</p>
-          </div>
-        </div>
-
-        <div v-if="person.signerCapabilities"
-          class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800 text-sm space-y-1">
-          <p>
-            <span class="text-gray-500">Transaction types:</span>
-            {{ person.signerCapabilities.transactionTypes.join(', ') }}
-          </p>
-          <p>
-            <span class="text-gray-500">Fee:</span>
-            {{ person.signerCapabilities.fee }} sats
-          </p>
         </div>
       </div>
     </div>

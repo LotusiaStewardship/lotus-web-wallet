@@ -31,9 +31,9 @@ import {
   PrivateKey,
   PublicKey,
   tweakPublicKey,
-  buildPayToTaproot,
   Message,
   Hash,
+  BufferUtil,
 } from 'xpi-ts/lib/bitcore'
 import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
 import type { AddressType } from '~/utils/types/wallet'
@@ -192,7 +192,7 @@ async function handleGenerateP2TRCommitment(
   internalPubKeyHex: string,
 ): Promise<void> {
   const internalPubKey = new PublicKey(internalPubKeyHex)
-  const merkleRoot = Buffer.alloc(32)
+  const merkleRoot = BufferUtil.alloc(32)
   const commitment = tweakPublicKey(internalPubKey, merkleRoot)
 
   const payload: P2TRCommitmentDerivedResponse['payload'] = {
@@ -273,10 +273,10 @@ async function handleDeriveKeys(
   if (addressType === 'p2tr-commitment') {
     // Taproot (P2TR) address generation
     const internalPubKey = signingKey.publicKey
-    const merkleRoot = Buffer.alloc(32) // Empty merkle root for key-path-only
+    const merkleRoot = BufferUtil.alloc(32) // Empty merkle root for key-path-only
     const commitment = tweakPublicKey(internalPubKey, merkleRoot)
     address = Address.fromTaprootCommitment(commitment, network)
-    script = buildPayToTaproot(commitment)
+    script = Script.buildTaprootOut(commitment)
     internalPubKeyHex = internalPubKey.toString()
     merkleRootHex = merkleRoot.toString('hex')
   } else {
@@ -328,7 +328,7 @@ async function handleSignTransaction(
     ? new PublicKey(internalPubKeyHex)
     : undefined
   const merkleRoot = merkleRootHex
-    ? Buffer.from(merkleRootHex, 'hex')
+    ? BufferUtil.from(merkleRootHex, 'hex')
     : undefined
 
   // Add inputs using tx.from() which creates the correct input type (TaprootInput, etc.)
@@ -339,7 +339,7 @@ async function handleSignTransaction(
     tx.from({
       txid,
       outputIndex: vout,
-      script: new Script(Buffer.from(utxo.scriptHex, 'hex')),
+      script: Script.fromBuffer(BufferUtil.from(utxo.scriptHex, 'hex')),
       satoshis: utxo.satoshis,
       internalPubKey,
       merkleRoot,
@@ -423,7 +423,7 @@ async function handleHashData(
   let hash: string
 
   // Convert hex string to Buffer
-  const dataBuffer = Buffer.from(data, 'hex')
+  const dataBuffer = BufferUtil.from(data, 'hex')
 
   switch (algorithm) {
     case 'sha256': {

@@ -5,6 +5,8 @@
  * Uses the Bitcore SDK for address operations.
  */
 
+import { BufferUtil } from 'xpi-ts/lib/bitcore'
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -44,10 +46,9 @@ export interface AddressTypeLabel {
 // Composable
 // ============================================================================
 
-const { $bitcore } = useNuxtApp()
-const networkStore = useNetworkStore()
-
 export function useAddress() {
+  const { $bitcore } = useNuxtApp()
+  const networkStore = useNetworkStore()
   /**
    * Validate a Lotus address
    * @param address - Address to validate
@@ -168,7 +169,7 @@ export function useAddress() {
 
     try {
       // Convert hashbuffer to Script
-      const script = $bitcore.Script.fromBuffer(Buffer.from(hash, 'hex'))
+      const script = $bitcore.Script.fromBuffer(BufferUtil.from(hash, 'hex'))
       const network = $bitcore.Networks.get(networkName)
       const addr = new $bitcore.Address(script, network)
       return addr.toXAddress(network)

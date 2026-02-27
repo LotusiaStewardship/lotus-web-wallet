@@ -5,8 +5,9 @@
 import { defineStore } from 'pinia'
 import { useNetworkStore } from './network'
 import { useNotificationStore } from './notifications'
-import type { ChronikSubscription } from '~/plugins/02.chronik.client'
+import type { ChronikSubscription } from '~/plugins/chronik.client'
 import type * as Bitcore from 'xpi-ts/lib/bitcore'
+import type { Buffer } from 'buffer/'
 
 // Note: ParsedTransaction type is available from ~/composables/useExplorerApi
 
@@ -57,7 +58,7 @@ export const useWalletStore = defineStore('wallet', () => {
   const _accountKeys = new Map<AccountPurpose, RuntimeKeyData>()
   let _signingKey: any = null
   let _script: any = null
-  let _internalPubKey: any = undefined
+  let _internalPubKey: Bitcore.PublicKey | undefined = undefined
   let _merkleRoot: Buffer | undefined = undefined
 
   // =========================================================================
@@ -176,21 +177,20 @@ export const useWalletStore = defineStore('wallet', () => {
         await createNewWallet()
       }
 
-      // Wallet is loaded
+      // Wallet keys are ready - mark as initialized for API calls
+      // Chronik connection happens in background and is only needed for
+      // blockchain operations (WebSocket, broadcasting), not RANK API auth
+      initialized.value = true
       loading.value = false
       loadingMessage.value = ''
+      console.log('[Wallet] Wallet initialized successfully')
 
       // Initialize Chronik connection in background (non-blocking)
-      initializeChronik()
-        .then(() => {
-          initialized.value = true
-          console.log('[Wallet] initialized successfully')
-        })
-        .catch((err: unknown) => {
-          console.error('Failed to connect to network:', err)
-          // Still mark as initialized so UI is usable, just disconnected
-          initialized.value = true
-        })
+      // This is for real-time UTXO updates and transaction broadcasting
+      initializeChronik().catch((err: unknown) => {
+        console.error('Failed to connect to Chronik (non-blocking):', err)
+        // Don't mark as uninitialized - wallet is still functional
+      })
     } catch (err) {
       console.error('Failed to initialize wallet:', err)
       loadingMessage.value = 'Failed to initialize wallet'
@@ -388,7 +388,8 @@ export const useWalletStore = defineStore('wallet', () => {
           result.internalPubKeyHex,
         )
         const commitment = new PublicKey(commitmentHex)
-        script = $bitcore.buildPayToTaproot(commitment)
+        internalPubKey = $bitcore.PublicKey.fromString(commitmentHex)
+        script = $bitcore.Script.buildTaprootOut(commitment)
       } else {
         const addr = Address.fromString(result.address)
         script = Script.fromAddress(addr)
@@ -442,10 +443,10 @@ export const useWalletStore = defineStore('wallet', () => {
       if (addressType.value === 'p2tr-commitment') {
         internalPubKey = signingKey.publicKey
         // key-path only Taproot needs 32-byte merkle root of all-zeroes
-        merkleRoot = Buffer.alloc(32)
+        merkleRoot = $bitcore.BufferUtil.alloc(32)
         const commitment = $bitcore.tweakPublicKey(internalPubKey, merkleRoot)
         addr = Address.fromTaprootCommitment(commitment, network)
-        script = $bitcore.buildPayToTaproot(commitment)
+        script = $bitcore.Script.buildTaprootOut(commitment)
       } else {
         addr = signingKey.toAddress(network)
         script = Script.fromAddress(addr)
@@ -905,8 +906,11 @@ export const useWalletStore = defineStore('wallet', () => {
         let counterpartyAddress = ''
         if (counterpartyScript) {
           try {
-            const scriptBuf = Buffer.from(counterpartyScript, 'hex')
-            const script = new $bitcore.Script(scriptBuf)
+            const scriptBuf = $bitcore.BufferUtil.from(
+              counterpartyScript,
+              'hex',
+            )
+            const script = $bitcore.Script.fromBuffer(scriptBuf)
             const addr = script.toAddress()
             if (addr) {
               counterpartyAddress = addr.toXAddress()
@@ -1202,6 +1206,41 @@ export const useWalletStore = defineStore('wallet', () => {
     return $bitcore.Mnemonic.isValid(phrase)
   }
 
+  /**
+   * Wait for wallet initialization to complete.
+   * Returns a promise that resolves when initialized.value becomes true.
+   * Useful for pages that need to wait for wallet before making auth calls.
+   */
+  function waitForInitialization(timeoutMs: number = 30000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Already initialized
+      if (initialized.value) {
+        resolve()
+        return
+      }
+
+      // Set up watcher
+      const unwatch = watch(
+        initialized,
+        isInit => {
+          if (isInit) {
+            unwatch()
+            resolve()
+          }
+        },
+        { immediate: false },
+      )
+
+      // Timeout safety
+      if (timeoutMs > 0) {
+        setTimeout(() => {
+          unwatch()
+          reject(new Error('Wallet initialization timeout'))
+        }, timeoutMs)
+      }
+    })
+  }
+
   // =========================================================================
   // Return public API
   // =========================================================================
@@ -1279,5 +1318,6 @@ export const useWalletStore = defineStore('wallet', () => {
     getInternalPubKeyString,
     getMerkleRootHex,
     isValidSeedPhrase,
+    waitForInitialization,
   }
 })

@@ -15,9 +15,7 @@
  *   person,
  *   identity,
  *   isOnline,
- *   sharedWallets,
  *   send,
- *   createSharedWallet,
  * } = usePersonContext(personId)
  * ```
  */
@@ -42,12 +40,8 @@ export interface PersonContext {
   identity: ComputedRef<Identity | null>
   /** Current online status */
   onlineStatus: ComputedRef<OnlineStatus>
-  /** Shared wallets involving this person */
-  sharedWallets: ComputedRef<SharedWallet[]>
   /** Number of transactions with this person */
   transactionCount: ComputedRef<number>
-  /** Whether this person can participate in MuSig2 */
-  canMuSig2: ComputedRef<boolean>
   /** Whether the person is currently online */
   isOnline: ComputedRef<boolean>
   /** Whether the person is a favorite */
@@ -74,8 +68,6 @@ export interface PersonContext {
   edit: () => Promise<void>
   /** Delete this person */
   remove: () => Promise<boolean>
-  /** Navigate to create shared wallet with this person */
-  createSharedWallet: () => Promise<void>
   /** Copy address to clipboard */
   copyAddress: () => Promise<void>
   /** Copy public key to clipboard */
@@ -103,8 +95,7 @@ export function usePersonContext(
 ): PersonContext {
   const peopleStore = usePeopleStore()
   const identityStore = useIdentityStore()
-  const musig2Store = useMuSig2Store()
-  const { openSendModal, openCreateWalletModal } = useOverlays()
+  const { openSendModal } = useOverlays()
 
   // Resolve the ID (handles both string and ref)
   const id = computed(() => unref(personId))
@@ -132,18 +123,7 @@ export function usePersonContext(
 
   const isOnline = computed(() => person.value?.isOnline ?? false)
 
-  const sharedWallets = computed((): SharedWallet[] => {
-    const pubKey = person.value?.publicKeyHex
-    if (!pubKey) return []
-
-    return musig2Store.sharedWallets.filter(w =>
-      w.participants.some(p => p.publicKeyHex === pubKey),
-    )
-  })
-
   const transactionCount = computed(() => person.value?.transactionCount ?? 0)
-
-  const canMuSig2 = computed(() => Boolean(person.value?.publicKeyHex))
 
   const isFavorite = computed(() => person.value?.isFavorite ?? false)
 
@@ -181,12 +161,6 @@ export function usePersonContext(
   async function remove(): Promise<boolean> {
     if (!person.value) return false
     return peopleStore.removePerson(person.value.id)
-  }
-
-  async function createSharedWallet(): Promise<void> {
-    if (!person.value) return
-
-    await openCreateWalletModal({ preselectedContact: person.value.id })
   }
 
   async function copyAddress(): Promise<void> {
@@ -233,9 +207,7 @@ export function usePersonContext(
     person,
     identity,
     onlineStatus,
-    sharedWallets,
     transactionCount,
-    canMuSig2,
     isOnline,
     isFavorite,
     displayName,
@@ -250,7 +222,6 @@ export function usePersonContext(
     send,
     edit,
     remove,
-    createSharedWallet,
     copyAddress,
     copyPublicKey,
     toggleFavorite,

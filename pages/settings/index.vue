@@ -3,12 +3,10 @@
  * Settings Page
  *
  * Comprehensive settings page with all configuration options.
- * Consolidates wallet, network, P2P, notifications, security, and appearance settings.
+ * Consolidates wallet, network, notifications, security, and appearance settings.
  */
-import { useNetworkStore, type NetworkType } from '~/stores/network'
+import { useNetworkStore } from '~/stores/network'
 import { useOnboardingStore } from '~/stores/onboarding'
-import { useP2PStore } from '~/stores/p2p'
-import { useMuSig2Store } from '~/stores/musig2'
 import { useActivityStore } from '~/stores/activity'
 import { useWalletStore } from '~/stores/wallet'
 import { useSettingsStore } from '~/stores/settings'
@@ -21,8 +19,6 @@ const route = useRoute()
 const colorMode = useColorMode()
 const networkStore = useNetworkStore()
 const onboardingStore = useOnboardingStore()
-const p2pStore = useP2PStore()
-const musig2Store = useMuSig2Store()
 const activityStore = useActivityStore()
 const walletStore = useWalletStore()
 const settingsStore = useSettingsStore()
@@ -31,10 +27,6 @@ const settingsStore = useSettingsStore()
 const { openBackupModal, openRestoreWalletModal } = useOverlays()
 // PWA install button
 const { isInstalled } = usePWAInstall()
-
-// Loading states for async operations
-const p2pLoading = ref(false)
-const signerLoading = ref(false)
 
 // Watch for query params
 /* watch(() => route.query, async (query) => {
@@ -46,8 +38,6 @@ const signerLoading = ref(false)
 // Computed - read from stores
 const isBackedUp = computed(() => onboardingStore.backupComplete)
 const isConnected = computed(() => networkStore.initialized)
-const p2pConnected = computed(() => p2pStore.connected)
-const peerCount = computed(() => p2pStore.peerCount)
 
 const networkDescription = computed(() => {
   return networkStore.isProduction ? 'Lotus Mainnet' : 'Lotus Testnet'
@@ -64,67 +54,6 @@ const selectedNetwork = computed({
     if (newNetwork !== networkStore.currentNetwork) {
       await networkStore.switchNetwork(newNetwork)
       window.location.reload()
-    }
-  },
-})
-
-// P2P enabled - computed with getter/setter that persists to store
-const p2pEnabled = computed({
-  get: () => p2pStore.settings.autoConnect,
-  set: async (enabled: boolean) => {
-    if (p2pLoading.value) return
-    p2pLoading.value = true
-
-    try {
-      // Update the setting first
-      p2pStore.updateSettings({ autoConnect: enabled })
-
-      if (enabled && !p2pStore.initialized) {
-        await p2pStore.initialize()
-      } else if (!enabled && p2pStore.initialized) {
-        await p2pStore.stop()
-      }
-    } catch (error) {
-      console.error('Failed to toggle P2P:', error)
-      // Revert the setting on error
-      p2pStore.updateSettings({ autoConnect: !enabled })
-    } finally {
-      p2pLoading.value = false
-    }
-  },
-})
-
-// Signer enabled - computed with getter/setter
-const signerEnabled = computed({
-  get: () => musig2Store.signerEnabled,
-  set: async (enabled: boolean) => {
-    if (signerLoading.value) return
-    signerLoading.value = true
-
-    try {
-      if (enabled) {
-        // Ensure P2P is initialized first
-        if (!p2pStore.initialized) {
-          await p2pStore.initialize()
-        }
-
-        // Ensure MuSig2 is initialized
-        if (!musig2Store.initialized) {
-          await musig2Store.initialize()
-        }
-
-        // Now advertise as signer
-        await musig2Store.advertiseSigner({
-          nickname: 'My Wallet',
-          transactionTypes: ['spend'],
-        })
-      } else {
-        await musig2Store.withdrawSigner()
-      }
-    } catch (error) {
-      console.error('Failed to toggle signer:', error)
-    } finally {
-      signerLoading.value = false
     }
   },
 })
@@ -275,29 +204,6 @@ function confirmResetWallet() {
           <span class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-success' : 'bg-error'" />
         </template>
       </SettingsItem>
-    </SettingsSection>
-
-    <!-- P2P Section -->
-    <SettingsSection title="P2P & Discovery" icon="i-lucide-radio">
-      <SettingsItem label="Enable P2P Networking" description="Connect to other wallets for real-time features">
-        <template #right>
-          <USwitch v-model="p2pEnabled" />
-        </template>
-      </SettingsItem>
-
-      <template v-if="p2pEnabled">
-        <SettingsItem label="Advertise as Signer" description="Let others discover you for shared wallets">
-          <template #right>
-            <USwitch v-model="signerEnabled" />
-          </template>
-        </SettingsItem>
-
-        <SettingsItem label="P2P Status" :description="`${peerCount} peers connected`">
-          <template #right>
-            <span class="w-2 h-2 rounded-full" :class="p2pConnected ? 'bg-success' : 'bg-warning'" />
-          </template>
-        </SettingsItem>
-      </template>
     </SettingsSection>
 
     <!-- Security Section -->

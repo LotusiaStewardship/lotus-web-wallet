@@ -11,6 +11,8 @@
  * State management remains in the draft store.
  */
 import type * as BitcoreTypes from 'xpi-ts/lib/bitcore'
+import type { Buffer } from 'buffer/'
+import { BufferUtil } from 'xpi-ts/lib/bitcore'
 
 // ============================================================================
 // Types
@@ -117,14 +119,14 @@ export function useTransactionBuilder() {
       if (opReturn.data.length % 2 !== 0) {
         return { buffer: null, error: 'Hex data must have even length' }
       }
-      const buffer = Buffer.from(opReturn.data, 'hex')
+      const buffer = BufferUtil.from(opReturn.data, 'hex')
       if (buffer.length > 220) {
         return { buffer: null, error: 'OP_RETURN data exceeds 220 bytes' }
       }
       return { buffer, error: null }
     }
 
-    const buffer = Buffer.from(opReturn.data, 'utf8')
+    const buffer = BufferUtil.from(opReturn.data, 'utf8')
     if (buffer.length > 220) {
       return { buffer: null, error: 'OP_RETURN data exceeds 220 bytes' }
     }

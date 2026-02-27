@@ -4,8 +4,6 @@ const activityStore = useActivityStore()
 const walletStore = useWalletStore()
 const onboardingStore = useOnboardingStore()
 const notificationStore = useNotificationStore()
-const p2pStore = useP2PStore()
-const musig2Store = useMuSig2Store()
 const settingsStore = useSettingsStore()
 const colorMode = useColorMode()
 
@@ -32,9 +30,6 @@ onBeforeMount(() => {
   // Initialize UI settings store
   settingsStore.initialize()
 
-  // Load P2P settings from storage (before wallet init)
-  p2pStore.loadSettings()
-
   // Initialize people store
   peopleStore.initialize()
 
@@ -60,26 +55,6 @@ onMounted(async () => {
 
   // Initialize new wallet or restore existing wallet
   await walletStore.initialize()
-
-  // After wallet is ready, conditionally initialize P2P if autoConnect is enabled
-  if (p2pStore.settings.autoConnect && !p2pStore.initialized) {
-    try {
-      await p2pStore.initialize()
-      console.log('[App] P2P auto-connected based on settings')
-
-      // If P2P connected and signer was previously enabled, initialize MuSig2
-      if (p2pStore.connected && musig2Store.signerConfig) {
-        try {
-          await musig2Store.initialize()
-          console.log('[App] MuSig2 auto-initialized for signer restoration')
-        } catch (musig2Error) {
-          console.warn('[App] Failed to auto-initialize MuSig2:', musig2Error)
-        }
-      }
-    } catch (p2pError) {
-      console.warn('[App] Failed to auto-connect P2P:', p2pError)
-    }
-  }
 })
 
 // Handle messages from service worker

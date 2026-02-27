@@ -1,0 +1,149 @@
+<script setup lang="ts">
+/**
+ * Vote Slideover Component
+ *
+ * Bottom slideover for selecting burn amount and confirming a RANK vote.
+ * Managed by useOverlays for proper slide-in animation and back button support.
+ */
+import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import { formatXPI } from '~/utils/formatting'
+
+export interface VoteSlideoverProps {
+  sentiment: 'positive' | 'negative'
+  platform: ScriptChunkPlatformUTF8
+  profileId: string
+  postId?: string
+}
+
+export interface VoteSlideoverResult {
+  txid: string
+}
+
+const props = defineProps<VoteSlideoverProps>()
+
+const emit = defineEmits<{
+  (e: 'close', result?: VoteSlideoverResult): void
+}>()
+
+const { castVote, status, error, reset, canAffordVote, BURN_PRESETS, MIN_BURN_SATS } = useRankVote()
+
+const selectedBurnSats = ref(BURN_PRESETS[0].sats)
+const customBurnInput = ref('')
+
+const isVoting = computed(() =>
+  status.value === 'building' || status.value === 'signing' || status.value === 'broadcasting',
+)
+
+const formattedBurn = computed(() =>
+  formatXPI(selectedBurnSats.value.toString(), { minDecimals: 0, maxDecimals: 2 }),
+)
+
+function selectPreset(sats: bigint) {
+  selectedBurnSats.value = sats
+  customBurnInput.value = ''
+}
+
+function applyCustomBurn() {
+  const val = parseFloat(customBurnInput.value)
+  if (isNaN(val) || val <= 0) return
+  const sats = BigInt(Math.floor(val * 1_000_000))
+  if (sats < MIN_BURN_SATS) return
+  selectedBurnSats.value = sats
+}
+
+async function confirmVote() {
+  const result = await castVote({
+    sentiment: props.sentiment,
+    platform: props.platform,
+    profileId: props.profileId,
+    postId: props.postId,
+    burnAmountSats: selectedBurnSats.value,
+  })
+
+  if (result.success && result.txid) {
+    reset()
+    emit('close', { txid: result.txid! })
+  }
+}
+
+function close() {
+  reset()
+  emit('close')
+}
+</script>
+
+<template>
+  <USlideover :open="true" side="bottom">
+    <template #content>
+      <div class="p-4 pb-8 space-y-4">
+        <!-- Header -->
+        <div class="flex items-center justify-between">
+          <div class="w-8" />
+          <h2 class="text-lg font-semibold text-center">
+            {{ sentiment === 'positive' ? 'Endorse' : 'Flag' }}
+          </h2>
+          <UButton variant="ghost" size="xs" icon="i-lucide-x" @click="close" />
+        </div>
+
+        <p class="text-sm text-gray-500">
+          Choose how much XPI to burn with your vote. The Lotus you burn is transformed into a
+          permanent, on-chain record of what you value.
+        </p>
+
+        <!-- Burn Presets -->
+        <div class="grid grid-cols-4 gap-2">
+          <UButton v-for="preset in BURN_PRESETS" :key="preset.label"
+            :variant="selectedBurnSats === preset.sats ? 'soft' : 'outline'"
+            :color="selectedBurnSats === preset.sats ? 'primary' : 'neutral'" size="sm"
+            :disabled="!canAffordVote(preset.sats)" @click="selectPreset(preset.sats)">
+            {{ preset.label }}
+          </UButton>
+        </div>
+
+        <!-- Custom Amount -->
+        <div class="flex items-center gap-2">
+          <UInput v-model="customBurnInput" type="number" step="any" min="0" placeholder="Custom XPI amount"
+            class="flex-1" size="sm" @change="applyCustomBurn" />
+          <span class="text-sm text-gray-500">XPI</span>
+        </div>
+
+        <!-- Selected Amount Display -->
+        <div class="text-center py-2">
+          <span class="text-2xl font-bold font-mono">{{ formattedBurn }}</span>
+          <span class="text-gray-500 ml-1">XPI</span>
+        </div>
+
+        <!-- Error Display -->
+        <div v-if="error" class="text-sm text-error-500 text-center">
+          {{ error }}
+        </div>
+
+        <!-- Status Display -->
+        <!-- <div v-if="isVoting" class="text-sm text-primary text-center flex items-center justify-center gap-2">
+          <UIcon name="i-lucide-loader-2" class="w-4 h-4 animate-spin" />
+          <span v-if="status === 'building'">Building transaction...</span>
+          <span v-else-if="status === 'signing'">Signing...</span>
+          <span v-else-if="status === 'broadcasting'">Broadcasting...</span>
+        </div> -->
+
+        <!-- Success Display -->
+        <!-- <div v-if="status === 'success'"
+          class="text-sm text-success-500 text-center flex items-center justify-center gap-2">
+          <UIcon name="i-lucide-check-circle" class="w-4 h-4" />
+          <span>Vote cast successfully!</span>
+        </div> -->
+
+        <!-- R4: Confirm Button — equal visual weight for upvote/downvote (cost symmetry) -->
+        <UButton block size="lg" :loading="isVoting"
+          :disabled="isVoting || status === 'success' || !canAffordVote(selectedBurnSats)" @click="confirmVote">
+          <template v-if="!canAffordVote(selectedBurnSats)">
+            Insufficient Balance
+          </template>
+          <template v-else>
+            Confirm {{ sentiment === 'positive' ? 'Endorse' : 'Flag' }}
+          </template>
+        </UButton>
+      </div>
+    </template>
+  </USlideover>
+</template>

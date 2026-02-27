@@ -6,11 +6,11 @@
  */
 
 const emit = defineEmits<{
-  (e: 'close', action?: 'send' | 'receive' | 'scan' | 'wallet'): void
+  (e: 'close', action?: 'send' | 'receive' | 'scan'): void
 }>()
 
 interface ActionItem {
-  id: 'send' | 'receive' | 'scan' | 'wallet'
+  id: 'send' | 'receive' | 'scan'
   icon: string
   label: string
   description: string
@@ -34,12 +34,6 @@ const actions: ActionItem[] = [
     icon: 'i-lucide-scan',
     label: 'Scan QR',
     description: 'Scan a payment request',
-  },
-  {
-    id: 'wallet',
-    icon: 'i-lucide-shield',
-    label: 'New Wallet',
-    description: 'Create shared wallet',
   },
 ]
 

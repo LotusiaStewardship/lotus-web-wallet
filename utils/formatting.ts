@@ -16,7 +16,7 @@ export function formatNumber(
   num: string | number | bigint,
   options?: Intl.NumberFormatOptions,
 ): string {
-  const value = typeof num === 'bigint' ? Number(num) : Number(num)
+  const value = Number(num)
   return value.toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 6,
@@ -28,12 +28,15 @@ export function formatNumber(
  * Format a number in compact notation (1K, 1M, 1B)
  */
 export function formatCompact(num: string | number | bigint): string {
-  const n = typeof num === 'bigint' ? Number(num) : Number(num)
-  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
-  return n.toFixed(0)
+  const n = Number(num)
+  const sign = n < 0 ? '-' : ''
+  const absN = Math.abs(n)
+
+  if (absN >= 1e12) return `${sign}${(absN / 1e12).toFixed(1)}T`
+  if (absN >= 1e9) return `${sign}${(absN / 1e9).toFixed(1)}B`
+  if (absN >= 1e6) return `${sign}${(absN / 1e6).toFixed(1)}M`
+  if (absN >= 1e3) return `${sign}${(absN / 1e3).toFixed(1)}K`
+  return `${sign}${absN.toFixed(0)}`
 }
 
 /**

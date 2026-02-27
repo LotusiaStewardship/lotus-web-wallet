@@ -1,6 +1,40 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
+// nuxt.config.ts - Simplified
 import { fileURLToPath } from 'node:url'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
+
+// vite-plugin-node-polyfills sets resolve.alias mapping `buffer` →
+// `vite-plugin-node-polyfills/shims/buffer` (and similar for global/process).
+// This alias propagates to ALL Vite sub-builds (workers, PWA service worker),
+// but those builds lack the plugin's full setup so they cannot resolve the
+// rewritten shim specifiers.  This small plugin resolves them explicitly.
+function polyfillShimResolver() {
+  const shimRoot = fileURLToPath(
+    new URL('./node_modules/vite-plugin-node-polyfills/shims', import.meta.url),
+  )
+  return {
+    name: 'polyfill-shim-resolver',
+    resolveId(source: string) {
+      for (const mod of ['buffer', 'global', 'process']) {
+        // Use NPM `buffer` package to polyfill buffer globally
+        if (mod === 'buffer') {
+          if (
+            source === 'vite-plugin-node-polyfills/shims/buffer' ||
+            source === 'vite-plugin-node-polyfills/shims/buffer/'
+          ) {
+            return fileURLToPath(
+              new URL('./node_modules/buffer/index.js', import.meta.url),
+            )
+          }
+        } else if (
+          source === `vite-plugin-node-polyfills/shims/${mod}` ||
+          source === `vite-plugin-node-polyfills/shims/${mod}/`
+        ) {
+          return `${shimRoot}/${mod}/dist/index.js`
+        }
+      }
+    },
+  }
+}
 
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
@@ -39,6 +73,9 @@ export default defineNuxtConfig({
     injectManifest: {
       globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
       maximumFileSizeToCacheInBytes: 4000000, // 4MB
+      buildPlugins: {
+        vite: [polyfillShimResolver()],
+      },
     },
     devOptions: {
       enabled: true,
@@ -71,7 +108,7 @@ export default defineNuxtConfig({
         },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
         { name: 'theme-color', content: '#c6005c' },
-        { name: 'apple-mobile-web-app-capable', content: 'yes' },
+        { name: 'mobile-web-app-capable', content: 'yes' },
         {
           name: 'apple-mobile-web-app-status-bar-style',
           content: 'black-translucent',
@@ -104,133 +141,24 @@ export default defineNuxtConfig({
     plugins: [
       // Comprehensive Node.js polyfills for browser environment
       // This replaces manual Buffer injection and runtime shims
+      // NOTE: We disable `Buffer` global here because xpi-ts was
+      // recently migrated to the NPM `buffer/` package, which provides
+      // a Buffer wrapper for the natively-supported Uint8Array
       nodePolyfills({
-        include: ['buffer', 'events', 'process', 'util', 'stream', 'crypto'],
-        globals: {
-          Buffer: true,
-          global: true,
-          process: true,
-        },
-        // Use native browser crypto where available
-        overrides: {
-          crypto: 'crypto-browserify',
-        },
+        globals: { Buffer: true, global: true, process: true },
       }),
     ],
-    optimizeDeps: {
-      // Include ALL CommonJS dependencies for proper ESM transformation
-      // This ensures they're pre-bundled with correct module format
-      include: [
-        // Node.js polyfills
-        'buffer',
-        'events',
-        'process',
-        // Chronik and its dependencies
-        'chronik-client',
-        'protobufjs',
-        'protobufjs/minimal',
-        'long',
-        'axios',
-        'isomorphic-ws',
-        // Crypto dependencies (used by xpi-ts/bitcore)
-        'elliptic',
-        'bn.js',
-        'brorand',
-        'hash.js',
-        'hmac-drbg',
-        'inherits',
-        'minimalistic-assert',
-        'minimalistic-crypto-utils',
-      ],
-      esbuildOptions: {
-        define: {
-          global: 'globalThis',
-        },
-      },
-    },
-    build: {
-      // Ensure CommonJS modules are properly transformed
-      commonjsOptions: {
-        include: [/node_modules/],
-        transformMixedEsModules: true,
-      },
-    },
-    worker: {
-      // Configure Web Worker bundling
-      format: 'es',
-      rollupOptions: {
-        output: {
-          inlineDynamicImports: true,
-        },
-      },
-      plugins: () => {
-        // Resolve polyfill shim paths to the actual plugin shim files
-        // This is needed because the main bundle's polyfills plugin injects
-        // references to these shims, but the worker bundler can't find them
-        const shimAliasPlugin = {
-          name: 'worker-shim-alias',
-          enforce: 'pre' as const,
-          resolveId(id: string) {
-            // Resolve to the actual shim files in the plugin's node_modules
-            if (id === 'vite-plugin-node-polyfills/shims/buffer') {
-              return fileURLToPath(
-                new URL(
-                  './node_modules/vite-plugin-node-polyfills/shims/buffer/dist/index.js',
-                  import.meta.url,
-                ),
-              )
-            }
-            if (id === 'vite-plugin-node-polyfills/shims/process') {
-              return fileURLToPath(
-                new URL(
-                  './node_modules/vite-plugin-node-polyfills/shims/process/dist/index.js',
-                  import.meta.url,
-                ),
-              )
-            }
-            if (id === 'vite-plugin-node-polyfills/shims/global') {
-              return fileURLToPath(
-                new URL(
-                  './node_modules/vite-plugin-node-polyfills/shims/global/dist/index.js',
-                  import.meta.url,
-                ),
-              )
-            }
-            if (id === 'crypto-browserify') {
-              return fileURLToPath(
-                new URL(
-                  './node_modules/crypto-browserify/index.js',
-                  import.meta.url,
-                ),
-              )
-            }
-            return null
-          },
-        }
 
-        return [
-          shimAliasPlugin,
-          // Apply node polyfills for worker bundle
-          nodePolyfills({
-            include: [
-              'buffer',
-              'events',
-              'process',
-              'util',
-              'stream',
-              'crypto',
-            ],
-            globals: {
-              Buffer: true,
-              global: true,
-              process: true,
-            },
-            overrides: {
-              crypto: 'crypto-browserify',
-            },
-          }),
-        ]
-      },
+    // Worker configuration
+    // vite-plugin-node-polyfills sets resolve.alias mapping `buffer` →
+    // `vite-plugin-node-polyfills/shims/buffer`.  This alias propagates to
+    // the worker build (separate Rollup instance), but the worker lacks
+    // the plugin's full setup so it cannot resolve the shim specifier.
+    // We add a small resolveId plugin to worker.plugins that intercepts
+    // the shim specifier and points it at the real file.
+    worker: {
+      format: 'es',
+      plugins: () => [polyfillShimResolver()],
     },
     resolve: {
       alias: {
