@@ -159,6 +159,19 @@ export const usePeopleStore = defineStore('people', () => {
     return allPeople.value.find(p => p.publicKeyHex === publicKeyHex)
   }
 
+  /** Get person by name (exact match) */
+  function getByName(name: string): Person | undefined {
+    return allPeople.value.find(p => p.name === name)
+  }
+
+  /** Get person by name (case-insensitive partial match) */
+  function findByName(query: string): Person[] {
+    const normalizedQuery = query.toLowerCase().trim()
+    return allPeople.value.filter(p =>
+      p.name.toLowerCase().includes(normalizedQuery),
+    )
+  }
+
   /** Get shared wallet by ID */
   function getWallet(id: string): SharedWallet | undefined {
     return sharedWallets.value.get(id)
@@ -325,6 +338,7 @@ export const usePeopleStore = defineStore('people', () => {
     person.updatedAt = Date.now()
 
     persistPeople()
+    return person.isFavorite
   }
 
   function assignToGroup(personId: string, groupId: string) {
@@ -389,6 +403,8 @@ export const usePeopleStore = defineStore('people', () => {
     getByAddress,
     getByPeerId,
     getByPublicKey,
+    getByName,
+    findByName,
     getWallet,
 
     // Actions

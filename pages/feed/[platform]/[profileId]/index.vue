@@ -25,6 +25,7 @@ import { PlatformIcon, PlatformURL } from '~/composables/useRankApi'
 import { formatXPI } from '~/utils/formatting'
 import { isControversial as checkControversial, controversyScore, bucketVoteCount } from '~/utils/feed'
 import { useWalletStore } from '~/stores/wallet'
+import { usePeopleStore } from '~/stores/people'
 
 definePageMeta({
   title: 'Profile',
@@ -32,7 +33,7 @@ definePageMeta({
 
 const route = useRoute()
 const walletStore = useWalletStore()
-const contactsStore = useContactsStore()
+const peopleStore = usePeopleStore()
 const { getProfileRanking, getProfilePosts, getPostRanking, getProfileRankTransactions } = useRankApi()
 const { truncateAddress } = useAddress()
 const { getAvatar } = useAvatars()
@@ -110,7 +111,7 @@ const profileSubtitle = computed(() => {
  */
 const existingContact = computed(() => {
   if (platform.value !== 'lotusia' || !identity.value.lotusAddress) return null
-  return contactsStore.findByAddress(identity.value.lotusAddress)
+  return peopleStore.getByAddress(identity.value.lotusAddress)
 })
 
 /**
@@ -333,7 +334,7 @@ function copyAddress(): void {
 function toggleFavorite(): void {
   if (!existingContact.value) return
 
-  const newStatus = contactsStore.toggleFavorite(existingContact.value.id)
+  const newStatus = peopleStore.toggleFavorite(existingContact.value.id)
   toast.add({
     title: newStatus ? 'Added to favorites' : 'Removed from favorites',
     color: 'success',
@@ -420,7 +421,7 @@ onMounted(fetchData)
                 Add
               </UButton>
               <UButton v-else variant="outline" icon="i-lucide-user" class="flex-1" @click="viewContact">
-                View Contact
+                View
               </UButton>
             </div>
             <p v-if="!walletStore.initialized" class="text-xs text-gray-400 mt-2 text-center">

@@ -13,7 +13,7 @@
  */
 import { getProfileInitials } from '~/composables/useAvatars'
 import { useWalletStore } from '~/stores/wallet'
-import { useContactsStore } from '~/stores/contacts'
+import { usePeopleStore } from '~/stores/people'
 
 export interface FeedIdentity {
   /** Display name: contact name > truncated address > truncated profileId */
@@ -45,7 +45,7 @@ export interface FeedIdentity {
 export function useFeedIdentity() {
   const { $bitcore } = useNuxtApp()
   const walletStore = useWalletStore()
-  const contactsStore = useContactsStore()
+  const peopleStore = usePeopleStore()
   const networkStore = useNetworkStore()
 
   /**
@@ -87,8 +87,8 @@ export function useFeedIdentity() {
    * Resolve a feed author's identity from platform + profileId.
    */
   function resolve(platform: string, profileId: string): FeedIdentity {
-    const isOwn = !!walletStore.scriptPayload
-      && profileId === walletStore.scriptPayload
+    const isOwn =
+      !!walletStore.scriptPayload && profileId === walletStore.scriptPayload
 
     // For non-Lotusia platforms, profileId is the platform handle
     if (platform !== 'lotusia') {
@@ -109,7 +109,7 @@ export function useFeedIdentity() {
     // Look up contact by address
     let contactName: string | null = null
     if (lotusAddress) {
-      const contact = contactsStore.findByAddress(lotusAddress)
+      const contact = peopleStore.getByAddress(lotusAddress)
       if (contact) {
         contactName = contact.name
       }
