@@ -13,6 +13,7 @@
  *   R38: Curation language — "Noted" for neutral posts
  */
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import { useWalletStore } from '~/stores/wallet'
 
 export interface NewPostSlideoverProps {
   platform: ScriptChunkPlatformUTF8
@@ -23,6 +24,7 @@ export interface NewPostSlideoverResult {
 }
 
 const props = defineProps<NewPostSlideoverProps>()
+const walletStore = useWalletStore()
 
 const emit = defineEmits<{
   (e: 'close', result?: NewPostSlideoverResult): void
@@ -50,9 +52,9 @@ function handleCancel() {
 
 
         <!-- Comment Input — hideAuthorLabel since header already sets context -->
-        <!-- No profileId or postId = new standalone post (not a reply) -->
-        <FeedCommentInput :platform="props.platform" placeholder="What's on your mind?" hide-author-label
-          @posted="handlePosted" @cancel="handleCancel" />
+        <!-- For new standalone posts, profileId defaults to wallet's scriptPayload -->
+        <FeedCommentInput :platform="props.platform" :profileId="walletStore.scriptPayload || undefined"
+          placeholder="What's on your mind?" hide-author-label @posted="handlePosted" @cancel="handleCancel" />
       </div>
     </template>
   </USlideover>
