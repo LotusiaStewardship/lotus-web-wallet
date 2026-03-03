@@ -53,9 +53,16 @@ export function useFeedIdentity() {
    * Returns null if conversion fails.
    */
   function scriptPayloadToAddress(scriptPayload: string): string | null {
-    if (!scriptPayload || scriptPayload.length !== 40) return null
+    if (!scriptPayload) return null
     try {
-      const script = $bitcore.Script.fromPayload('p2pkh', scriptPayload)
+      let script: InstanceType<typeof $bitcore.Script>
+      if (scriptPayload.length === 40) {
+        script = $bitcore.Script.fromPayload('p2pkh', scriptPayload)
+      } else if (scriptPayload.length === 66) {
+        script = $bitcore.Script.fromPayload('p2tr-commitment', scriptPayload)
+      } else {
+        return null
+      }
       const network = $bitcore.Networks.get(networkStore.currentNetwork)
       const addr = $bitcore.Address.fromScript(script, network)
       return addr.toXAddress(network)
