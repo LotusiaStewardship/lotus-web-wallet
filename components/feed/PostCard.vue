@@ -24,6 +24,7 @@ import type { TrendingItem, PostListItem, PostData, RnkcComment, ProfileRankTran
 import { PlatformURL, useRankApi } from '~/composables/useRankApi'
 import { formatXPICompact } from '~/utils/formatting'
 import { bucketVoteCount, isControversial, controversyScore } from '~/utils/feed'
+import { processCommentForDisplay } from '~/utils/sanitize'
 import { useWalletStore } from '~/stores/wallet'
 import { useTime } from '~/composables/useTime'
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
@@ -141,7 +142,11 @@ const satsNegative = computed(() => {
 })
 
 const postData = computed(() => {
-  if ('data' in props.post) return (props.post as PostData | RnkcComment).data
+  if ('data' in props.post) {
+    const rawData = (props.post as PostData | RnkcComment).data
+    // Apply client-side sanitization for defense-in-depth
+    return rawData ? processCommentForDisplay(rawData) : undefined
+  }
   return undefined
 })
 
