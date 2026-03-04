@@ -100,7 +100,7 @@ export interface ProfileData {
   votesPositive: number
   votesNegative: number
   voters: VoterDetails[]
-  profileMeta?: VoterProfileMetadata | null
+  profileMeta: VoterProfileMetadata | null
   /** RNKC comments on this profile (PostAPI-shaped, from backend) */
   comments?: RnkcComment[] | null
 }
@@ -162,8 +162,11 @@ export interface VoteActivityResponse {
 export interface ProfileRankTransaction {
   txid: string
   sentiment: ScriptChunkSentimentUTF8
+  /** Unix timestamp (seconds) when the vote transaction was confirmed, if known */
   timestamp?: string
+  /** Unix timestamp (seconds) when the vote was first seen in the mempool */
   firstSeen: string
+  /** Amount of satoshis burned in this vote transaction */
   sats: string
   post:
     | {
@@ -210,7 +213,7 @@ export interface PostData {
   satsNegative: string
   votesPositive: number
   votesNegative: number
-  postMeta?: VoterPostMetadata | null
+  postMeta: VoterPostMetadata | null
   profile?: {
     ranking: string
     satsPositive: string
@@ -611,7 +614,7 @@ export const useRankApi = () => {
         numPages = data.numPages
         let reachedCutoff = false
         for (const vote of data.votes) {
-          if (Number(vote.timestamp) >= cutoff) {
+          if (Number(vote.timestamp ?? vote.firstSeen) >= cutoff) {
             allVotes.push(vote)
           } else {
             reachedCutoff = true
@@ -650,7 +653,7 @@ export const useRankApi = () => {
         const data: ProfileVoteActivityResponse = await response.json()
         let reachedCutoff = false
         for (const vote of data.votes) {
-          if (Number(vote.timestamp) < cutoff) {
+          if (Number(vote.timestamp ?? vote.firstSeen) < cutoff) {
             reachedCutoff = true
             break
           }

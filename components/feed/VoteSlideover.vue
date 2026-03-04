@@ -5,18 +5,14 @@
  * Bottom slideover for selecting burn amount and confirming a RANK vote.
  * Managed by useOverlays for proper slide-in animation and back button support.
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 import { formatXPI } from '~/utils/formatting'
 
 export interface VoteSlideoverProps {
-  sentiment: 'positive' | 'negative'
+  sentiment: ScriptChunkSentimentUTF8
   platform: ScriptChunkPlatformUTF8
   profileId: string
   postId?: string
-}
-
-export interface VoteSlideoverResult {
-  txid: string
 }
 
 const props = defineProps<VoteSlideoverProps>()
@@ -62,7 +58,7 @@ async function confirmVote() {
 
   if (result.success && result.txid) {
     reset()
-    emit('close', { txid: result.txid! })
+    emit('close', { txid: result.txid!, sentiment: props.sentiment, sats: result.sats! })
   }
 }
 

@@ -286,7 +286,7 @@ const sentimentShift = computed<string | null>(() => {
 })
 </script>
 
-<template>
+<template v-if="props.transactions.length > 0">
   <!-- Loading skeleton -->
   <div v-if="loading" class="space-y-2 pt-3">
     <USkeleton class="h-3 w-1/3" />

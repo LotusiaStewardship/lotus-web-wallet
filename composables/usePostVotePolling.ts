@@ -20,6 +20,7 @@ import type {
   ScriptChunkPlatformUTF8,
   ScriptChunkSentimentUTF8,
 } from 'xpi-ts/lib/rank'
+import type { VoterPostMetadata, VoterProfileMetadata } from './useRankApi'
 
 // ============================================================================
 // Types
@@ -48,6 +49,10 @@ export interface PollResult {
   votesNegative?: number
   /** Updated ranking if available */
   ranking?: string
+  /** Post metadata from API if available (includes vote verification for post-level votes) */
+  postMeta: VoterPostMetadata | null
+  /** Profile metadata from API if available (includes vote verification for profile-level votes) */
+  profileMeta: VoterProfileMetadata | null
   /** Number of poll attempts made */
   attempts: number
   /** Updated satsPositive if available (for profiles) */
@@ -87,10 +92,17 @@ export function usePostVotePolling() {
       config
 
     let attempts = 0
-    let confirmed = false
-    let votesPositive: number | undefined
-    let votesNegative: number | undefined
-    let ranking: string | undefined
+    const data: PollResult = {
+      confirmed: false,
+      attempts,
+      ranking: undefined,
+      satsPositive: undefined,
+      satsNegative: undefined,
+      votesPositive: undefined,
+      votesNegative: undefined,
+      postMeta: null,
+      profileMeta: null,
+    }
 
     const startTime = Date.now()
 
@@ -113,67 +125,71 @@ export function usePostVotePolling() {
         // Poll the appropriate endpoint
         if (postId) {
           // Post-level vote
-          const data = await getPostRanking(
+          const result = await getPostRanking(
             platform,
             profileId,
             postId,
             scriptPayload,
           )
 
-          if (data) {
-            votesPositive = data.votesPositive
-            votesNegative = data.votesNegative
-            ranking = data.ranking
+          // Verify the new txid appears in the metadata
+          // (not just that metadata exists - it will exist after first vote)
+          if (result && result.postMeta) {
+            const isPositive = sentiment === 'positive'
+            const isNegative = sentiment === 'negative'
+            const txidFound = isPositive
+              ? result.postMeta.txidsUpvoted?.includes(txid)
+              : isNegative
+              ? result.postMeta.txidsDownvoted?.includes(txid)
+              : false
 
-            // Check if vote is confirmed via postMeta
-            const meta = data.postMeta
-            if (meta) {
-              if (sentiment === 'positive' && meta.hasWalletUpvoted) {
-                confirmed = true
-                console.log(
-                  `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
-                )
-                break
-              }
-              if (sentiment === 'negative' && meta.hasWalletDownvoted) {
-                confirmed = true
-                console.log(
-                  `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
-                )
-                break
-              }
+            if (txidFound) {
+              data.ranking = result.ranking
+              data.satsPositive = result.satsPositive
+              data.satsNegative = result.satsNegative
+              data.votesPositive = result.votesPositive
+              data.votesNegative = result.votesNegative
+              data.postMeta = result.postMeta
+
+              data.confirmed = true
+              console.log(
+                `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
+              )
+              break
             }
           }
         } else {
           // Profile-level vote
-          const data = await getProfileRanking(
+          const result = await getProfileRanking(
             platform,
             profileId,
             scriptPayload,
           )
 
-          if (data) {
-            votesPositive = data.votesPositive
-            votesNegative = data.votesNegative
-            ranking = data.ranking
+          // Verify the wallet has voted (hasWalletUpvoted/hasWalletDownvoted flags)
+          // For profiles, we don't have txid arrays, so check the boolean flags
+          if (result && result.profileMeta) {
+            const isPositive = sentiment === 'positive'
+            const isNegative = sentiment === 'negative'
+            const voteConfirmed = isPositive
+              ? result.profileMeta.hasWalletUpvoted
+              : isNegative
+              ? result.profileMeta.hasWalletDownvoted
+              : false
 
-            // Check if vote is confirmed via profileMeta
-            const meta = data.profileMeta
-            if (meta) {
-              if (sentiment === 'positive' && meta.hasWalletUpvoted) {
-                confirmed = true
-                console.log(
-                  `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
-                )
-                break
-              }
-              if (sentiment === 'negative' && meta.hasWalletDownvoted) {
-                confirmed = true
-                console.log(
-                  `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
-                )
-                break
-              }
+            if (voteConfirmed) {
+              data.satsPositive = result.satsPositive
+              data.satsNegative = result.satsNegative
+              data.votesPositive = result.votesPositive
+              data.votesNegative = result.votesNegative
+              data.ranking = result.ranking
+              data.profileMeta = result.profileMeta
+
+              data.confirmed = true
+              console.log(
+                `[usePostVotePolling] Vote confirmed after ${attempts} attempts`,
+              )
+              break
             }
           }
         }
@@ -186,13 +202,7 @@ export function usePostVotePolling() {
       }
     }
 
-    return {
-      confirmed,
-      votesPositive,
-      votesNegative,
-      ranking,
-      attempts,
-    }
+    return data
   }
 
   /**

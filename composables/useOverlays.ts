@@ -47,7 +47,10 @@
  * })
  * ```
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type {
+  ScriptChunkPlatformUTF8,
+  ScriptChunkSentimentUTF8,
+} from 'xpi-ts/lib/rank'
 import {
   LazyActionsSendModal,
   LazyActionsReceiveModal,
@@ -112,6 +115,8 @@ export interface VoteSlideoverProps {
 
 export interface VoteSlideoverResult {
   txid: string
+  sentiment: ScriptChunkSentimentUTF8
+  sats: string
 }
 
 export interface NewPostSlideoverProps {

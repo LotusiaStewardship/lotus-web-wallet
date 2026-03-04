@@ -16,7 +16,7 @@
  * @see lotusia-monorepo/strategies/rank/research/echo-chamber-mitigation.md — R1, R4
  * @see lotusia-monorepo/strategies/rank/research/psychopolitics-and-digital-power.md — R38
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 import { useWalletStore } from '~/stores/wallet'
 
 const props = withDefaults(defineProps<{
@@ -62,7 +62,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  voted: [txid: string, sentiment: 'positive' | 'negative']
+  voted: [txid: string, sentiment: ScriptChunkSentimentUTF8, sats: string]
   reply: []
   replyPosted: [txid: string]
   replyCancelled: []
@@ -100,7 +100,7 @@ async function handleVoteClick(sentiment: 'positive' | 'negative', event: Event)
 
     if (result?.txid) {
       votedSentiment.value = sentiment
-      emit('voted', result.txid, sentiment)
+      emit('voted', result.txid, sentiment, result.sats)
     }
   } finally {
     voting.value = false

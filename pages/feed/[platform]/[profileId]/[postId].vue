@@ -18,7 +18,7 @@
  *   R38: Curation language — "Endorsed/Flagged" not "upvoted/downvoted"
  */
 import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
-import type { PostData } from '~/composables/useRankApi'
+import type { PostData, VoterPostMetadata } from '~/composables/useRankApi'
 import { useRankApi } from '~/composables/useRankApi'
 import { useWalletStore } from '~/stores/wallet'
 
@@ -148,16 +148,38 @@ async function fetchData() {
   }
 }
 
-async function handleVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8) {
+async function handleVoted(txid: string, sentiment: ScriptChunkSentimentUTF8, sats: string) {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
 
+  const isPositive = sentiment === 'positive'
+  const isNegative = sentiment === 'negative'
+
   // Optimistic update: increment local vote count immediately
-  if (post.value && sentiment) {
+  if (post.value) {
+    const currentMeta = post.value.postMeta
+
+    const newMeta: VoterPostMetadata = {
+      satsUpvoted: isPositive ? sats : (currentMeta?.satsUpvoted ?? '0'),
+      satsDownvoted: isNegative ? sats : (currentMeta?.satsDownvoted ?? '0'),
+      txidsUpvoted: isPositive
+        ? (currentMeta?.txidsUpvoted ? [...currentMeta.txidsUpvoted, txid] : [txid])
+        : (currentMeta?.txidsUpvoted ?? []),
+      txidsDownvoted: isNegative
+        ? (currentMeta?.txidsDownvoted ? [...currentMeta.txidsDownvoted, txid] : [txid])
+        : (currentMeta?.txidsDownvoted ?? []),
+      hasWalletUpvoted: isPositive || (currentMeta?.hasWalletUpvoted ?? false),
+      hasWalletDownvoted: isNegative || (currentMeta?.hasWalletDownvoted ?? false),
+    }
+
     post.value = {
       ...post.value,
-      votesPositive: sentiment === 'positive' ? post.value.votesPositive + 1 : post.value.votesPositive,
-      votesNegative: sentiment === 'negative' ? post.value.votesNegative + 1 : post.value.votesNegative,
+      ranking: (BigInt(post.value.ranking) + BigInt(isPositive ? sats : isNegative ? -BigInt(sats) : 0)).toString(),
+      satsPositive: BigInt(post.value.satsPositive + (isPositive ? sats : 0)).toString(),
+      satsNegative: BigInt(post.value.satsNegative + (isNegative ? sats : 0)).toString(),
+      votesPositive: post.value.votesPositive + (isPositive ? 1 : 0),
+      votesNegative: post.value.votesNegative + (isNegative ? 1 : 0),
+      postMeta: newMeta,
     }
   }
 
@@ -178,9 +200,12 @@ async function handleVoted(txid: string, sentiment?: ScriptChunkSentimentUTF8) {
     if (result.confirmed && post.value) {
       post.value = {
         ...post.value,
+        satsPositive: result.satsPositive ?? post.value.satsPositive,
+        satsNegative: result.satsNegative ?? post.value.satsNegative,
         votesPositive: result.votesPositive ?? post.value.votesPositive,
         votesNegative: result.votesNegative ?? post.value.votesNegative,
         ranking: result.ranking ?? post.value.ranking,
+        postMeta: result.postMeta ?? post.value.postMeta,
       }
     } else if (!result.confirmed) {
       console.warn('[PostPage] Vote not confirmed after polling, keeping optimistic update')

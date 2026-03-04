@@ -19,7 +19,7 @@
  *   R6: Burn-weighted comment sorting (via CommentThread)
  *   R38: Curation language — "Endorsed/Flagged" not "upvoted/downvoted"
  */
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 import type { ProfileData, ProfilePostsResponse, ProfileRankTransaction } from '~/composables/useRankApi'
 import { PlatformIcon, PlatformURL } from '~/composables/useRankApi'
 import { formatXPI } from '~/utils/formatting'
@@ -215,8 +215,13 @@ async function fetchData() {
     // Also check if user is viewing their own profile (RNKC: own content is revealed)
     // For Lotusia profiles, profileId is the scriptPayload
     const isOwnProfile = identity.value.isOwn
+    console.log('hasWalletUpvoted', profileData?.profileMeta?.hasWalletUpvoted)
+    console.log('hasWalletDownvoted', profileData?.profileMeta?.hasWalletDownvoted)
+    console.log('isOwnProfile', isOwnProfile)
+    console.log('profileData', profileData)
     hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || isOwnProfile
 
+    console.log('hasVoted', hasVoted.value)
     // R5: Fetch timeline after reveal state is known
     if (hasVoted.value) {
       fetchTimeline()
@@ -229,7 +234,7 @@ async function fetchData() {
   }
 }
 
-async function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
+async function handleVoted(txid: string, sentiment: ScriptChunkSentimentUTF8, sats: string) {
   // R1: Reveal sentiment after voting
   hasVoted.value = true
   // R5: Fetch timeline on first reveal
@@ -237,16 +242,22 @@ async function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
 
   // Optimistic update: increment local vote count immediately
   if (profile.value && sentiment) {
-    if (sentiment === 'positive') {
-      profile.value = { ...profile.value, votesPositive: profile.value.votesPositive + 1 }
-    } else {
-      profile.value = { ...profile.value, votesNegative: profile.value.votesNegative + 1 }
+    const isPositive = sentiment === 'positive'
+    const isNegative = sentiment === 'negative'
+
+    profile.value = {
+      ...profile.value,
+      satsPositive: BigInt(profile.value.satsPositive + (isPositive ? sats : 0)).toString(),
+      satsNegative: BigInt(profile.value.satsNegative + (isNegative ? sats : 0)).toString(),
+      votesPositive: profile.value.votesPositive + (isPositive ? 1 : 0),
+      votesNegative: profile.value.votesNegative + (isNegative ? 1 : 0),
     }
   }
 
   // Poll API to verify vote was indexed and get updated counts
   // This handles blockchain propagation delays (5-30s typical)
-  if (sentiment) {
+  // Only poll for positive/negative votes (neutral votes don't need verification)
+  if (sentiment && sentiment !== 'neutral') {
     const result = await pollAfterVote({
       platform: platform.value as ScriptChunkPlatformUTF8,
       profileId: profileId.value,
@@ -259,6 +270,8 @@ async function handleVoted(txid: string, sentiment?: 'positive' | 'negative') {
     if (result.confirmed && profile.value) {
       profile.value = {
         ...profile.value,
+        satsPositive: result.satsPositive ?? profile.value.satsPositive,
+        satsNegative: result.satsNegative ?? profile.value.satsNegative,
         votesPositive: result.votesPositive ?? profile.value.votesPositive,
         votesNegative: result.votesNegative ?? profile.value.votesNegative,
         ranking: result.ranking ?? profile.value.ranking,

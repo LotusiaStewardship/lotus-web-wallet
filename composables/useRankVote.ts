@@ -39,6 +39,10 @@ export interface VoteResult {
   success: boolean
   /** Transaction ID if successful */
   txid?: string
+  /** Sentiment of vote if successful */
+  sentiment?: ScriptChunkSentimentUTF8
+  /** Burn amount in satoshis if successful */
+  sats?: string
   /** Error message if failed */
   error?: string
 }
@@ -220,7 +224,7 @@ export function useRankVote() {
       status.value = 'success'
       lastTxid.value = txid
 
-      return { success: true, txid }
+      return { success: true, txid, sentiment, sats: burnAmountSats.toString() }
     } catch (err: any) {
       status.value = 'error'
       const message = err?.message || 'Unknown error casting vote'

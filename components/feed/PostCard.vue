@@ -27,7 +27,7 @@ import { bucketVoteCount, isControversial, controversyScore } from '~/utils/feed
 import { processCommentForDisplay } from '~/utils/sanitize'
 import { useWalletStore } from '~/stores/wallet'
 import { useTime } from '~/composables/useTime'
-import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import type { ScriptChunkPlatformUTF8, ScriptChunkSentimentUTF8 } from 'xpi-ts/lib/rank'
 
 const props = defineProps<{
   post: TrendingItem | PostListItem | PostData | RnkcComment
@@ -59,7 +59,7 @@ const emit = defineEmits<{
   reply: [parentTxid: string]
   replyPosted: [txid: string]
   replyCancelled: []
-  voted: [txid: string, sentiment?: 'positive' | 'negative']
+  voted: [txid: string, sentiment: ScriptChunkSentimentUTF8, sats: string]
 }>()
 
 const walletStore = useWalletStore()
@@ -592,8 +592,9 @@ function handleReplyCancelled() { emit('replyCancelled') }
     <div class="pt-3 border-t border-gray-100 dark:border-gray-800">
       <FeedButtonRow :platform="postPlatform" :profile-id="postProfileId" :post-id="postId" :post-meta="postMeta"
         :is-revealed="isRevealed" :votes-positive="votesPositive" :votes-negative="votesNegative"
-        :bucketed-votes="bucketedVotesDisplay" :ranking-display="rankingDisplay" :can-reply="false" :compact="false"
-        :disabled="!walletReady" @voted="(txid, sentiment) => emit('voted', txid, sentiment)" />
+        :bucketed-votes="bucketedVotesDisplay" :show-ranking-display="false" :ranking-display="rankingDisplay"
+        :can-reply="false" :compact="false" :disabled="!walletReady"
+        @voted="(txid, sentiment, sats) => emit('voted', txid, sentiment, sats)" />
     </div>
   </div>
 
