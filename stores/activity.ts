@@ -66,8 +66,8 @@ export const useActivityStore = defineStore('activity', () => {
 
     try {
       const walletStore = useWalletStore()
-      const p2pStore = useP2PStore()
-      const musig2Store = useMuSig2Store()
+      //const p2pStore = useP2PStore()
+      //const musig2Store = useMuSig2Store()
 
       // Wallet transactions
       for (const tx of walletStore.transactionHistory || []) {
@@ -88,7 +88,7 @@ export const useActivityStore = defineStore('activity', () => {
               type: 'transaction',
               txid: tx.txid,
               direction: tx.isSend ? 'outgoing' : 'incoming',
-              amountSats: BigInt(tx.amount || 0),
+              amountSats: tx.amount,
               address: tx.address,
               confirmations: tx.confirmations,
             },
@@ -193,7 +193,7 @@ export const useActivityStore = defineStore('activity', () => {
    * Combines persisted items with legacy items from other stores.
    */
   const allItems = computed(() => {
-    const persistedItems = Array.from(items.value.values())
+    const persistedItems = items.value.values()
     const legacyItems = getLegacyItems()
     const combined = [...persistedItems, ...legacyItems]
     return combined.sort((a, b) => b.timestamp - a.timestamp)
