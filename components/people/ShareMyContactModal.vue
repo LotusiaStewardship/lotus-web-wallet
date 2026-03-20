@@ -6,7 +6,7 @@
  * The Contact URI uses the PRIMARY BIP44 address as the canonical human identity.
  */
 import { useWalletStore } from '~/stores/wallet'
-import { useP2PStore } from '~/stores/p2p'
+//import { useP2PStore } from '~/stores/p2p'
 import { useContactUri } from '~/composables/useContactUri'
 import { useAddress } from '~/composables/useAddress'
 import QRCodeVue3 from 'qrcode-vue3'
@@ -16,7 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const walletStore = useWalletStore()
-const p2pStore = useP2PStore()
+//const p2pStore = useP2PStore()
 const { generateMyContactUri } = useContactUri()
 const { truncateAddress } = useAddress()
 

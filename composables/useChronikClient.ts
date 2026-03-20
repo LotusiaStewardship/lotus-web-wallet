@@ -24,7 +24,7 @@ import type {
 import type {
   ChronikConnectionOptions,
   ChronikSubscription,
-} from '~/plugins/02.chronik.client'
+} from '~/plugins/chronik.client'
 
 export function useChronikClient() {
   const { $chronik } = useNuxtApp()
