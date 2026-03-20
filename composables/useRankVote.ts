@@ -76,9 +76,8 @@ export const BURN_PRESETS = [
 
 export function useRankVote() {
   // Bitcore and crypto WebWorker plugin instance
-  const { $bitcore, $cryptoWorker } = useNuxtApp()
+  const { $bitcore, $cryptoWorker, $chronik } = useNuxtApp()
   const walletStore = useWalletStore()
-  const { broadcastTransaction } = useChronikClient()
   const { addInputsToTransaction } = useTransactionBuilder()
   const { Script, Transaction } = $bitcore
 
@@ -213,7 +212,7 @@ export function useRankVote() {
 
       // --- Broadcast ---
       status.value = 'broadcasting'
-      const result = await broadcastTransaction(signedTxHex)
+      const result = await $chronik.broadcastTransaction(signedTxHex)
       const txid = typeof result === 'string' ? result : (result as any)?.txid
 
       if (!txid) {

@@ -306,6 +306,29 @@ async function handleDeriveKeys(
   self.postMessage(response)
 }
 
+/**
+ * Sign a transaction with the provided private key.
+ * Supports both legacy (P2PKH) and Taproot (P2TR) address types.
+ *
+ * For P2PKH inputs, standard ECDSA signatures are generated.
+ * For Taproot inputs, Schnorr signatures are used with key-path spending,
+ * requiring the internal public key and merkle root for proper tweak computation.
+ *
+ * The transaction is rebuilt from the hex representation to ensure proper
+ * input types are created via tx.from(), which is necessary for the signing
+ * logic to correctly identify Taproot vs legacy inputs.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param txHex - Serialized unsigned transaction as hex string
+ * @param utxos - Array of UTXOs being spent, each containing:
+ *   - outpoint: Transaction ID and output index as "txid_vout"
+ *   - satoshis: Value of the UTXO in satoshis
+ *   - scriptHex: Locking script of the UTXO as hex
+ * @param privateKeyStr - Private key as hex string for signing
+ * @param addressType - Type of address ('p2pkh' or 'p2tr-commitment')
+ * @param internalPubKeyHex - Internal public key hex for Taproot signing (required for p2tr-commitment)
+ * @param merkleRootHex - Merkle root hex for Taproot script tree (required for p2tr-commitment, typically all zeros for key-path-only)
+ */
 async function handleSignTransaction(
   requestId: string,
   txHex: string,
@@ -372,6 +395,14 @@ async function handleSignTransaction(
   self.postMessage(response)
 }
 
+/**
+ * Sign a message using a private key.
+ * Uses the Bitcoin message signing standard (BIP-137 compatible).
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param messageText - The message to sign
+ * @param privateKeyStr - Private key as hex string or WIF format
+ */
 async function handleSignMessage(
   requestId: string,
   messageText: string,
@@ -391,6 +422,15 @@ async function handleSignMessage(
   self.postMessage(response)
 }
 
+/**
+ * Verify a signed message against an address.
+ * Uses the Bitcoin message signing standard (BIP-137 compatible).
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param messageText - The original message that was signed
+ * @param address - The address that allegedly signed the message
+ * @param signature - The signature to verify
+ */
 async function handleVerifyMessage(
   requestId: string,
   messageText: string,
@@ -415,6 +455,14 @@ async function handleVerifyMessage(
   self.postMessage(response)
 }
 
+/**
+ * Hash data using various algorithms.
+ * Supports SHA-256, RIPEMD-160, HASH160 (SHA-256 + RIPEMD-160), and double SHA-256.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param data - Data to hash as hex string
+ * @param algorithm - Hash algorithm to use
+ */
 async function handleHashData(
   requestId: string,
   data: string,

@@ -6,6 +6,9 @@
 .cache
 dist
 
+# disabled Nuxt plugins, stores, etc.
+.disabled
+
 # Node dependencies
 node_modules
 

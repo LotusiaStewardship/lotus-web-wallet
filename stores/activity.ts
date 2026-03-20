@@ -6,8 +6,8 @@
  */
 import { defineStore } from 'pinia'
 import { useWalletStore } from './wallet'
-import { useP2PStore } from './p2p'
-import { useMuSig2Store } from './musig2'
+//import { useP2PStore } from './p2p'
+//import { useMuSig2Store } from './musig2'
 
 // ============================================================================
 // Constants
@@ -97,7 +97,10 @@ export const useActivityStore = defineStore('activity', () => {
       }
 
       // P2P events
-      for (const event of p2pStore.activityEvents || []) {
+      /**
+       * TODO: Re-enable when p2p store is available
+       */
+      /* for (const event of p2pStore.activityEvents || []) {
         if (!items.value.has(event.id)) {
           const timestamp = event.timestamp
           legacyItems.push({
@@ -123,10 +126,13 @@ export const useActivityStore = defineStore('activity', () => {
             },
           })
         }
-      }
+      } */
 
       // MuSig2 sessions
-      for (const session of musig2Store.activeSessions || []) {
+      /**
+       * TODO: Re-enable when musig2 store is available
+       */
+      /* for (const session of musig2Store.activeSessions || []) {
         const id = `session_${session.id}`
         if (!items.value.has(id)) {
           const timestamp = session.createdAt
@@ -172,7 +178,7 @@ export const useActivityStore = defineStore('activity', () => {
             data,
           })
         }
-      }
+      } */
     } catch (e) {
       // Stores may not be available yet
     }
@@ -182,6 +188,10 @@ export const useActivityStore = defineStore('activity', () => {
 
   // === GETTERS ===
 
+  /**
+   * Get all activity items sorted by timestamp (newest first).
+   * Combines persisted items with legacy items from other stores.
+   */
   const allItems = computed(() => {
     const persistedItems = Array.from(items.value.values())
     const legacyItems = getLegacyItems()
@@ -189,6 +199,10 @@ export const useActivityStore = defineStore('activity', () => {
     return combined.sort((a, b) => b.timestamp - a.timestamp)
   })
 
+  /**
+   * Get filtered activity items based on current filter and search query.
+   * Applies type filter first, then search filter if a query is present.
+   */
   const filteredItems = computed(() => {
     let result = allItems.value
 
@@ -324,6 +338,13 @@ export const useActivityStore = defineStore('activity', () => {
 
   // === ACTIVITY SOURCE HANDLERS ===
 
+  /**
+   * Handle a new or updated transaction
+   * Updates confirmation count for existing transactions or creates a new activity item
+   * @param tx - Transaction data including txid, direction, amount, and confirmations
+   * @param contactId - Optional contact ID if transaction is associated with a known contact
+   * @returns The existing or newly created activity item
+   */
   function onTransaction(
     tx: {
       txid: string
@@ -335,6 +356,7 @@ export const useActivityStore = defineStore('activity', () => {
     },
     contactId?: string,
   ) {
+    // Check if we already have an activity item for this transaction
     const existing = findByTxid(tx.txid)
     if (existing) {
       const data = existing.data as TransactionActivityData
@@ -348,6 +370,7 @@ export const useActivityStore = defineStore('activity', () => {
       return existing
     }
 
+    // Create new activity item for this transaction
     return addActivity({
       type: 'transaction',
       status: tx.confirmations > 0 ? 'complete' : 'pending',
@@ -364,6 +387,12 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Handle a new signing request from a co-signer
+   * Creates an activity item with approve/reject actions
+   * @param request - Signing request data including session info and wallet details
+   * @returns The newly created activity item
+   */
   function onSigningRequest(request: {
     sessionId: string
     walletId: string
@@ -393,6 +422,17 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Handle completion of a MuSig2 signing session
+   * Updates the original signing request status and creates a completion activity
+   * @param session - The completed signing session data
+   * @param session.sessionId - The MuSig2 session identifier
+   * @param session.walletId - The shared wallet ID
+   * @param session.walletName - Display name of the shared wallet
+   * @param session.txid - The resulting transaction ID
+   * @param session.amountSats - The transaction amount in satoshis
+   * @returns The newly created signing_complete activity item
+   */
   function onSigningComplete(session: {
     sessionId: string
     walletId: string
@@ -400,12 +440,14 @@ export const useActivityStore = defineStore('activity', () => {
     txid: string
     amountSats: bigint
   }) {
+    // Find and update the original signing request
     const request = findBySessionId(session.sessionId)
     if (request) {
       request.status = 'complete'
       request.actions = undefined
     }
 
+    // Create a new activity item for the completed signing
     return addActivity({
       type: 'signing_complete',
       status: 'complete',
@@ -417,6 +459,16 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Handle P2P peer connection/disconnection events.
+   * Creates activity items to track peer presence changes.
+   *
+   * @param event - The peer event data
+   * @param event.type - Whether the peer connected or disconnected
+   * @param event.peerId - The peer's libp2p ID
+   * @param event.peerName - Optional display name for the peer
+   * @returns The newly created activity item
+   */
   function onPeerEvent(event: {
     type: 'connected' | 'disconnected'
     peerId: string
@@ -475,6 +527,16 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Record a shared wallet creation activity.
+   * Called when a new MuSig2 shared wallet is created with multiple participants.
+   *
+   * @param wallet - The created wallet information
+   * @param wallet.walletId - The unique identifier for the shared wallet
+   * @param wallet.walletName - Display name for the shared wallet
+   * @param wallet.participantIds - Array of participant contact IDs
+   * @returns The newly created activity item
+   */
   function onWalletCreated(wallet: {
     walletId: string
     walletName: string
@@ -492,6 +554,17 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Record a shared wallet funding activity.
+   * Called when a MuSig2 shared wallet receives funds.
+   *
+   * @param wallet - The funded wallet information
+   * @param wallet.walletId - The unique identifier for the shared wallet
+   * @param wallet.walletName - Display name for the shared wallet
+   * @param wallet.amountSats - The amount funded in satoshis
+   * @param wallet.participantIds - Array of participant contact IDs
+   * @returns The newly created activity item
+   */
   function onWalletFunded(wallet: {
     walletId: string
     walletName: string
@@ -510,6 +583,17 @@ export const useActivityStore = defineStore('activity', () => {
     })
   }
 
+  /**
+   * Record a vote received activity.
+   * Called when someone votes on a linked social profile.
+   *
+   * @param vote - The vote information
+   * @param vote.platform - The social platform (e.g., 'twitter', 'github')
+   * @param vote.profileId - The profile identifier on the platform
+   * @param vote.voteType - Whether it's an upvote or downvote
+   * @param vote.voterAddress - Optional address of the voter
+   * @returns The newly created activity item
+   */
   function onVoteReceived(vote: {
     platform: string
     profileId: string
