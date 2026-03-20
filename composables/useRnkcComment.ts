@@ -26,8 +26,8 @@ import { useWalletStore } from '~/stores/wallet'
 export interface CommentParams {
   /** Platform identifier (e.g. 'twitter') */
   platform: ScriptChunkPlatformUTF8
-  /** Target profile ID for profile/post comments. Omit for new standalone posts. */
-  profileId?: string
+  /** Target profile ID for profile/post comments. Set to user's profileId for standalone posts. */
+  profileId: string
   /** Optional post ID for post-level comments */
   postId?: string
   /** Comment text (UTF-8) */
@@ -73,9 +73,8 @@ export const COMMENT_MIN_FEE_RATE = MIN_FEE_RATE_PER_BYTE
 // ============================================================================
 
 export function useRnkcComment() {
-  const { $bitcore, $cryptoWorker } = useNuxtApp()
+  const { $bitcore, $cryptoWorker, $chronik } = useNuxtApp()
   const walletStore = useWalletStore()
-  const { broadcastTransaction } = useChronikClient()
   const { addInputsToTransaction } = useTransactionBuilder()
   const { Script, Transaction } = $bitcore
 
@@ -259,7 +258,7 @@ export function useRnkcComment() {
 
       // --- Broadcast ---
       status.value = 'broadcasting'
-      const result = await broadcastTransaction(signResult.signedTxHex)
+      const result = await $chronik.broadcastTransaction(signResult.signedTxHex)
       const txid = typeof result === 'string' ? result : (result as any)?.txid
 
       if (!txid) {
