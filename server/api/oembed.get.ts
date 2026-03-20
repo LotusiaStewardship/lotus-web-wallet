@@ -7,7 +7,7 @@
  *
  * Usage: GET /api/oembed?url=https://twitter.com/user/status/123
  */
-export default defineEventHandler(async (event) => {
+export default defineEventHandler(async event => {
   const query = getQuery(event)
   const tweetUrl = query.url as string | undefined
 
@@ -33,6 +33,7 @@ export default defineEventHandler(async (event) => {
     const oembedUrl = `https://publish.twitter.com/oembed?url=${encodeURIComponent(tweetUrl)}&omit_script=true&dnt=true`
     const data = await $fetch(oembedUrl)
     return data
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } catch (err: any) {
     throw createError({
       statusCode: err?.statusCode || 502,
