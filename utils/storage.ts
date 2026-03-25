@@ -56,6 +56,9 @@ export const STORAGE_KEYS = {
   NOTIFICATIONS: 'lotus-wallet-notifications',
   NOTIFICATION_PREFERENCES: 'lotus-wallet-notification-preferences',
 
+  // Activity
+  ACTIVITY: 'lotus:activity',
+
   // Identity and account storage
   IDENTITIES: 'lotus:identities',
   DISCOVERY_CACHE: 'lotus:discovery:cache',
