@@ -185,7 +185,7 @@ export default defineNuxtPlugin({
       // Get Bitcore Script from hex
       // We assume the script is valid because UTXOs are always valid
       const script = $bitcore.Script.fromHex(input.outputScript!)
-      // Address will be defined because UTXOs are always from valid addresses
+      // Address will be defined because UTXOs are always from valid addresses (except coinbase)
       const address = getAddressFromScript(script)!.toXAddress()
 
       return {
@@ -240,20 +240,21 @@ export default defineNuxtPlugin({
     }
 
     /**
-     * Convert a Chronik transaction to an Explorer-compatible transaction
+     * Convert a Chronik transaction to an Explorer-compatible transaction.
+     * Transforms inputs and outputs to include resolved addresses and calculates
+     * the total burned satoshis from OP_RETURN outputs.
      * @param tx - The Chronik transaction to convert
      * @returns The Explorer-compatible transaction with addresses and burned sats calculated
      */
     function convertToExplorerTx(tx: Tx): ExplorerTx {
-      // This will be counted in the outputs map function
-      const sumBurnedSats = 0n
+      let sumBurnedSats = 0n
       return {
         ...tx,
-        inputs: tx.inputs.map(
-          input =>
-            input.outputScript
-              ? convertInputToExplorerInput(input)
-              : (input as ExplorerTxInput), // address is not defined for coinbase inputs
+        inputs: tx.inputs.map(input =>
+          // Coinbase inputs have no outputScript, so skip address extraction
+          input.outputScript
+            ? convertInputToExplorerInput(input)
+            : (input as ExplorerTxInput),
         ),
         outputs: tx.outputs.map(output =>
           convertOutputToExplorerOutput(output, sumBurnedSats),
@@ -306,39 +307,36 @@ export default defineNuxtPlugin({
     }
 
     /**
-     * Fetch paginated block list
-     * @param page - The page number to fetch (0-indexed)
-     * @param pageSize - The number of blocks per page
-     * @returns Array of Chronik `BlockInfo` objects
+     * Fetch paginated block list using start and end heights
+     * @param startHeight - The starting block height (inclusive)
+     * @param endHeight - The ending block height (inclusive)
+     * @returns Array of Chronik `BlockInfo` objects for the specified height range
      */
-    async function fetchBlocks(page: number = 0, pageSize: number = 10) {
+    async function fetchBlocks(startHeight: number, endHeight: number) {
       const chronikClient = ensureChronikClient()
-      const blocks = await chronikClient.blocks(page, pageSize)
+      const blocks = await chronikClient.blocks(startHeight, endHeight)
       return blocks
     }
 
     /**
      * Fetch a single block by its hash or height
-     * @param hashOrHeight - The block hash or height to fetch
-     * @returns The Chronik `Block` object
+     * Converts all transactions to Explorer format and extracts miner address
+     * @param hashOrHeight - The block hash (hex string) or height (numeric string)
+     * @returns The block with Explorer-compatible transactions and miner address
      */
     async function fetchBlock(hashOrHeight: string) {
       const chronikClient = ensureChronikClient()
-      // blockchain info for confirmations
-      const { tipHeight } = await fetchBlockchainInfo()
 
-      // If hashOrHeight is a number, it's a height
+      // Parse height if numeric, otherwise use hash directly
       const height = parseInt(hashOrHeight)
       const block = await chronikClient.block(height || hashOrHeight)
 
-      // Convert to ExplorerBlock
+      // Extract miner address from coinbase transaction's first non-OP_RETURN output
       const minedByScriptHex = block.txs[0]?.outputs[1]?.outputScript
       const minedByAddress = getAddressFromScript(minedByScriptHex)
-      const txs: ExplorerTx[] = []
-      for (const tx of block.txs) {
-        const explorerTx = convertToExplorerTx(tx)
-        txs.push(explorerTx)
-      }
+
+      // Convert all transactions to Explorer format
+      const txs: ExplorerTx[] = block.txs.map(tx => convertToExplorerTx(tx))
 
       return {
         ...block,
