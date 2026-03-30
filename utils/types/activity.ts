@@ -26,8 +26,13 @@ export interface TransactionActivityData {
   type: 'transaction'
   txid: string
   direction: 'incoming' | 'outgoing'
-  amountSats: bigint
+  amountSats: string // string for JSON-encoded localStorage (bigint unsupported)
   address: string
+  // TODO: replace confirmations with blockHeight
+  // there is no mechanism to update confirmations after initial confirmation,
+  // so instead we use blockHeight and calculate confirmations based on current tipHeight
+  // like how we are doing in the explorer
+  //blockHeight: number // -1 if not confirmed
   confirmations: number
 }
 

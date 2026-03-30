@@ -74,8 +74,12 @@ export const useActivityStore = defineStore('activity', () => {
   /**
    * Get activity items from other stores (wallet transactions, P2P events, MuSig2 sessions).
    * These items are generated on-the-fly and use lastReadTimestamp to determine read state.
+   * @deprecated MuSig2/P2P is currently disabled, so no activity items from them. Wallet transactions
+   * are now being stored properly in the activity store, rather than routing through the `walletStore.transactionHistory`.
    */
   function getLegacyItems(): ActivityItem[] {
+    // TODO: eventually we need to fully deprecate legacy items and uncomment this below
+    //return []
     const legacyItems: ActivityItem[] = []
 
     try {
@@ -394,7 +398,7 @@ export const useActivityStore = defineStore('activity', () => {
         type: 'transaction',
         txid: tx.txid,
         direction: tx.direction,
-        amountSats: tx.amountSats,
+        amountSats: tx.amountSats.toString(),
         address: tx.address,
         confirmations: tx.confirmations,
       },
