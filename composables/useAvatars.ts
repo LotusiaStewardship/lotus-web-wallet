@@ -1,15 +1,41 @@
 /**
  * Avatar composable
  * Handles profile avatar fetching and caching for social profiles
+ * Cache persists across page reloads via localStorage
  */
 
 import type { ScriptChunkPlatformUTF8 } from 'xpi-ts/lib/rank'
+import { STORAGE_KEYS, getItem, setItem } from '~/utils/storage'
+
+/** Cache TTL: 8 hours */
+const AVATAR_CACHE_TTL = 8 * 60 * 60 * 1000
+
+/** Maximum number of entries in the avatar cache */
+const MAX_CACHE_SIZE = 200
+
+interface CachedAvatar {
+  url: string
+  timestamp: number
+}
+
+interface PendingRequest {
+  promise: Promise<{
+    src: string | null
+    loading: boolean
+    initials: string
+    color: string
+  }>
+}
 
 /**
  * Get Twitter/X profile image URL through unavatar.io
+ * Cache-bust uses a TTL-window epoch so the URL stays stable within each
+ * 8-hour window (allowing browser HTTP caching) but changes when the
+ * window rolls over (forcing a fresh fetch).
  */
 const getTwitterProfileImageUrl = (profileId: string): string => {
-  return `https://unavatar.io/x/${profileId}`
+  const windowEpoch = Math.floor(Date.now() / AVATAR_CACHE_TTL)
+  return `https://unavatar.io/x/${profileId}?_w=${windowEpoch}`
 }
 
 /**
@@ -54,88 +80,119 @@ export const getProfileColor = (profileId: string): string => {
 }
 
 /**
- * Get avatar URL for a profile based on platform
+ * Get avatar URL for a profile based on platform (synchronous)
  */
-export const getProfileAvatar = async (
+export const getProfileAvatar = (
   platform: string,
   profileId: string,
-): Promise<string | null> => {
-  try {
-    if (platform.toLowerCase() === 'twitter') {
-      return getTwitterProfileImageUrl(profileId)
-    }
-    // For other platforms, use Gravatar fallback
-    return getFallbackAvatarUrl(profileId)
-  } catch (error) {
-    console.error('Error getting profile avatar:', error)
-    return getFallbackAvatarUrl(profileId)
+): string => {
+  if (platform.toLowerCase() === 'twitter') {
+    return getTwitterProfileImageUrl(profileId)
   }
+  return getFallbackAvatarUrl(profileId)
 }
 
 /**
- * Composable for handling profile avatars with caching
+ * Composable for handling profile avatars with persistent caching
  */
 export function useAvatars() {
-  // Cache for avatar URLs to avoid repeated requests
-  const avatarCache = useState<Record<string, string>>(
+  const avatarCache = useState<Record<string, CachedAvatar>>(
     'avatar-cache',
-    () => ({}),
+    () => {
+      const stored = getItem<Record<string, CachedAvatar>>(
+        STORAGE_KEYS.AVATAR_CACHE,
+        {},
+      )
+      const now = Date.now()
+      const cleaned: Record<string, CachedAvatar> = {}
+      for (const [key, entry] of Object.entries(stored)) {
+        if (now - entry.timestamp < AVATAR_CACHE_TTL) {
+          cleaned[key] = entry
+        }
+      }
+      if (Object.keys(cleaned).length !== Object.keys(stored).length) {
+        setItem(STORAGE_KEYS.AVATAR_CACHE, cleaned)
+      }
+      return cleaned
+    },
   )
-  // Cache for loading states
+
   const loadingAvatars = useState<Record<string, boolean>>(
     'avatar-loading',
     () => ({}),
   )
 
+  // Deduplicate concurrent requests for the same key
+  const pendingRequests: Record<string, PendingRequest> = {}
+
+  // Debounced persistence to avoid excessive localStorage writes
+  let persistTimer: ReturnType<typeof setTimeout> | null = null
+
   /**
-   * Get an avatar URL for a profile, with caching
+   * Schedule a debounced persistence of the avatar cache to localStorage.
+   * Waits 500ms after the last call before writing to avoid excessive writes.
    */
-  async function getAvatar(platform: string, profileId: string) {
-    const cacheKey = `${platform}:${profileId}`
-
-    // Return from cache if available
-    if (avatarCache.value[cacheKey]) {
-      return {
-        src: avatarCache.value[cacheKey],
-        loading: false,
-        initials: getProfileInitials(profileId),
-        color: getProfileColor(profileId),
-      }
+  function schedulePersist() {
+    if (persistTimer) {
+      clearTimeout(persistTimer)
     }
+    persistTimer = setTimeout(() => {
+      setItem(STORAGE_KEYS.AVATAR_CACHE, avatarCache.value)
+      persistTimer = null
+    }, 500)
+  }
 
-    // Set loading state
-    loadingAvatars.value[cacheKey] = true
+  function evictOldestIfNeeded() {
+    const entries = Object.entries(avatarCache.value)
+    if (entries.length <= MAX_CACHE_SIZE) return
 
-    try {
-      const avatarUrl = await getProfileAvatar(platform, profileId)
-      if (avatarUrl) {
-        // Cache the result
-        avatarCache.value[cacheKey] = avatarUrl
-      }
-      loadingAvatars.value[cacheKey] = false
-
-      return {
-        src: avatarUrl,
-        loading: false,
-        initials: getProfileInitials(profileId),
-        color: getProfileColor(profileId),
-      }
-    } catch (error) {
-      console.error('Error fetching avatar:', error)
-      loadingAvatars.value[cacheKey] = false
-
-      return {
-        src: null,
-        loading: false,
-        initials: getProfileInitials(profileId),
-        color: getProfileColor(profileId),
-      }
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp)
+    const toRemove = entries.length - MAX_CACHE_SIZE
+    for (let i = 0; i < toRemove; i++) {
+      delete avatarCache.value[entries[i][0]]
     }
   }
 
-  /**
-   * Check if avatar is currently loading
-   */
+  function buildResult(
+    platform: string,
+    profileId: string,
+    src: string | null,
+  ) {
+    return {
+      src,
+      loading: false,
+      initials: getProfileInitials(profileId),
+      color: getProfileColor(profileId),
+    }
+  }
+
+  async function getAvatar(platform: string, profileId: string) {
+    const cacheKey = `${platform}:${profileId}`
+
+    const cached = avatarCache.value[cacheKey]
+    if (cached && Date.now() - cached.timestamp < AVATAR_CACHE_TTL) {
+      return buildResult(platform, profileId, cached.url)
+    }
+
+    if (pendingRequests[cacheKey]) {
+      return pendingRequests[cacheKey].promise
+    }
+
+    loadingAvatars.value[cacheKey] = true
+
+    const promise = (async () => {
+      const avatarUrl = getProfileAvatar(platform, profileId)
+      avatarCache.value[cacheKey] = { url: avatarUrl, timestamp: Date.now() }
+      evictOldestIfNeeded()
+      schedulePersist()
+      loadingAvatars.value[cacheKey] = false
+      return buildResult(platform, profileId, avatarUrl)
+    })()
+
+    pendingRequests[cacheKey] = { promise }
+    return promise
+  }
+
   function isAvatarLoading(
     platform: ScriptChunkPlatformUTF8,
     profileId: string,
@@ -144,20 +201,18 @@ export function useAvatars() {
     return loadingAvatars.value[cacheKey] || false
   }
 
-  /**
-   * Get cached avatar URL synchronously (returns undefined if not cached)
-   */
   function getCachedAvatar(
     platform: string,
     profileId: string,
   ): string | undefined {
     const cacheKey = `${platform}:${profileId}`
-    return avatarCache.value[cacheKey]
+    const cached = avatarCache.value[cacheKey]
+    if (cached && Date.now() - cached.timestamp < AVATAR_CACHE_TTL) {
+      return cached.url
+    }
+    return undefined
   }
 
-  /**
-   * Preload avatars for a list of profiles
-   */
   async function preloadAvatars(
     profiles: Array<{ platform: string; profileId: string }>,
   ) {

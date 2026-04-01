@@ -63,6 +63,9 @@ export const STORAGE_KEYS = {
   IDENTITIES: 'lotus:identities',
   DISCOVERY_CACHE: 'lotus:discovery:cache',
 
+  // Avatars
+  AVATAR_CACHE: 'lotus:avatar-cache',
+
   // Migration tracking
   MIGRATION_VERSION: 'lotus:migration:version',
 } as const
