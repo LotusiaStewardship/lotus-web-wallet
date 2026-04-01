@@ -274,5 +274,6 @@ async function handleScanFlow() {
     <A11ySkipLinks />
     <UiNetworkErrorBanner />
     <UiOfflineIndicator />
+    <UiSWUpdatePrompt />
   </div>
 </template>

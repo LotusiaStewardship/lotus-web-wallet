@@ -36,8 +36,11 @@ onBeforeMount(() => {
   // Initialize activity store
   activityStore.initialize()
 
-  // Set up service worker message handler
-  setupServiceWorkerMessageHandler()
+    // Set up service worker message handler
+    setupServiceWorkerMessageHandler()
+
+    // Set up service worker rehydration for updates
+    setupServiceWorkerRehydration()
 
   // Pre-warm overlay instances during idle time to eliminate first-click delay
   // Use requestIdleCallback if available, otherwise fall back to setTimeout
@@ -77,6 +80,33 @@ function setupServiceWorkerMessageHandler() {
         walletStore.refreshUtxos()
         break
     }
+  })
+}
+
+// Rehydrate service worker state after it updates and takes control
+// When a new SW activates, it loses all in-memory state (UTXO cache,
+// network monitor config, session tracking). This listener detects
+// the controller change and re-syncs everything.
+function setupServiceWorkerRehydration() {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+    return
+  }
+
+  navigator.serviceWorker.addEventListener('controllerchange', async () => {
+    console.log('[SW Rehydration] New service worker activated, re-syncing state...')
+
+    if (!walletStore.initialized || !walletStore.connected) {
+      console.warn('[SW Rehydration] Wallet not ready, skipping rehydration')
+      return
+    }
+
+    // Re-initialize UTXO cache in the new SW
+    walletStore.syncWithServiceWorker()
+
+    // Restart network monitoring with current config
+    walletStore.initializeBackgroundMonitoring()
+
+    console.log('[SW Rehydration] State rehydration complete')
   })
 }
 

@@ -56,7 +56,7 @@ export default defineNuxtConfig({
     strategies: 'injectManifest',
     srcDir: 'service-worker',
     filename: 'sw.ts',
-    registerType: 'autoUpdate',
+    registerType: 'prompt',
     manifest: {
       name: 'Lotusia',
       short_name: 'Lotusia',
