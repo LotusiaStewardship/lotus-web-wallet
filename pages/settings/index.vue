@@ -10,6 +10,7 @@ import { useOnboardingStore } from '~/stores/onboarding'
 import { useActivityStore } from '~/stores/activity'
 import { useWalletStore } from '~/stores/wallet'
 import { useSettingsStore } from '~/stores/settings'
+import { useNotificationStore } from '~/stores/notifications'
 
 definePageMeta({
   title: 'Settings',
@@ -22,6 +23,10 @@ const onboardingStore = useOnboardingStore()
 const activityStore = useActivityStore()
 const walletStore = useWalletStore()
 const settingsStore = useSettingsStore()
+const notificationStore = useNotificationStore()
+
+// Initialize notification store
+notificationStore.initialize()
 
 // Overlay management via useOverlays
 const { openBackupModal, openRestoreWalletModal } = useOverlays()
@@ -101,6 +106,45 @@ const networkOptions = [
   { value: 'livenet', label: 'Mainnet' },
   { value: 'testnet', label: 'Testnet' },
 ]
+
+// Notification toggles - computed with getter/setter
+const browserNotifications = computed({
+  get: () => notificationStore.preferences.browserNotifications,
+  set: async (value: boolean) => {
+    if (value && notificationStore.browserPermission !== 'granted') {
+      const permission = await notificationStore.requestBrowserPermission()
+      if (permission === 'granted') {
+        notificationStore.updatePreferences({ browserNotifications: true })
+      }
+    } else {
+      notificationStore.updatePreferences({ browserNotifications: value })
+    }
+  },
+})
+
+const transactionNotifications = computed({
+  get: () => notificationStore.preferences.transactions,
+  set: (value: boolean) => notificationStore.updatePreferences({ transactions: value }),
+})
+
+const signingRequestNotifications = computed({
+  get: () => notificationStore.preferences.signingRequests,
+  set: (value: boolean) => notificationStore.updatePreferences({ signingRequests: value }),
+})
+
+const socialNotifications = computed({
+  get: () => notificationStore.preferences.social,
+  set: (value: boolean) => notificationStore.updatePreferences({ social: value }),
+})
+
+const systemNotifications = computed({
+  get: () => notificationStore.preferences.system,
+  set: (value: boolean) => notificationStore.updatePreferences({ system: value }),
+})
+
+const notificationPermissionStatus = computed(() => {
+  return notificationStore.browserPermission
+})
 
 // Dismissed prompts
 const dismissedPrompts = computed(() => {
@@ -204,6 +248,44 @@ function confirmResetWallet() {
           <span class="w-2 h-2 rounded-full" :class="isConnected ? 'bg-success' : 'bg-error'" />
         </template>
       </SettingsItem>
+    </SettingsSection>
+
+    <!-- Notifications Section -->
+    <SettingsSection title="Notifications" icon="i-lucide-bell">
+      <SettingsItem
+        label="Browser Notifications"
+        :description="notificationPermissionStatus === 'granted' ? 'Enabled' : notificationPermissionStatus === 'denied' ? 'Blocked by browser' : 'Click to enable'"
+      >
+        <template #right>
+          <USwitch v-model="browserNotifications" />
+        </template>
+      </SettingsItem>
+
+      <template v-if="browserNotifications">
+        <SettingsItem label="Transactions" description="Received and sent transactions">
+          <template #right>
+            <USwitch v-model="transactionNotifications" />
+          </template>
+        </SettingsItem>
+
+        <SettingsItem label="Received Votes" description="RANK votes on your profiles">
+          <template #right>
+            <USwitch v-model="socialNotifications" />
+          </template>
+        </SettingsItem>
+
+        <SettingsItem label="Signing Requests" description="P2P signing requests">
+          <template #right>
+            <USwitch v-model="signingRequestNotifications" />
+          </template>
+        </SettingsItem>
+
+        <SettingsItem label="System" description="App updates and system events">
+          <template #right>
+            <USwitch v-model="systemNotifications" />
+          </template>
+        </SettingsItem>
+      </template>
     </SettingsSection>
 
     <!-- Security Section -->
