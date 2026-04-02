@@ -30,9 +30,13 @@ const isVoting = computed(() =>
   status.value === 'building' || status.value === 'signing' || status.value === 'broadcasting',
 )
 
-const formattedBurn = computed(() =>
-  formatXPI(selectedBurnSats.value.toString(), { minDecimals: 0, maxDecimals: 2 }),
-)
+const displayAmount = computed(() => {
+  const customInput = String(customBurnInput.value ?? '').trim()
+  if (customInput) {
+    return customInput
+  }
+  return formatXPI(selectedBurnSats.value.toString(), { minDecimals: 0, maxDecimals: 2 })
+})
 
 function selectPreset(sats: bigint) {
   selectedBurnSats.value = sats
@@ -105,7 +109,7 @@ function close() {
 
         <!-- Selected Amount Display -->
         <div class="text-center py-2">
-          <span class="text-2xl font-bold font-mono">{{ formattedBurn }}</span>
+          <span class="text-2xl font-bold font-mono">{{ displayAmount }}</span>
           <span class="text-gray-500 ml-1">XPI</span>
         </div>
 
