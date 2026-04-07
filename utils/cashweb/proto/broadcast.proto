@@ -1,0 +1,38 @@
+syntax = "proto3";
+package broadcast;
+
+// ForumPost represents a post in a forum-style broadcast system.
+// It contains the basic elements needed to display and link to content.
+message ForumPost {
+  // The title of the forum post, displayed as the heading.
+  string title = 1;
+  // An optional URL associated with the post, can link to external content.
+  string url = 2;
+  // The main body text content of the post.
+  string message = 3;
+}
+
+// BroadcastEntry is an individual piece of structured data within a broadcast.
+// Each entry has a type identifier, optional metadata headers, and a payload.
+message BroadcastEntry {
+  // The type identifier for this entry (e.g., "text/plain", "forum_post").
+  string kind = 1;
+  // Key-value pairs containing metadata about the entry.
+  map<string, string> headers = 2;
+  // The serialized content of the entry, interpretation depends on 'kind'.
+  bytes payload = 3;
+}
+
+// BroadcastMessage is the primary container for broadcasting content.
+// It supports threading through parent references and can contain multiple entries.
+message BroadcastMessage {
+  // The topic or channel this message belongs to.
+  string topic = 1;
+  // Unix timestamp (in milliseconds) when the message was created.
+  int64 timestamp = 2;
+  // Collection of entries contained within this broadcast message.
+  repeated BroadcastEntry entries = 3;
+  // Digest (hash) of the parent message for threading/reply chains.
+  // Empty if this is a root message with no parent.
+  bytes parent_digest = 4;
+}

@@ -1,6 +1,52 @@
 // nuxt.config.ts - Simplified
 import { fileURLToPath } from 'node:url'
 import { nodePolyfills } from 'vite-plugin-node-polyfills'
+import { execSync } from 'node:child_process'
+import { existsSync, statSync } from 'node:fs'
+
+// Build protobuf types before Nuxt build if proto files are newer
+function buildProtosIfNeeded() {
+  const protoDir = fileURLToPath(
+    new URL('./utils/cashweb/proto', import.meta.url),
+  )
+  const protoJsPath = fileURLToPath(
+    new URL('./utils/cashweb/protos.js', import.meta.url),
+  )
+
+  const protoFiles = [
+    'relay.proto',
+    'stealth.proto',
+    'metadata.proto',
+    'payload.proto',
+    'filters.proto',
+    'p2pkh.proto',
+    'broadcast.proto',
+    'paymentrequest.proto',
+  ]
+
+  // Check if any proto file is newer than protos.js
+  let needsRebuild = !existsSync(protoJsPath)
+
+  if (!needsRebuild) {
+    const jsMtime = statSync(protoJsPath).mtimeMs
+
+    for (const protoFile of protoFiles) {
+      const protoPath = `${protoDir}/${protoFile}`
+      if (existsSync(protoPath)) {
+        const protoMtime = statSync(protoPath).mtimeMs
+        if (protoMtime > jsMtime) {
+          needsRebuild = true
+          break
+        }
+      }
+    }
+  }
+
+  if (needsRebuild) {
+    console.log('🔨 Building CashWeb protobuf types...')
+    execSync('node scripts/build-protos.mjs', { stdio: 'inherit' })
+  }
+}
 
 // vite-plugin-node-polyfills sets resolve.alias mapping `buffer` →
 // `vite-plugin-node-polyfills/shims/buffer` (and similar for global/process).
@@ -37,6 +83,12 @@ function polyfillShimResolver() {
 }
 
 export default defineNuxtConfig({
+  hooks: {
+    'build:before': () => {
+      buildProtosIfNeeded()
+    },
+  },
+
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
 

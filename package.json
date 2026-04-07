@@ -11,7 +11,9 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "build:protos": "node scripts/build-protos.mjs",
+    "watch:protos": "node scripts/build-protos.mjs && npx chokidar 'utils/cashweb/proto/*.proto' -c 'node scripts/build-protos.mjs'"
   },
   "repository": {
     "type": "git",
@@ -33,16 +35,19 @@
     "chronik-client": "0.19.0",
     "events": "^3.3.0",
     "pinia": "^3.0.4",
+    "protobufjs": "7.5.4",
     "qrcode-vue3": "^1.7.1",
     "vite-plugin-node-polyfills": "^0.25.0",
     "vue-chartjs": "^5.3.3",
     "vue-qrcode-reader": "^5.7.3",
     "vue-tsc": "^3.1.5",
-    "xpi-ts": "0.2.21"
+    "xpi-ts": "0.2.24"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.15.2",
     "@vite-pwa/nuxt": "^1.1.1",
+    "chokidar": "^5.0.0",
+    "protobufjs-cli": "^1.2.0",
     "nuxt": "^3.21.2",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.52.0",
