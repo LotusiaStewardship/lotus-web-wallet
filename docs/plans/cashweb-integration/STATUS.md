@@ -1,7 +1,7 @@
 # CashWeb Integration Status
 
-**Last Updated**: March 27, 2026  
-**Current Phase**: Phase 1 - Protobuf Types (COMPLETED)
+**Last Updated**: April 7, 2026  
+**Current Phase**: Phase 2 - Crypto Integration (COMPLETED)
 
 ---
 
@@ -221,16 +221,104 @@ const decoded = relay.Payload.decode(encoded)
 
 None. All tests passing.
 
+---
+
+## Phase 2: Crypto Integration ✓
+
+**Status**: COMPLETED  
+**Duration**: ~1 hour  
+**Priority**: P0 (Blocking)
+
+### Summary
+
+Extended the existing crypto worker with 6 CashWeb cryptographic operations using Web Crypto API (AES-CBC) for symmetric encryption and xpi-ts (secp256k1) for elliptic curve operations. All CPU-intensive crypto operations are offloaded to the web worker, keeping the main thread responsive.
+
+### Implementation Details
+
+#### 1. Type Definitions Extended (`utils/types/crypto-worker.ts`)
+
+Added 6 new request/response type pairs:
+
+| Request Type | Response Type | Purpose |
+|---|---|---|
+| `ENCRYPT_PAYLOAD` | `PAYLOAD_ENCRYPTED` | AES-CBC encryption of message payloads |
+| `DECRYPT_PAYLOAD` | `PAYLOAD_DECRYPTED` | AES-CBC decryption of received payloads |
+| `DERIVE_SHARED_KEY` | `SHARED_KEY_DERIVED` | ECDH + SHA256-HMAC shared key derivation |
+| `DERIVE_STAMP_KEYS` | `STAMP_KEYS_DERIVED` | Stamp private/public key derivation |
+| `DERIVE_STEALTH_PUBLIC_KEY` | `STEALTH_PUBLIC_KEY_DERIVED` | Stealth address public key derivation |
+| `DERIVE_STEALTH_PRIVATE_KEY` | `STEALTH_PRIVATE_KEY_DERIVED` | Stealth address private key derivation |
+
+Updated `ResponseTypeMap` for type-safe request/response correlation. Added explicit `AddressType` import.
+
+#### 2. Crypto Worker Extended (`workers/crypto.worker.ts`)
+
+Added 6 handler functions:
+
+**Symmetric Encryption (Web Crypto API)**:
+- `handleEncryptPayload` — AES-CBC encryption, splits shared key into IV (first 16 bytes) + encryption key
+- `handleDecryptPayload` — AES-CBC decryption, same key splitting strategy
+
+**Elliptic Curve Operations (xpi-ts)**:
+- `handleDeriveSharedKey` — ECDH (`pubKey.point * privKey.bn`) + SHA256-HMAC with salt
+- `handleDeriveStampKeys` — `stampPrivKey = SHA256(digest) + destPrivKey mod N`
+- `handleDeriveStealthPublicKey` — `stealthPubKey = H(ebG)G + destPubKey`
+- `handleDeriveStealthPrivateKey` — `stealthPrivKey = H(ebG) + destPrivKey mod N`
+
+Added `BN` and `Point` imports from xpi-ts for big number and elliptic curve operations. Updated `WORKER_VERSION` to `2.0.0`.
+
+#### 3. Plugin API Extended (`plugins/crypto-worker.client.ts`)
+
+Added 6 public API methods wrapping `sendRequest`:
+
+```typescript
+// Symmetric encryption
+encryptPayload(data: string, sharedKey: string): Promise<string>
+decryptPayload(data: string, sharedKey: string): Promise<string>
+
+// Key derivation
+deriveSharedKey(sourcePrivKey: string, destPubKey: string, salt: string): Promise<string>
+deriveStampKeys(payloadDigest: string, destPrivKey: string): Promise<StampKeysDerivedResponse['payload']>
+deriveStealthPublicKey(ephemPrivKey: string, destPubKey: string): Promise<StealthPublicKeyDerivedResponse['payload']>
+deriveStealthPrivateKey(ephemPubKey: string, destPrivKey: string): Promise<StealthPrivateKeyDerivedResponse['payload']>
+```
+
+### Design Decisions
+
+- **Web Crypto API over node-forge**: No additional dependencies, native browser support, available in workers, better performance
+- **xpi-ts for secp256k1**: Reuses existing SDK, consistent with rest of codebase
+- **Worker offloading**: All crypto operations run in web worker to keep UI responsive
+
+### Files Changed
+
+**Modified Files**:
+- `utils/types/crypto-worker.ts` — 6 new request/response type pairs, updated ResponseTypeMap
+- `workers/crypto.worker.ts` — 6 new handler functions, BN/Point imports, version bump
+- `plugins/crypto-worker.client.ts` — 6 new public API methods
+
+### Completion Criteria Met
+
+- ✅ Payload encryption/decryption via Web Crypto API (AES-CBC)
+- ✅ ECDH shared key derivation with SHA256-HMAC
+- ✅ Stamp key derivation (payload digest + destination private key)
+- ✅ Stealth public key derivation (ephemeral private + destination.public)
+- ✅ Stealth private key derivation (ephemeral.public + destination.private)
+- ✅ All operations offloaded to crypto worker
+- ✅ Type-safe request/response correlation
+- ✅ Build passes, typecheck passes (0 new errors)
+
+### Known Issues
+
+None. Build and typecheck pass cleanly.
+
 ### Next Steps
 
-**Phase 2: Crypto Integration** (Estimated: 2-3 days)
-- Migrate `PayloadConstructor` to crypto worker
-- Implement AES-CBC encryption/decryption
-- Implement ECDH key derivation
-- Implement payload signing/verification
-- Offload CPU-intensive operations to web worker
+**Phase 3: Relay Plugin** (Estimated: 2 days)
+- Create `plugins/relay.client.ts` with HTTP operations
+- Implement message construction helpers
+- Create `composables/useRelayClient.ts`
+- Integrate with wallet store and crypto worker
 
-See `02_CRYPTO_INTEGRATION.md` for detailed Phase 2 plan.
+See `03_RELAY_PLUGIN.md` for detailed Phase 3 plan.
 
 ---
 

@@ -334,6 +334,79 @@ export default defineNuxtPlugin({
       return (result as any).hash
     }
 
+    // CashWeb operations -------------------------------------------------------
+
+    /**
+     * Encrypt payload data using AES-CBC
+     */
+    async function encryptPayload(data: string, sharedKey: string) {
+      const result = await sendRequest('ENCRYPT_PAYLOAD', { data, sharedKey })
+      return (result as any).data
+    }
+
+    /**
+     * Decrypt payload data using AES-CBC
+     */
+    async function decryptPayload(data: string, sharedKey: string) {
+      const result = await sendRequest('DECRYPT_PAYLOAD', { data, sharedKey })
+      return (result as any).data
+    }
+
+    /**
+     * Derive shared key for payload encryption (ECDH + SHA256-HMAC)
+     */
+    async function deriveSharedKey(
+      sourcePrivateKey: string,
+      destinationPublicKey: string,
+      salt: string,
+    ) {
+      const result = await sendRequest('DERIVE_SHARED_KEY', {
+        sourcePrivateKey,
+        destinationPublicKey,
+        salt,
+      })
+      return (result as any).sharedKey
+    }
+
+    /**
+     * Derive stamp keys from payload digest and destination private key
+     */
+    async function deriveStampKeys(
+      payloadDigest: string,
+      destinationPrivateKey: string,
+    ) {
+      return await sendRequest('DERIVE_STAMP_KEYS', {
+        payloadDigest,
+        destinationPrivateKey,
+      })
+    }
+
+    /**
+     * Derive stealth public key from ephemeral private key and destination public key
+     */
+    async function deriveStealthPublicKey(
+      ephemeralPrivateKey: string,
+      destinationPublicKey: string,
+    ) {
+      return await sendRequest('DERIVE_STEALTH_PUBLIC_KEY', {
+        ephemeralPrivateKey,
+        destinationPublicKey,
+      })
+    }
+
+    /**
+     * Derive stealth private key from ephemeral public key and destination private key
+     */
+    async function deriveStealthPrivateKey(
+      ephemeralPublicKey: string,
+      destinationPrivateKey: string,
+    ) {
+      return await sendRequest('DERIVE_STEALTH_PRIVATE_KEY', {
+        ephemeralPublicKey,
+        destinationPrivateKey,
+      })
+    }
+
     // Initialize plugin
     console.log('[Crypto Worker Plugin] Ready (lazy initialization)')
 
@@ -360,6 +433,14 @@ export default defineNuxtPlugin({
           signMessage,
           verifyMessage,
           hashData,
+
+          // CashWeb operations
+          encryptPayload,
+          decryptPayload,
+          deriveSharedKey,
+          deriveStampKeys,
+          deriveStealthPublicKey,
+          deriveStealthPrivateKey,
         },
       },
     }

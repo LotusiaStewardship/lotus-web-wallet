@@ -33,6 +33,8 @@ import {
   tweakPublicKey,
   Message,
   Hash,
+  BN,
+  Point,
   BufferUtil,
 } from 'xpi-ts/lib/bitcore'
 import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
@@ -45,6 +47,12 @@ import type {
   TransactionSignedResponse,
   MessageSignedResponse,
   CryptoWorkerStatus,
+  PayloadEncryptedResponse,
+  PayloadDecryptedResponse,
+  SharedKeyDerivedResponse,
+  StampKeysDerivedResponse,
+  StealthPublicKeyDerivedResponse,
+  StealthPrivateKeyDerivedResponse,
 } from '~/utils/types/crypto-worker'
 
 // This should be incremented when the worker's behavior or supported
@@ -70,6 +78,12 @@ const WORKER_VERSION = '2.0.0'
         'SIGN_MESSAGE',
         'VERIFY_MESSAGE',
         'HASH_DATA',
+        'ENCRYPT_PAYLOAD',
+        'DECRYPT_PAYLOAD',
+        'DERIVE_SHARED_KEY',
+        'DERIVE_STAMP_KEYS',
+        'DERIVE_STEALTH_PUBLIC_KEY',
+        'DERIVE_STEALTH_PRIVATE_KEY',
       ],
     }
 
@@ -161,6 +175,55 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
           requestId,
           request.payload.data,
           request.payload.algorithm,
+        )
+        break
+
+      case 'ENCRYPT_PAYLOAD':
+        await handleEncryptPayload(
+          requestId,
+          request.payload.data,
+          request.payload.sharedKey,
+        )
+        break
+
+      case 'DECRYPT_PAYLOAD':
+        await handleDecryptPayload(
+          requestId,
+          request.payload.data,
+          request.payload.sharedKey,
+        )
+        break
+
+      case 'DERIVE_SHARED_KEY':
+        await handleDeriveSharedKey(
+          requestId,
+          request.payload.sourcePrivateKey,
+          request.payload.destinationPublicKey,
+          request.payload.salt,
+        )
+        break
+
+      case 'DERIVE_STAMP_KEYS':
+        await handleDeriveStampKeys(
+          requestId,
+          request.payload.payloadDigest,
+          request.payload.destinationPrivateKey,
+        )
+        break
+
+      case 'DERIVE_STEALTH_PUBLIC_KEY':
+        await handleDeriveStealthPublicKey(
+          requestId,
+          request.payload.ephemeralPrivateKey,
+          request.payload.destinationPublicKey,
+        )
+        break
+
+      case 'DERIVE_STEALTH_PRIVATE_KEY':
+        await handleDeriveStealthPrivateKey(
+          requestId,
+          request.payload.ephemeralPublicKey,
+          request.payload.destinationPrivateKey,
         )
         break
 
@@ -499,6 +562,260 @@ async function handleHashData(
   const response: CryptoWorkerResponse = {
     type: 'DATA_HASHED',
     payload: { hash },
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+// ============================================================================
+// CashWeb Operation Handlers
+// ============================================================================
+
+/**
+ * Encrypt payload data using AES-CBC via Web Crypto API.
+ * Shared key is split: first 16 bytes = IV, remaining bytes = encryption key.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param dataHex - Plaintext data as hex string
+ * @param sharedKeyHex - Shared key as hex string (first 16 bytes used as IV)
+ */
+async function handleEncryptPayload(
+  requestId: string,
+  dataHex: string,
+  sharedKeyHex: string,
+): Promise<void> {
+  const dataBuffer = BufferUtil.from(dataHex, 'hex')
+  const sharedKeyBuffer = BufferUtil.from(sharedKeyHex, 'hex')
+
+  const iv = sharedKeyBuffer.slice(0, 16)
+  const keyBytes = sharedKeyBuffer.slice(16)
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-CBC' },
+    false,
+    ['encrypt'],
+  )
+
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-CBC', iv },
+    cryptoKey,
+    dataBuffer,
+  )
+
+  const payload: PayloadEncryptedResponse['payload'] = {
+    data: BufferUtil.from(encrypted).toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'PAYLOAD_ENCRYPTED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Decrypt payload data using AES-CBC via Web Crypto API.
+ * Shared key is split: first 16 bytes = IV, remaining bytes = encryption key.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param dataHex - Ciphertext data as hex string
+ * @param sharedKeyHex - Shared key as hex string (first 16 bytes used as IV)
+ */
+async function handleDecryptPayload(
+  requestId: string,
+  dataHex: string,
+  sharedKeyHex: string,
+): Promise<void> {
+  const dataBuffer = BufferUtil.from(dataHex, 'hex')
+  const sharedKeyBuffer = BufferUtil.from(sharedKeyHex, 'hex')
+
+  const iv = sharedKeyBuffer.slice(0, 16)
+  const keyBytes = sharedKeyBuffer.slice(16)
+
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-CBC' },
+    false,
+    ['decrypt'],
+  )
+
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-CBC', iv },
+    cryptoKey,
+    dataBuffer,
+  )
+
+  const payload: PayloadDecryptedResponse['payload'] = {
+    data: BufferUtil.from(decrypted).toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'PAYLOAD_DECRYPTED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Derive shared key for payload encryption using ECDH + SHA256-HMAC.
+ * Computes mergedKey = publicKey * privateKey, then sharedKey = SHA256-HMAC(salt, mergedKey).
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param sourcePrivateKeyHex - Source private key as hex string
+ * @param destinationPublicKeyHex - Destination public key as hex string
+ * @param saltHex - Salt for key derivation as hex string
+ */
+async function handleDeriveSharedKey(
+  requestId: string,
+  sourcePrivateKeyHex: string,
+  destinationPublicKeyHex: string,
+  saltHex: string,
+): Promise<void> {
+  const sourcePrivateKey = new PrivateKey(sourcePrivateKeyHex)
+  const destinationPublicKey = new PublicKey(destinationPublicKeyHex)
+  const salt = BufferUtil.from(saltHex, 'hex')
+
+  // ECDH: mergedKey = destinationPublicKey.point * sourcePrivateKey.bn
+  const mergedKey = PublicKey.fromPoint(
+    destinationPublicKey.point.mul(sourcePrivateKey.toBigNumber()),
+  )
+  const rawMergedKey = mergedKey.toBuffer()
+
+  // sharedKey = SHA256-HMAC(salt, mergedKey)
+  const sharedKey = Hash.sha256hmac(salt, rawMergedKey)
+
+  const payload: SharedKeyDerivedResponse['payload'] = {
+    sharedKey: sharedKey.toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'SHARED_KEY_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Derive stamp keys from payload digest and destination private key.
+ * stampPrivateKey = BN(payloadDigest) + destinationPrivateKey mod N
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param payloadDigestHex - Payload digest as hex string (32 bytes)
+ * @param destinationPrivateKeyHex - Destination private key as hex string
+ */
+async function handleDeriveStampKeys(
+  requestId: string,
+  payloadDigestHex: string,
+  destinationPrivateKeyHex: string,
+): Promise<void> {
+  const payloadDigest = BufferUtil.from(payloadDigestHex, 'hex')
+  const destinationPrivateKey = new PrivateKey(destinationPrivateKeyHex)
+
+  const digestBn = BN.fromBuffer(Hash.sha256(payloadDigest))
+  const stampPrivBn = digestBn
+    .add(destinationPrivateKey.toBigNumber())
+    .mod(Point.getN())
+  const stampPrivateKey = new PrivateKey(stampPrivBn)
+  const stampPublicKey = stampPrivateKey.toPublicKey()
+
+  const payload: StampKeysDerivedResponse['payload'] = {
+    stampPrivateKey: stampPrivateKey.toString(),
+    stampPublicKey: stampPublicKey.toString(),
+    stampAddress: stampPrivateKey.toAddress().toString(),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'STAMP_KEYS_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Derive stealth public key from ephemeral private key and destination public key.
+ * stealthPublicKey = H(ebG)G + destinationPublicKey, where ebG = destinationPublicKey * ephemeralPrivateKey
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param ephemeralPrivateKeyHex - Ephemeral private key as hex string
+ * @param destinationPublicKeyHex - Destination public key as hex string
+ */
+async function handleDeriveStealthPublicKey(
+  requestId: string,
+  ephemeralPrivateKeyHex: string,
+  destinationPublicKeyHex: string,
+): Promise<void> {
+  const ephemeralPrivateKey = new PrivateKey(ephemeralPrivateKeyHex)
+  const destinationPublicKey = new PublicKey(destinationPublicKeyHex)
+
+  // ebG = destinationPublicKey * ephemeralPrivateKey
+  const dhKeyPoint = destinationPublicKey.point.mul(ephemeralPrivateKey.bn)
+  const dhKeyPointRaw = Point.pointToCompressed(dhKeyPoint)
+
+  // H(ebG)
+  const digest = Hash.sha256(dhKeyPointRaw)
+  const digestPublicKey = PrivateKey.fromBuffer(digest).toPublicKey()
+
+  // stealthPublicKey = H(ebG)G + destinationPublicKey
+  const stealthPublicKey = PublicKey.fromPoint(
+    digestPublicKey.point.add(destinationPublicKey.point),
+  )
+
+  const payload: StealthPublicKeyDerivedResponse['payload'] = {
+    stealthPublicKey: stealthPublicKey.toString(),
+    digest: digest.toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'STEALTH_PUBLIC_KEY_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Derive stealth private key from ephemeral public key and destination private key.
+ * stealthPrivateKey = H(ebG) + destinationPrivateKey mod N
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param ephemeralPublicKeyHex - Ephemeral public key as hex string
+ * @param destinationPrivateKeyHex - Destination private key as hex string
+ */
+async function handleDeriveStealthPrivateKey(
+  requestId: string,
+  ephemeralPublicKeyHex: string,
+  destinationPrivateKeyHex: string,
+): Promise<void> {
+  const ephemeralPublicKey = new PublicKey(ephemeralPublicKeyHex)
+  const destinationPrivateKey = new PrivateKey(destinationPrivateKeyHex)
+
+  // ebG = ephemeralPublicKey * destinationPrivateKey
+  const dhKeyPoint = ephemeralPublicKey.point.mul(destinationPrivateKey.bn)
+  const dhKeyPointRaw = Point.pointToCompressed(dhKeyPoint)
+
+  // H(ebG)
+  const digest = Hash.sha256(dhKeyPointRaw)
+  const digestBn = BN.fromBuffer(digest)
+
+  // stealthPrivateKey = H(ebG) + destinationPrivateKey mod N
+  const stealthPrivBn = digestBn.add(destinationPrivateKey.bn).mod(Point.getN())
+  const stealthPrivateKey = new PrivateKey(stealthPrivBn)
+
+  const payload: StealthPrivateKeyDerivedResponse['payload'] = {
+    stealthPrivateKey: stealthPrivateKey.toString(),
+    digest: digest.toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'STEALTH_PRIVATE_KEY_DERIVED',
+    payload,
     requestId,
   }
   self.postMessage(response)

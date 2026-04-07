@@ -8,6 +8,7 @@
  * from the main thread to prevent UI blocking.
  */
 import type { NetworkName } from 'xpi-ts/lib/bitcore/networks'
+import type { AddressType } from '~/utils/types/wallet'
 
 // ============================================================================
 // Address Types
@@ -118,6 +119,78 @@ export interface HashDataRequest {
   requestId: string
 }
 
+// ============================================================================
+// CashWeb Request Messages (Main → Worker)
+// ============================================================================
+
+export interface EncryptPayloadRequest {
+  type: 'ENCRYPT_PAYLOAD'
+  payload: {
+    /** Plaintext data (hex string) */
+    data: string
+    /** Shared key for encryption (hex string, first 16 bytes used as IV) */
+    sharedKey: string
+  }
+  requestId: string
+}
+
+export interface DecryptPayloadRequest {
+  type: 'DECRYPT_PAYLOAD'
+  payload: {
+    /** Ciphertext data (hex string) */
+    data: string
+    /** Shared key for decryption (hex string, first 16 bytes used as IV) */
+    sharedKey: string
+  }
+  requestId: string
+}
+
+export interface DeriveSharedKeyRequest {
+  type: 'DERIVE_SHARED_KEY'
+  payload: {
+    /** Source private key (hex string) */
+    sourcePrivateKey: string
+    /** Destination public key (hex string) */
+    destinationPublicKey: string
+    /** Salt for key derivation (hex string) */
+    salt: string
+  }
+  requestId: string
+}
+
+export interface DeriveStampKeysRequest {
+  type: 'DERIVE_STAMP_KEYS'
+  payload: {
+    /** Payload digest (hex string, 32 bytes) */
+    payloadDigest: string
+    /** Destination private key (hex string) */
+    destinationPrivateKey: string
+  }
+  requestId: string
+}
+
+export interface DeriveStealthPublicKeyRequest {
+  type: 'DERIVE_STEALTH_PUBLIC_KEY'
+  payload: {
+    /** Ephemeral private key (hex string) */
+    ephemeralPrivateKey: string
+    /** Destination public key (hex string) */
+    destinationPublicKey: string
+  }
+  requestId: string
+}
+
+export interface DeriveStealthPrivateKeyRequest {
+  type: 'DERIVE_STEALTH_PRIVATE_KEY'
+  payload: {
+    /** Ephemeral public key (hex string) */
+    ephemeralPublicKey: string
+    /** Destination private key (hex string) */
+    destinationPrivateKey: string
+  }
+  requestId: string
+}
+
 export type CryptoWorkerRequest =
   | GenerateMnemonicRequest
   | ValidateMnemonicRequest
@@ -127,6 +200,12 @@ export type CryptoWorkerRequest =
   | SignMessageRequest
   | VerifyMessageRequest
   | HashDataRequest
+  | EncryptPayloadRequest
+  | DecryptPayloadRequest
+  | DeriveSharedKeyRequest
+  | DeriveStampKeysRequest
+  | DeriveStealthPublicKeyRequest
+  | DeriveStealthPrivateKeyRequest
 
 // ============================================================================
 // Response Messages (Worker → Main)
@@ -209,6 +288,72 @@ export interface DataHashedResponse {
   requestId: string
 }
 
+// ============================================================================
+// CashWeb Response Messages (Worker → Main)
+// ============================================================================
+
+export interface PayloadEncryptedResponse {
+  type: 'PAYLOAD_ENCRYPTED'
+  payload: {
+    /** Encrypted data (hex string) */
+    data: string
+  }
+  requestId: string
+}
+
+export interface PayloadDecryptedResponse {
+  type: 'PAYLOAD_DECRYPTED'
+  payload: {
+    /** Decrypted data (hex string) */
+    data: string
+  }
+  requestId: string
+}
+
+export interface SharedKeyDerivedResponse {
+  type: 'SHARED_KEY_DERIVED'
+  payload: {
+    /** Derived shared key (hex string) */
+    sharedKey: string
+  }
+  requestId: string
+}
+
+export interface StampKeysDerivedResponse {
+  type: 'STAMP_KEYS_DERIVED'
+  payload: {
+    /** Stamp private key (hex string) */
+    stampPrivateKey: string
+    /** Stamp public key (hex string) */
+    stampPublicKey: string
+    /** Stamp address string */
+    stampAddress: string
+  }
+  requestId: string
+}
+
+export interface StealthPublicKeyDerivedResponse {
+  type: 'STEALTH_PUBLIC_KEY_DERIVED'
+  payload: {
+    /** Derived stealth public key (hex string) */
+    stealthPublicKey: string
+    /** Digest used in derivation (hex string) */
+    digest: string
+  }
+  requestId: string
+}
+
+export interface StealthPrivateKeyDerivedResponse {
+  type: 'STEALTH_PRIVATE_KEY_DERIVED'
+  payload: {
+    /** Derived stealth private key (hex string) */
+    stealthPrivateKey: string
+    /** Digest used in derivation (hex string) */
+    digest: string
+  }
+  requestId: string
+}
+
 export interface ErrorResponse {
   type: 'ERROR'
   payload: {
@@ -232,6 +377,12 @@ export type CryptoWorkerResponse =
   | MessageSignedResponse
   | MessageVerifiedResponse
   | DataHashedResponse
+  | PayloadEncryptedResponse
+  | PayloadDecryptedResponse
+  | SharedKeyDerivedResponse
+  | StampKeysDerivedResponse
+  | StealthPublicKeyDerivedResponse
+  | StealthPrivateKeyDerivedResponse
   | ErrorResponse
   | WorkerReadyResponse
 
@@ -258,4 +409,10 @@ export type ResponseTypeMap = {
   SIGN_MESSAGE: MessageSignedResponse['payload']
   VERIFY_MESSAGE: MessageVerifiedResponse['payload']
   HASH_DATA: DataHashedResponse['payload']
+  ENCRYPT_PAYLOAD: PayloadEncryptedResponse['payload']
+  DECRYPT_PAYLOAD: PayloadDecryptedResponse['payload']
+  DERIVE_SHARED_KEY: SharedKeyDerivedResponse['payload']
+  DERIVE_STAMP_KEYS: StampKeysDerivedResponse['payload']
+  DERIVE_STEALTH_PUBLIC_KEY: StealthPublicKeyDerivedResponse['payload']
+  DERIVE_STEALTH_PRIVATE_KEY: StealthPrivateKeyDerivedResponse['payload']
 }
