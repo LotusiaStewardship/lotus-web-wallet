@@ -8,13 +8,21 @@ import { defineStore } from 'pinia'
 import { useWalletStore } from './wallet'
 //import { useP2PStore } from './p2p'
 //import { useMuSig2Store } from './musig2'
+import { getItem, setItem, STORAGE_KEYS } from '../utils/storage'
+import type { ActivityItem, ActivityType } from '../utils/types/activity'
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const STORAGE_KEY = 'lotus:activity'
+const STORAGE_KEY = STORAGE_KEYS.ACTIVITY
 const MAX_ITEMS = 500
+
+// Type for stored activity data
+interface ActivityStorage {
+  items: [string, ActivityItem][]
+  lastReadTimestamp: number
+}
 
 // ============================================================================
 // Store Definition (Composition API)
@@ -32,12 +40,14 @@ export const useActivityStore = defineStore('activity', () => {
   async function initialize() {
     if (initialized.value) return
 
-    const stored = localStorage.getItem(STORAGE_KEY)
+    const stored = getItem<ActivityStorage>(STORAGE_KEY, {
+      items: [],
+      lastReadTimestamp: 0,
+    })
     if (stored) {
       try {
-        const data = JSON.parse(stored)
-        items.value = new Map(data.items || [])
-        lastReadTimestamp.value = data.lastReadTimestamp || 0
+        items.value = new Map(stored.items || [])
+        lastReadTimestamp.value = stored.lastReadTimestamp || 0
       } catch (e) {
         console.error('Failed to load activity:', e)
       }
@@ -46,12 +56,16 @@ export const useActivityStore = defineStore('activity', () => {
     initialized.value = true
   }
 
+  /**
+   * Persist activity items and read state using the storage API.
+   * Serializes the items Map and lastReadTimestamp for storage.
+   */
   function persist() {
     const data = {
       items: Array.from(items.value.entries()),
       lastReadTimestamp: lastReadTimestamp.value,
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    setItem(STORAGE_KEY, data)
   }
 
   // === LEGACY GETTERS (for backward compatibility) ===
@@ -60,8 +74,12 @@ export const useActivityStore = defineStore('activity', () => {
   /**
    * Get activity items from other stores (wallet transactions, P2P events, MuSig2 sessions).
    * These items are generated on-the-fly and use lastReadTimestamp to determine read state.
+   * @deprecated MuSig2/P2P is currently disabled, so no activity items from them. Wallet transactions
+   * are now being stored properly in the activity store, rather than routing through the `walletStore.transactionHistory`.
    */
   function getLegacyItems(): ActivityItem[] {
+    // TODO: eventually we need to fully deprecate legacy items and uncomment this below
+    //return []
     const legacyItems: ActivityItem[] = []
 
     try {
@@ -380,7 +398,7 @@ export const useActivityStore = defineStore('activity', () => {
         type: 'transaction',
         txid: tx.txid,
         direction: tx.direction,
-        amountSats: tx.amountSats,
+        amountSats: tx.amountSats.toString(),
         address: tx.address,
         confirmations: tx.confirmations,
       },

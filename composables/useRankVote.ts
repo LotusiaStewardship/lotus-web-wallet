@@ -213,17 +213,30 @@ export function useRankVote() {
       // --- Broadcast ---
       status.value = 'broadcasting'
       const result = await $chronik.broadcastTransaction(signedTxHex)
-      const txid = typeof result === 'string' ? result : (result as any)?.txid
-
-      if (!txid) {
-        throw new Error('Broadcast succeeded but no txid returned')
-      }
 
       // --- Success ---
       status.value = 'success'
-      lastTxid.value = txid
+      lastTxid.value = result.txid
 
-      return { success: true, txid, sentiment, sats: burnAmountSats.toString() }
+      // CRITICAL: remove spent UTXOs
+      // This prevents double-spending in subsequent transactions
+      // Other issues may arise considering the Chronik WebSocket subscription is
+      // the primary way for the wallet to receive new UTXOs. For example, burning
+      // 100 XPI on a vote will return the change output through the WS. But
+      // if the WS subscription is blocked for some reason (e.g. network connectivity
+      // on mobile), the change output will not be received and the wallet will
+      // think it still has the UTXO.
+      for (const input of tx.inputs) {
+        const outpoint = `${input.prevTxId.toString('hex')}_${input.outputIndex}`
+        walletStore.utxos.delete(outpoint)
+      }
+
+      return {
+        success: true,
+        txid: result.txid,
+        sentiment,
+        sats: burnAmountSats.toString(),
+      }
     } catch (err: any) {
       status.value = 'error'
       const message = err?.message || 'Unknown error casting vote'

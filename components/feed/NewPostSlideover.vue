@@ -53,7 +53,7 @@ function handleCancel() {
 
         <!-- Comment Input — hideAuthorLabel since header already sets context -->
         <!-- For new standalone posts, profileId defaults to wallet's scriptPayload -->
-        <FeedCommentInput :platform="props.platform" :profileId="walletStore.scriptPayload || undefined"
+        <FeedCommentInput :platform="props.platform" :profileId="walletStore.scriptPayload"
           placeholder="What's on your mind?" hide-author-label @posted="handlePosted" @cancel="handleCancel" />
       </div>
     </template>

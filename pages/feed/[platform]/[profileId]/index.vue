@@ -215,13 +215,7 @@ async function fetchData() {
     // Also check if user is viewing their own profile (RNKC: own content is revealed)
     // For Lotusia profiles, profileId is the scriptPayload
     const isOwnProfile = identity.value.isOwn
-    console.log('hasWalletUpvoted', profileData?.profileMeta?.hasWalletUpvoted)
-    console.log('hasWalletDownvoted', profileData?.profileMeta?.hasWalletDownvoted)
-    console.log('isOwnProfile', isOwnProfile)
-    console.log('profileData', profileData)
     hasVoted.value = profileData?.profileMeta?.hasWalletUpvoted || profileData?.profileMeta?.hasWalletDownvoted || isOwnProfile
-
-    console.log('hasVoted', hasVoted.value)
     // R5: Fetch timeline after reveal state is known
     if (hasVoted.value) {
       fetchTimeline()

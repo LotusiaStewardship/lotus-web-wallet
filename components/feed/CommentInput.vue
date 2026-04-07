@@ -22,7 +22,7 @@ import { useWalletStore } from '~/stores/wallet'
 const props = defineProps<{
   platform: ScriptChunkPlatformUTF8
   /** Target profile ID for profile/post comments. Omit for new standalone posts. */
-  profileId?: string
+  profileId: string
   /** Target post ID for post-level comments */
   postId?: string
   /** Parent comment txid for reply threading (5.1a spec) */
