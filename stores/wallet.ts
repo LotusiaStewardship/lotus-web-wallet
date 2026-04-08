@@ -8,6 +8,7 @@ import { useNotificationStore } from './notifications'
 import type { ChronikSubscription } from '~/plugins/chronik.client'
 import type * as Bitcore from 'xpi-ts/lib/bitcore'
 import type { Buffer } from 'buffer/'
+import { CASHWEB_COINTYPE } from '~/utils/constants'
 
 // Note: ParsedTransaction type is available from ~/composables/useExplorerApi
 
@@ -51,15 +52,18 @@ export const toXPI = (sats: string | number) => {
 export const useWalletStore = defineStore('wallet', () => {
   // Nuxt plugin instances
   const { $bitcore, $chronik, $cryptoWorker } = useNuxtApp()
-  // =========================================================================
-  // Private runtime state (not serializable, not exposed)
-  // =========================================================================
-  let _hdPrivkey: any = null
-  const _accountKeys = new Map<AccountPurpose, RuntimeKeyData>()
-  let _signingKey: any = null
-  let _script: any = null
-  let _internalPubKey: Bitcore.PublicKey | undefined = undefined
-  let _merkleRoot: Buffer | undefined = undefined
+// =========================================================================
+// Private runtime state (not serializable, not exposed)
+// =========================================================================
+let _hdPrivkey: any = null
+const _accountKeys = new Map<AccountPurpose, RuntimeKeyData>()
+let _signingKey: any = null
+let _script: any = null
+let _internalPubKey: Bitcore.PublicKey | undefined = undefined
+let _merkleRoot: Buffer | undefined = undefined
+
+// CashWeb identity key (separate coin type 899, not a Lotus account)
+let _cashwebIdentityKey: RuntimeKeyData | null = null
 
   // =========================================================================
   // Reactive State
@@ -320,6 +324,9 @@ export const useWalletStore = defineStore('wallet', () => {
       })
     }
 
+    // Derive CashWeb identity key (separate coin type 899)
+    await _deriveCashWebIdentityKey(phrase, networkStore.currentNetwork)
+
     // Update legacy compatibility fields from PRIMARY account
     const primaryAccount = accounts.value.get(AccountPurpose.PRIMARY)
     const primaryKeys = _accountKeys.get(AccountPurpose.PRIMARY)
@@ -482,6 +489,76 @@ export const useWalletStore = defineStore('wallet', () => {
         lastUsedIndex: 0,
       }
     }
+  }
+
+  /**
+   * Derive CashWeb identity key from mnemonic.
+   *
+   * Uses BIP44 path m/44'/899'/0'/0/0 (coin type 899 for CashWeb messaging).
+   * This key is separate from Lotus accounts (coin type 10605) and is used for:
+   * - Signing CashWeb messages
+   * - ECDH shared key derivation with recipients
+   * - Stamp key derivation for message transactions
+   * - Profile metadata signing
+   *
+   * The key is stored in runtime-only memory (never persisted) and re-derived
+   * from the seed phrase on every wallet load.
+   */
+  async function _deriveCashWebIdentityKey(
+    phrase: string,
+    networkName: NetworkType,
+  ): Promise<void> {
+    const { HDPrivateKey, PrivateKey, PublicKey, Mnemonic, Script, Address, Networks } = $bitcore
+    const network = Networks.get(networkName)
+    if (!network) {
+      throw new Error(`Unknown network: ${networkName}`)
+    }
+
+    const mnemonic = new Mnemonic(phrase)
+    const hdPrivkey = HDPrivateKey.fromSeed(mnemonic.toSeed())
+
+    // Derive: m/44'/899'/0'/0/0
+    const identityPrivKey = hdPrivkey
+      .deriveChild(44, true)
+      .deriveChild(CASHWEB_COINTYPE, true)
+      .deriveChild(0, true)
+      .deriveChild(0)
+      .deriveChild(0).privateKey
+
+    const addr = identityPrivKey.toAddress(network)
+
+    _cashwebIdentityKey = {
+      privateKey: markRaw(identityPrivKey),
+      publicKey: markRaw(identityPrivKey.publicKey),
+      script: markRaw(Script.fromAddress(addr)),
+    }
+  }
+
+  /**
+   * Get the CashWeb identity private key (hex encoded).
+   * Used for message signing, ECDH, and stamp key derivation.
+   */
+  function getIdentityPrivateKeyHex(): string | null {
+    return _cashwebIdentityKey?.privateKey.toString() ?? null
+  }
+
+  /**
+   * Get the CashWeb identity public key (hex encoded).
+   * Used for including in profile metadata so recipients can encrypt to us.
+   */
+  function getIdentityPublicKeyHex(): string | null {
+    return _cashwebIdentityKey?.publicKey.toString() ?? null
+  }
+
+  /**
+   * Get the CashWeb identity address (XAddress format).
+   */
+  function getIdentityAddress(): string | null {
+    if (!_cashwebIdentityKey?.publicKey) return null
+    const { Address, Networks } = $bitcore
+    const network = Networks.get(getCurrentNetwork())
+    if (!network) return null
+    return Address.fromPublicKey(_cashwebIdentityKey.publicKey, network).toXAddress()
   }
 
   /**
@@ -1319,5 +1396,10 @@ export const useWalletStore = defineStore('wallet', () => {
     getMerkleRootHex,
     isValidSeedPhrase,
     waitForInitialization,
+
+    // CashWeb identity key accessors
+    getIdentityPrivateKeyHex,
+    getIdentityPublicKeyHex,
+    getIdentityAddress,
   }
 })

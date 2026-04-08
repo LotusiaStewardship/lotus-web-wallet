@@ -312,6 +312,15 @@ None. Build and typecheck pass cleanly.
 
 ### Next Steps
 
+**Phase 2.5: Keypair Management** (Estimated: 1-2 days)
+- Add `CASHWEB_COINTYPE` constant and identity key derivation path
+- Derive CashWeb identity key (`m/44'/899'/0'/0/0`) during `buildWalletFromMnemonic()`
+- Add identity key accessors to wallet store
+- Create `generateEphemeralKey()` utility in `utils/cashweb/keys.ts`
+- Create `useCashWebKeys()` orchestration composable
+
+See `02B_KEYPAIR_MANAGEMENT.md` for detailed Phase 2.5 plan.
+
 **Phase 3: Relay Plugin** (Estimated: 2 days)
 - Create `plugins/relay.client.ts` with HTTP operations
 - Implement message construction helpers

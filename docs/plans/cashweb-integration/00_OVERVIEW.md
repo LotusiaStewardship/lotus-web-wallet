@@ -5,11 +5,11 @@
 This plan outlines the migration of CashWeb components from the `stamp` repository into the `lotus-web-wallet` Nuxt application. The migration must respect the existing Nuxt architecture, including plugins, service workers, web workers, stores, and composables.
 
 **Created**: January 2025
-**Updated**: January 2025
+**Updated**: April 2026
 **Source Repository**: `StampChat/stamp` (`src/cashweb/`)
 **Target Repository**: `LotusiaStewardship/lotus-web-wallet`
 **Priority**: P1 (High)
-**Estimated Effort**: 12-16 days
+**Estimated Effort**: 13-18 days
 
 ---
 
@@ -92,11 +92,13 @@ The `stamp` repository contains CashWeb protocol implementations for decentraliz
 │                                                                                 │
 │  composables/                                                                   │
 │  ├── useRelayClient.ts       ← RelayClient composable                          │
+│  ├── useCashWebKeys.ts       ← Keypair orchestration (identity, ephemeral)     │
 │  ├── useMessages.ts          ← Message operations                               │
 │  └── useProfiles.ts          ← Profile operations                              │
 │                                                                                 │
 │  utils/                                                                         │
 │  ├── cashweb/                ← Core CashWeb utilities                           │
+│  │   ├── keys.ts             ← Ephemeral key generation                        │
 │  │   ├── encode-entry.ts     ← Entry encoding                                   │
 │  │   ├── decode-entry.ts     ← Entry decoding                                   │
 │  │   └── constructors.ts     ← Transaction construction helpers                │
@@ -155,18 +157,19 @@ The `stamp` repository contains CashWeb protocol implementations for decentraliz
 
 ## Phase Summary
 
-| Phase | Document                     | Focus Area                                  | Priority | Est. Effort |
-| ----- | ---------------------------- | ------------------------------------------- | -------- | ----------- |
-| 1     | `01_PROTOBUF_TYPES.md`       | Protobuf type definitions and serialization | P0       | 1-2 days    |
-| 2     | `02_CRYPTO_INTEGRATION.md`   | PayloadConstructor in crypto worker         | P0       | 2-3 days    |
-| 3     | `03_RELAY_PLUGIN.md`         | RelayClient HTTP plugin                     | P0       | 2 days      |
-| 4     | `04_SERVICE_WORKER_RELAY.md` | WebSocket persistence, MessageStore         | P1       | 2-3 days    |
-| 5     | `05_REGISTRY_PLUGIN.md`      | RegistryHandler plugin and store            | P1       | 1-2 days    |
-| 6     | `06_POP_PLUGIN.md`           | Proof of Publication plugin                 | P2       | 1 day       |
-| 7     | `07_MESSAGES_STORE.md`       | Messages Pinia store and composables        | P1       | 2 days      |
-| 8     | `08_INTEGRATION_TESTING.md`  | End-to-end testing and validation           | P0       | 1-2 days    |
+| Phase | Document                          | Focus Area                                  | Priority | Est. Effort |
+| ----- | --------------------------------- | ------------------------------------------- | -------- | ----------- |
+| 1     | `01_PROTOBUF_TYPES.md`            | Protobuf type definitions and serialization | P0       | 1-2 days    |
+| 2     | `02_CRYPTO_INTEGRATION.md`        | PayloadConstructor in crypto worker         | P0       | 2-3 days    |
+| 2.5   | `02B_KEYPAIR_MANAGEMENT.md`       | Identity key, ephemeral keys, orchestration | P0       | 1-2 days    |
+| 3     | `03_RELAY_PLUGIN.md`              | RelayClient HTTP plugin                     | P0       | 2 days      |
+| 4     | `04_SERVICE_WORKER_RELAY.md`      | WebSocket persistence, MessageStore         | P1       | 2-3 days    |
+| 5     | `05_REGISTRY_PLUGIN.md`           | RegistryHandler plugin and store            | P1       | 1-2 days    |
+| 6     | `06_POP_PLUGIN.md`                | Proof of Publication plugin                 | P2       | 1 day       |
+| 7     | `07_MESSAGES_STORE.md`            | Messages Pinia store and composables        | P1       | 2 days      |
+| 8     | `08_INTEGRATION_TESTING.md`       | End-to-end testing and validation           | P0       | 1-2 days    |
 
-**Total Estimated Effort**: 12-16 days
+**Total Estimated Effort**: 13-18 days
 
 ---
 
@@ -176,7 +179,7 @@ The `stamp` repository contains CashWeb protocol implementations for decentraliz
 
 | Dependency                             | Required For      | Status      |
 | -------------------------------------- | ----------------- | ----------- |
-| `stores/wallet.ts`                     | Phases 2, 3, 4, 6 | ✅ Complete |
+| `stores/wallet.ts`                     | Phases 2, 2.5, 3, 4, 6 | ✅ Complete |
 | `plugins/chronik.client.ts`            | Phases 3, 4       | ✅ Complete |
 | `plugins/bitcore.client.ts`            | Phases 1, 2       | ✅ Complete |
 | `workers/crypto.worker.ts`             | Phase 2           | ✅ Complete |
@@ -225,6 +228,7 @@ The `stamp` repository contains CashWeb protocol implementations for decentraliz
 
 1. **Protobuf Types**: All protobuf types compile and serialize/deserialize correctly
 2. **Crypto Integration**: Encryption/decryption works in crypto worker without UI blocking
+2.5. **Keypair Management**: Identity key derived, ephemeral key generation, orchestration composable functional
 3. **Relay Plugin**: HTTP operations work for profile fetches and message sending
 4. **Service Worker Relay**: WebSocket persists in background, messages stored in IndexedDB
 5. **Registry Plugin**: Profile metadata can be fetched and updated
@@ -266,11 +270,11 @@ The stamp repository uses protobuf definitions in `src/cashweb/**/proto/`. These
 
 Stamp uses specific HD derivation paths for different purposes:
 
-| Purpose           | Path                        | Notes                       |
-| ----------------- | --------------------------- | --------------------------- |
-| Identity Key      | `m/44'/899'/0'/0/0`         | Already in lotus-web-wallet |
-| Stamp Addresses   | `m/44'/145'/{txn}/{output}` | Derived from payload digest |
-| Stealth Addresses | `m/44'/145'/{txn}/{output}` | Derived from ephemeral key  |
+| Purpose           | Path                        | Notes                                  |
+| ----------------- | --------------------------- | -------------------------------------- |
+| Identity Key      | `m/44'/899'/0'/0/0`         | Added in Phase 2.5 (Keypair Management)|
+| Stamp Addresses   | `m/44'/145'/{txn}/{output}` | Derived from payload digest            |
+| Stealth Addresses | `m/44'/145'/{txn}/{output}` | Derived from ephemeral key             |
 
 These must be preserved in the crypto worker implementation.
 

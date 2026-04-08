@@ -20,7 +20,7 @@ export const NETWORK_CONFIGS: Record<NetworkType, NetworkConfig> = {
     chronikUrl: 'https://chronik.lotusia.org',
     explorerUrl: 'https://lotusia.org/explorer',
     explorerApiUrl: 'https://lotusia.org/api/explorer',
-    rankApiUrl: 'https://rank.lotusia.org/api/v1',
+    rankApiUrl: 'https://rank-beta.lotusia.org/api/v1',
     color: 'primary',
     isProduction: true,
   },
@@ -68,6 +68,12 @@ export const BIP44_PURPOSE = 44
 
 /** BIP44 coin type for Lotus */
 export const BIP44_COINTYPE = 10605
+
+/** BIP44 coin type for CashWeb messaging (SLP-899) */
+export const CASHWEB_COINTYPE = 899
+
+/** BIP44 derivation path for CashWeb identity key */
+export const CASHWEB_IDENTITY_PATH = "m/44'/899'/0'/0/0"
 
 /**
  * Predefined account purposes following BIP44 account index convention
