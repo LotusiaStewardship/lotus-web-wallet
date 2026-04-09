@@ -51,6 +51,8 @@ import type {
   PayloadDecryptedResponse,
   SharedKeyDerivedResponse,
   StampKeysDerivedResponse,
+  StampPublicKeyDerivedResponse,
+  Sha256HmacResponse,
   StealthPublicKeyDerivedResponse,
   StealthPrivateKeyDerivedResponse,
 } from '~/utils/types/crypto-worker'
@@ -82,6 +84,8 @@ const WORKER_VERSION = '2.0.0'
         'DECRYPT_PAYLOAD',
         'DERIVE_SHARED_KEY',
         'DERIVE_STAMP_KEYS',
+        'DERIVE_STAMP_PUBLIC_KEY',
+        'SHA256_HMAC',
         'DERIVE_STEALTH_PUBLIC_KEY',
         'DERIVE_STEALTH_PRIVATE_KEY',
       ],
@@ -208,6 +212,22 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
           requestId,
           request.payload.payloadDigest,
           request.payload.destinationPrivateKey,
+        )
+        break
+
+      case 'DERIVE_STAMP_PUBLIC_KEY':
+        await handleDeriveStampPublicKey(
+          requestId,
+          request.payload.payloadDigest,
+          request.payload.destinationPublicKey,
+        )
+        break
+
+      case 'SHA256_HMAC':
+        await handleSha256Hmac(
+          requestId,
+          request.payload.data,
+          request.payload.key,
         )
         break
 
@@ -717,7 +737,9 @@ async function handleDeriveStampKeys(
   const payloadDigest = BufferUtil.from(payloadDigestHex, 'hex')
   const destinationPrivateKey = new PrivateKey(destinationPrivateKeyHex)
 
-  const digestBn = BN.fromBuffer(Hash.sha256(payloadDigest))
+  // payloadDigest is already a SHA256 hash — use it directly as BN
+  // (matches stamp/relay/crypto.ts:149: BN.fromBuffer(Buffer.from(payloadDigest)))
+  const digestBn = BN.fromBuffer(payloadDigest)
   const stampPrivBn = digestBn
     .add(destinationPrivateKey.toBigNumber())
     .mod(Point.getN())
@@ -732,6 +754,71 @@ async function handleDeriveStampKeys(
 
   const response: CryptoWorkerResponse = {
     type: 'STAMP_KEYS_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Derive stamp public key from payload digest and destination public key.
+ * Used by sender to construct stamp address when only the recipient's public key is known.
+ * stampPublicKey = PrivateKey(payloadDigest).toPublicKey() + destinationPublicKey
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param payloadDigestHex - Payload digest as hex string (32 bytes)
+ * @param destinationPublicKeyHex - Destination public key as hex string
+ */
+async function handleDeriveStampPublicKey(
+  requestId: string,
+  payloadDigestHex: string,
+  destinationPublicKeyHex: string,
+): Promise<void> {
+  const payloadDigest = BufferUtil.from(payloadDigestHex, 'hex')
+  const destinationPublicKey = new PublicKey(destinationPublicKeyHex)
+
+  const digestPrivateKey = PrivateKey.fromBuffer(payloadDigest)
+  const digestPublicKey = digestPrivateKey.toPublicKey()
+  const stampPoint = digestPublicKey.point.add(destinationPublicKey.point)
+  const stampPublicKey = PublicKey.fromPoint(stampPoint)
+
+  const payload: StampPublicKeyDerivedResponse['payload'] = {
+    stampPublicKey: stampPublicKey.toString(),
+    stampAddress: Address.fromPublicKey(stampPublicKey).toString(),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'STAMP_PUBLIC_KEY_DERIVED',
+    payload,
+    requestId,
+  }
+  self.postMessage(response)
+}
+
+/**
+ * Compute SHA256-HMAC(data, key).
+ * General-purpose HMAC primitive used for payload HMAC and salt derivation.
+ *
+ * @param requestId - Unique identifier for correlating request/response
+ * @param dataHex - Data as hex string
+ * @param keyHex - Key as hex string
+ */
+async function handleSha256Hmac(
+  requestId: string,
+  dataHex: string,
+  keyHex: string,
+): Promise<void> {
+  const data = BufferUtil.from(dataHex, 'hex')
+  const key = BufferUtil.from(keyHex, 'hex')
+
+  const result = Hash.sha256hmac(data, key)
+
+  const payload: Sha256HmacResponse['payload'] = {
+    result: result.toString('hex'),
+  }
+
+  const response: CryptoWorkerResponse = {
+    type: 'SHA256_HMAC_RESULT',
     payload,
     requestId,
   }

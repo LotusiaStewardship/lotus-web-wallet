@@ -14,6 +14,7 @@
  */
 import type {
   StampKeysDerivedResponse,
+  StampPublicKeyDerivedResponse,
   StealthPublicKeyDerivedResponse,
   StealthPrivateKeyDerivedResponse,
 } from '~/utils/types/crypto-worker'
@@ -105,10 +106,40 @@ export function useCashWebKeys() {
     payloadDigest: string,
     destinationPrivateKey: string,
   ): Promise<StampKeysDerivedResponse['payload']> {
-    return $cryptoWorker.deriveStampKeys(
+    return $cryptoWorker.deriveStampKeys(payloadDigest, destinationPrivateKey)
+  }
+
+  /**
+   * Derive stamp public key for a message transaction.
+   *
+   * @param payloadDigest - SHA256 hash of the payload (hex)
+   * @param destinationPublicKey - Recipient's identity public key (hex)
+   *   Sender passes their identity key; receiver passes theirs.
+   * @returns Stamp public key and address
+   */
+  async function deriveStampPublicKey(
+    payloadDigest: string,
+    destinationPublicKey: string,
+  ): Promise<StampPublicKeyDerivedResponse['payload']> {
+    return $cryptoWorker.deriveStampPublicKey(
       payloadDigest,
-      destinationPrivateKey,
+      destinationPublicKey,
     )
+  }
+
+  /**
+   * Construct payload HMAC for message transaction.
+   *
+   * @param sharedKey - Shared key to use for HMAC (hex)
+   * @param payloadDigest - SHA256 hash of the payload (hex)
+   * @returns HMAC of sharedKey and payloadDigest (hex)
+   */
+  async function constructPayloadHmac(
+    sharedKey: string,
+    payloadDigest: string,
+  ): Promise<string> {
+    // Payload HMAC: sha256hmac(sharedKey, payloadDigest)
+    return $cryptoWorker.sha256Hmac(sharedKey, payloadDigest)
   }
 
   /**
@@ -146,52 +177,73 @@ export function useCashWebKeys() {
   }
 
   /**
-   * Full message encryption flow.
+   * Full message encryption flow matching stamp/relay/constructors.ts:constructMessage.
    *
    * 1. Get identity private key
-   * 2. Derive shared key with recipient's public key
-   * 3. Encrypt payload
+   * 2. Derive per-message salt: SHA256-HMAC(SHA256(plaintext), sourcePrivateKey)
+   * 3. Derive shared key with recipient's public key + salt
+   * 4. Encrypt payload
    *
    * @param plaintextHex - Plaintext payload data (hex)
    * @param recipientPublicKey - Recipient's identity public key (hex)
-   * @returns Encrypted payload (hex) and shared key (hex) for stamp derivation
+   * @returns Encrypted payload (hex), shared key (hex), and salt (hex) for message construction
    */
   async function encryptMessagePayload(
     plaintextHex: string,
     recipientPublicKey: string,
-  ): Promise<{ encryptedHex: string; sharedKey: string }> {
+  ): Promise<{ encryptedHex: string; sharedKey: string; salt: string }> {
     const identityPrivKey = getIdentityPrivateKey()
     if (!identityPrivKey) {
       throw new Error('Identity key not available — wallet not initialized')
     }
 
-    const sharedKey = await deriveSharedKey(identityPrivKey, recipientPublicKey)
+    // Derive per-message salt: sha256hmac(plainPayloadDigest, sourcePrivateKey)
+    const plainPayloadDigest = await $cryptoWorker.hashData(
+      plaintextHex,
+      'sha256',
+    )
+    const salt = await $cryptoWorker.sha256Hmac(
+      plainPayloadDigest,
+      identityPrivKey,
+    )
+
+    const sharedKey = await deriveSharedKey(
+      identityPrivKey,
+      recipientPublicKey,
+      salt,
+    )
     const encryptedHex = await encryptPayload(plaintextHex, sharedKey)
 
-    return { encryptedHex, sharedKey }
+    return { encryptedHex, sharedKey, salt }
   }
 
   /**
    * Full message decryption flow.
    *
    * 1. Get identity private key
-   * 2. Derive shared key with sender's public key
+   * 2. Derive shared key with sender's public key + salt from message
    * 3. Decrypt payload
    *
    * @param ciphertextHex - Encrypted payload data (hex)
    * @param senderPublicKey - Sender's identity public key (hex)
+   * @param salt - Salt from the received message (hex)
    * @returns Decrypted payload (hex)
    */
   async function decryptMessagePayload(
     ciphertextHex: string,
     senderPublicKey: string,
+    salt: string,
   ): Promise<string> {
     const identityPrivKey = getIdentityPrivateKey()
     if (!identityPrivKey) {
       throw new Error('Identity key not available — wallet not initialized')
     }
 
-    const sharedKey = await deriveSharedKey(identityPrivKey, senderPublicKey)
+    const sharedKey = await deriveSharedKey(
+      identityPrivKey,
+      senderPublicKey,
+      salt,
+    )
     return decryptPayload(ciphertextHex, sharedKey)
   }
 
@@ -206,6 +258,8 @@ export function useCashWebKeys() {
     encryptPayload,
     decryptPayload,
     deriveStampKeys,
+    deriveStampPublicKey,
+    constructPayloadHmac,
     deriveStealthPublicKey,
     deriveStealthPrivateKey,
 

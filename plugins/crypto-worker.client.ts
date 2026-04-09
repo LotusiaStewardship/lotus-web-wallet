@@ -382,6 +382,35 @@ export default defineNuxtPlugin({
     }
 
     /**
+     * Derive stamp public key from payload digest and destination public key
+     *
+     * @param payloadDigest - SHA256 hash of the payload (hex)
+     * @param destinationPublicKey - Destination public key (hex)
+     * @returns Stamp public key
+     */
+    async function deriveStampPublicKey(
+      payloadDigest: string,
+      destinationPublicKey: string,
+    ) {
+      return await sendRequest('DERIVE_STAMP_PUBLIC_KEY', {
+        payloadDigest,
+        destinationPublicKey,
+      })
+    }
+
+    /**
+     * Perform SHA256 HMAC
+     *
+     * @param data - Data to be hashed (hex)
+     * @param key - Key for HMAC (hex)
+     * @returns HMAC result (hex)
+     */
+    async function sha256Hmac(data: string, key: string) {
+      const result = await sendRequest('SHA256_HMAC', { data, key })
+      return result.result
+    }
+
+    /**
      * Derive stealth public key from ephemeral private key and destination public key
      */
     async function deriveStealthPublicKey(
@@ -439,6 +468,8 @@ export default defineNuxtPlugin({
           decryptPayload,
           deriveSharedKey,
           deriveStampKeys,
+          deriveStampPublicKey,
+          sha256Hmac,
           deriveStealthPublicKey,
           deriveStealthPrivateKey,
         },

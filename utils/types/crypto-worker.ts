@@ -169,6 +169,24 @@ export interface DeriveStampKeysRequest {
   requestId: string
 }
 
+export interface DeriveStampPublicKeyRequest {
+  type: 'DERIVE_STAMP_PUBLIC_KEY'
+  payload: {
+    payloadDigest: string
+    destinationPublicKey: string
+  }
+  requestId: string
+}
+
+export interface Sha256HmacRequest {
+  type: 'SHA256_HMAC'
+  payload: {
+    data: string
+    key: string
+  }
+  requestId: string
+}
+
 export interface DeriveStealthPublicKeyRequest {
   type: 'DERIVE_STEALTH_PUBLIC_KEY'
   payload: {
@@ -204,6 +222,8 @@ export type CryptoWorkerRequest =
   | DecryptPayloadRequest
   | DeriveSharedKeyRequest
   | DeriveStampKeysRequest
+  | DeriveStampPublicKeyRequest
+  | Sha256HmacRequest
   | DeriveStealthPublicKeyRequest
   | DeriveStealthPrivateKeyRequest
 
@@ -332,6 +352,38 @@ export interface StampKeysDerivedResponse {
   requestId: string
 }
 
+/**
+ * Response for deriving the stamp public key and its corresponding address.
+ */
+export interface StampPublicKeyDerivedResponse {
+  /** Type of the response. */
+  type: 'STAMP_PUBLIC_KEY_DERIVED'
+  /** Payload containing the derived stamp public key and address. */
+  payload: {
+    /** Stamp public key (hex string). */
+    stampPublicKey: string
+    /** Stamp address string. */
+    stampAddress: string
+  }
+  /** Unique identifier for correlating request/response. */
+  requestId: string
+}
+
+/**
+ * Response for computing the SHA256 HMAC of a data and key.
+ */
+export interface Sha256HmacResponse {
+  /** Type of the response. */
+  type: 'SHA256_HMAC_RESULT'
+  /** Payload containing the result of the SHA256 HMAC computation. */
+  payload: {
+    /** Result of the SHA256 HMAC computation (hex string). */
+    result: string
+  }
+  /** Unique identifier for correlating request/response. */
+  requestId: string
+}
+
 export interface StealthPublicKeyDerivedResponse {
   type: 'STEALTH_PUBLIC_KEY_DERIVED'
   payload: {
@@ -381,6 +433,8 @@ export type CryptoWorkerResponse =
   | PayloadDecryptedResponse
   | SharedKeyDerivedResponse
   | StampKeysDerivedResponse
+  | StampPublicKeyDerivedResponse
+  | Sha256HmacResponse
   | StealthPublicKeyDerivedResponse
   | StealthPrivateKeyDerivedResponse
   | ErrorResponse
@@ -413,6 +467,8 @@ export type ResponseTypeMap = {
   DECRYPT_PAYLOAD: PayloadDecryptedResponse['payload']
   DERIVE_SHARED_KEY: SharedKeyDerivedResponse['payload']
   DERIVE_STAMP_KEYS: StampKeysDerivedResponse['payload']
+  DERIVE_STAMP_PUBLIC_KEY: StampPublicKeyDerivedResponse['payload']
+  SHA256_HMAC: Sha256HmacResponse['payload']
   DERIVE_STEALTH_PUBLIC_KEY: StealthPublicKeyDerivedResponse['payload']
   DERIVE_STEALTH_PRIVATE_KEY: StealthPrivateKeyDerivedResponse['payload']
 }
